@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.22000.0</TargetPlatformMinVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>annotations</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
+    <PublishTrimmed>false</PublishTrimmed>
+    <ApplicationManifest>modules/AIEnter/src/AIEnter/app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/AITaskbar-Ring.ico</ApplicationIcon>
+    <AssemblyName>AITaskbar</AssemblyName>
+    <Version>0.2.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="System;System.Collections.Generic;System.IO;System.Linq;System.Threading;System.Threading.Tasks" />
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+    <Compile Include="App.xaml.cs;AppearanceHost.cs;Preview/*.cs;Settings/*.cs;modules/AIEnter/src/AIEnter/*.cs;modules/Halo/src/Halo/*.cs" />
+    <Compile Include="modules/LumaBar/src/*.cs" Exclude="modules/LumaBar/src/Update.cs" />
+    <Page Include="modules/AIEnter/src/AIEnter/Theme.xaml;modules/Halo/src/Halo/Theme.xaml" />
+    <Content Include="modules/AIEnter/src/AIEnter/Assets/*.ico;modules/AIEnter/src/AIEnter/Assets/AIEnter.png;modules/Halo/Assets/*"
+             Link="Assets/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Update="Assets\AITaskbar-Ring.ico"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="modules/LumaBar/native/ExplorerTAP.dll" Link="native/ExplorerTAP.dll"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="modules/LumaBar/LICENSE*;modules/LumaBar/THIRD_PARTY_NOTICES.md"
+             Link="licenses/LumaBar/%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="modules/AIEnter/ThirdParty/*.txt" Link="licenses/AIEnter/%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="modules/Halo/ThirdParty/*.txt" Link="licenses/Halo/%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <EmbeddedResource Include="modules/LumaBar/assets/LumaBar.png" LogicalName="LumaBar.png" />
+    <EmbeddedResource Include="modules/LumaBar/assets/LumaBar.ico" LogicalName="LumaBar.ico" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.6.4" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.6.4" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+  </ItemGroup>
+  <Target Name="GenerateUnpackagedXamlResources" AfterTargets="Build"
+          DependsOnTargets="_GetSdkToolPaths;GetMrtPackagingOutputs;_GetDefaultResourceLanguage;_GenerateProjectPriFile">
+    <Copy SourceFiles="$(ProjectPriFullPath)" DestinationFiles="$(TargetDir)resources.pri" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishUnpackagedXamlResources" AfterTargets="ComputeFilesToPublish"
+          DependsOnTargets="GenerateUnpackagedXamlResources">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(TargetDir)resources.pri" RelativePath="resources.pri" CopyToPublishDirectory="PreserveNewest" />
+      <ResolvedFileToPublish Include="$(TargetDir)App.xbf" RelativePath="App.xbf" CopyToPublishDirectory="PreserveNewest" />
+      <ResolvedFileToPublish Include="$(TargetDir)modules/AIEnter/src/AIEnter/Theme.xbf"
+                             RelativePath="modules/AIEnter/src/AIEnter/Theme.xbf" CopyToPublishDirectory="PreserveNewest" />
+      <ResolvedFileToPublish Include="$(TargetDir)modules/Halo/src/Halo/Theme.xbf"
+                             RelativePath="modules/Halo/src/Halo/Theme.xbf" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+</Project>

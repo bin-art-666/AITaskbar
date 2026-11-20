@@ -1,0 +1,49 @@
+{
+  "MouseGlow": true,
+  "MouseGlowRadius": 100,
+  "MouseGlowStrength": 25,
+  "PollMilliseconds": 350,
+  "StableMilliseconds": 700,
+  "ContentStableMilliseconds": 1400,
+  "MinimumSwitchMilliseconds": 1800,
+  "SourceStableMilliseconds": 180,
+  "SourceMinimumSwitchMilliseconds": 400,
+  "DarkThreshold": 0.44,
+  "LightThreshold": 0.6,
+  "HoldOwnedDialogs": true,
+  "HoldMediaPlayers": true,
+  "ApplicationRules": {},
+  "IgnoredProcesses": [],
+  "Glass": {
+    "Enabled": true,
+    "TaskbarRegion": true,
+    "Desktop": {
+      "Material": "blur",
+      "AutomaticColor": true,
+      "Color": "#202630",
+      "TintOpacity": 22,
+      "BlurRadius": 24,
+      "ShowLine": false
+    },
+    "Window": {
+      "Material": "blur",
+      "AutomaticColor": true,
+      "Color": "#202630",
+      "TintOpacity": 22,
+      "BlurRadius": 24,
+      "ShowLine": false
+    },
+    "Maximized": {
+      "Material": "normal",
+      "AutomaticColor": true,
+      "Color": "#202630",
+      "TintOpacity": 22,
+      "BlurRadius": 24,
+      "ShowLine": true
+    },
+    "AutoContrast": true,
+    "PerMonitor": true,
+    "MonitorOverrides": {}
+  },
+  "TimingVersion": 3
+}

@@ -1,0 +1,417 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace LumaBar
+{
+    public enum MaterialScene { Desktop, Window, Maximized }
+
+    public sealed class TaskbarAppearance
+    {
+        public string Material = "blur";
+        public bool AutomaticColor = true;
+        public string Color = "#202630";
+        public int TintOpacity = 22;
+        public int BlurRadius = 24;
+        public bool ShowLine;
+
+        public void Validate()
+        {
+            if (Material != "normal" && Material != "clear" && Material != "blur" && Material != "acrylic" && Material != "opaque")
+                throw new ArgumentException("未知的任务栏材质。");
+            if (TintOpacity < 0 || TintOpacity > 100 || BlurRadius < 0 || BlurRadius > 100)
+                throw new ArgumentException("染色不透明度和模糊强度必须在 0–100 之间。");
+            if (Color == null || Color.Length != 7 || Color[0] != '#') throw new ArgumentException("颜色应为 #RRGGBB。");
+            int rgb;
+            if (!Int32.TryParse(Color.Substring(1), System.Globalization.NumberStyles.HexNumber,
+                System.Globalization.CultureInfo.InvariantCulture, out rgb)) throw new ArgumentException("颜色应为 #RRGGBB。");
+        }
+
+        internal uint Abgr(Tone tone)
+        {
+            System.Drawing.Color color = AutomaticColor ? (tone == Tone.Light ? System.Drawing.Color.FromArgb(248, 250, 255) : System.Drawing.Color.FromArgb(20, 24, 32)) : ColorTranslator.FromHtml(Color);
+            uint alpha = Material == "opaque" ? 255 : (uint)Math.Round(TintOpacity * 255.0 / 100);
+            return alpha << 24 | (uint)color.B << 16 | (uint)color.G << 8 | color.R;
+        }
+        internal TaskbarAppearance Copy() { return (TaskbarAppearance)MemberwiseClone(); }
+    }
+
+    public sealed class GlassSettings
+    {
+        public bool Enabled = true;
+        public bool TaskbarRegion = true;
+        public bool AutoContrast = true;
+        public bool PerMonitor = true;
+        public Dictionary<string, MonitorAppearanceSet> MonitorOverrides = new Dictionary<string, MonitorAppearanceSet>(StringComparer.OrdinalIgnoreCase);
+        public TaskbarAppearance Desktop = new TaskbarAppearance();
+        public TaskbarAppearance Window = new TaskbarAppearance();
+        public TaskbarAppearance Maximized = new TaskbarAppearance { Material = "normal", ShowLine = true };
+        public void Validate()
+        {
+            if (Desktop == null || Window == null || Maximized == null) throw new ArgumentException("任务栏场景设置不能为空。");
+            Desktop.Validate(); Window.Validate(); Maximized.Validate();
+            Dictionary<string, MonitorAppearanceSet> overrides = new Dictionary<string, MonitorAppearanceSet>(StringComparer.OrdinalIgnoreCase);
+            if (MonitorOverrides != null)
+                foreach (KeyValuePair<string, MonitorAppearanceSet> item in MonitorOverrides)
+                {
+                    if (String.IsNullOrWhiteSpace(item.Key) || item.Value == null) throw new ArgumentException("显示器外观设置无效。");
+                    item.Value.Validate(); overrides.Add(item.Key, item.Value);
+                }
+            MonitorOverrides = overrides;
+        }
+        internal TaskbarAppearance For(MaterialScene scene)
+        { return scene == MaterialScene.Desktop ? Desktop : scene == MaterialScene.Maximized ? Maximized : Window; }
+        internal TaskbarAppearance For(MaterialScene scene, string device)
+        {
+            MonitorAppearanceSet custom;
+            return device != null && MonitorOverrides.TryGetValue(device, out custom) && custom.Enabled ? custom.For(scene) : For(scene);
+        }
+    }
+
+    internal static class TaskbarGeometry
+    {
+        internal static List<IntPtr> Windows()
+        {
+            List<IntPtr> result = new List<IntPtr>();
+            foreach (string cls in new string[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" })
+            {
+                IntPtr previous = IntPtr.Zero;
+                while ((previous = Native.FindWindowEx(IntPtr.Zero, previous, cls, null)) != IntPtr.Zero) result.Add(previous);
+            }
+            return result;
+        }
+        internal static Rectangle SampleArea(Rectangle monitor)
+        {
+            foreach (IntPtr window in Windows())
+            {
+                if (Screen.FromHandle(window).Bounds != monitor) continue;
+                Native.Rect rect;
+                if (!Native.GetWindowRect(window, out rect)) continue;
+                Rectangle area = Rectangle.Intersect(monitor, Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom));
+                // Auto-hide may leave just a 1px edge. Use a visible-sized strip instead.
+                if (area.Width >= 8 && area.Height >= 8) return area;
+            }
+            Screen screen = null;
+            foreach (Screen candidate in Screen.AllScreens) if (candidate.Bounds == monitor) screen = candidate;
+            int height = screen == null ? 48 : Math.Max(48, monitor.Bottom - screen.WorkingArea.Bottom);
+            height = Math.Min(height, monitor.Height);
+            return new Rectangle(monitor.Left, monitor.Bottom - height, monitor.Width, height);
+        }
+    }
+
+    // COM vtable follows TranslucentTB 2026.2 ExplorerTAP/ITaskbarAppearanceService.idl.
+    [ComImport, Guid("5bcf9150-c28a-4ef2-913c-4c3ea2f5ead0"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface ITaskbarAppearanceService
+    {
+        void SetTaskbarAppearance(IntPtr taskbar, int brush, uint color);
+        void SetTaskbarBlur(IntPtr taskbar, uint color, float amount);
+        void ReturnTaskbarToDefaultAppearance(IntPtr taskbar);
+        void SetTaskbarBorderVisibility(IntPtr taskbar, [MarshalAs(UnmanagedType.Bool)] bool visible);
+        void RestoreAllTaskbarsToDefault();
+        void RestoreAllTaskbarsToDefaultWhenProcessDies(uint pid);
+        void KillExplorerWhenPackageUninstalls([MarshalAs(UnmanagedType.LPWStr)] string package);
+    }
+
+    internal interface IMaterialBackend : IDisposable
+    {
+        uint ExplorerPid { get; }
+        void Connect();
+        void Apply(MaterialTarget target);
+        void Restore();
+    }
+
+    internal sealed class NativeMaterialBackend : IMaterialBackend
+    {
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        private delegate int Inject(IntPtr taskbar, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out ITaskbarAppearanceService service);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr LoadLibraryEx(string file, IntPtr reserved, uint flags);
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true)] private static extern IntPtr GetProcAddress(IntPtr module, string name);
+        private ITaskbarAppearanceService service;
+        private IntPtr module;
+        private uint connectedPid;
+        public uint ExplorerPid
+        {
+            get { uint pid; Native.GetWindowThreadProcessId(Native.FindWindow("Shell_TrayWnd", null), out pid); return pid; }
+        }
+        public void Connect()
+        {
+            bool conflict = false;
+            foreach (Process process in Process.GetProcessesByName("TranslucentTB")) { process.Dispose(); conflict = true; }
+            if (conflict) throw new InvalidOperationException("请先退出独立 TranslucentTB，再重试。");
+            uint pid = ExplorerPid;
+            if (service != null && pid == connectedPid) return;
+            Dispose();
+            if (pid == 0) throw new InvalidOperationException("正在等待 Windows 任务栏。");
+            if (IntPtr.Size != 8 || String.Equals(Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE"), "ARM64", StringComparison.OrdinalIgnoreCase))
+                throw new PlatformNotSupportedException("当前玻璃组件支持 Windows 11 x64。");
+            string path = Path.Combine(AppContext.BaseDirectory, "native", "ExplorerTAP.dll");
+            if (!File.Exists(path)) throw new FileNotFoundException("缺少 native\\ExplorerTAP.dll，请完整解压程序。");
+            if (module == IntPtr.Zero) module = LoadLibraryEx(path, IntPtr.Zero, 0x00000100 | 0x00000800);
+            if (module == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            IntPtr address = GetProcAddress(module, "InjectExplorerTAP");
+            if (address == IntPtr.Zero) throw new InvalidOperationException("材质组件接口不匹配。");
+            Inject inject = (Inject)Marshal.GetDelegateForFunctionPointer(address, typeof(Inject));
+            Guid iid = typeof(ITaskbarAppearanceService).GUID;
+            try
+            {
+                Marshal.ThrowExceptionForHR(inject(Native.FindWindow("Shell_TrayWnd", null), ref iid, out service));
+                connectedPid = pid;
+                service.RestoreAllTaskbarsToDefaultWhenProcessDies((uint)Process.GetCurrentProcess().Id);
+            }
+            catch { Dispose(); throw; }
+        }
+        public void Apply(MaterialTarget target)
+        {
+            TaskbarAppearance appearance = target.Appearance;
+            uint color = appearance.Abgr(target.Tone);
+            if (appearance.Material == "normal") service.ReturnTaskbarToDefaultAppearance(target.Taskbar);
+            else if (appearance.Material == "blur") service.SetTaskbarBlur(target.Taskbar, color, appearance.BlurRadius / 3f);
+            else service.SetTaskbarAppearance(target.Taskbar, appearance.Material == "acrylic" ? 0 : 1, color);
+            service.SetTaskbarBorderVisibility(target.Taskbar, appearance.Material == "normal" || appearance.ShowLine);
+        }
+        public void Restore()
+        {
+            if (service == null) return;
+            // Explorer's old process no longer exists: its old brushes no longer exist either.
+            if (ExplorerPid != connectedPid) { Dispose(); return; }
+            service.RestoreAllTaskbarsToDefault();
+        }
+        public void Dispose()
+        {
+            if (service != null) { Marshal.ReleaseComObject(service); service = null; }
+            // Keep the DLL loaded: COM proxy/stub registrations point into it until process exit.
+        }
+    }
+
+    internal enum MaterialState { Waiting, Connecting, Applying, Applied, Native, Fallback, RestoreFailed }
+    internal sealed class MaterialSnapshot
+    {
+        internal readonly MaterialState State;
+        internal readonly string Message;
+        internal readonly bool CanRetry;
+        internal MaterialSnapshot(MaterialState state, string message, bool canRetry = false)
+        { State = state; Message = message; CanRetry = canRetry; }
+    }
+
+    internal sealed class MaterialController : IDisposable
+    {
+        private sealed class Request
+        {
+            internal MaterialPlan Plan;
+            internal bool Stop;
+            internal TaskCompletionSource<Exception> RestoreResult;
+            internal int Generation;
+            internal long Sequence;
+        }
+        private readonly object gate = new object();
+        private readonly Queue<Request> requests = new Queue<Request>();
+        private readonly AutoResetEvent ready = new AutoResetEvent(false);
+        private readonly TaskCompletionSource<bool> stopped = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Thread worker;
+        private readonly IMaterialBackend backend;
+        private bool owned, disposed, faulted;
+        private Task<Exception> pendingRestore;
+        private uint ownerPid, failurePid;
+        private string failureReason;
+        private string failureTopology;
+        private int retryEpoch, seenRetryEpoch;
+        private int generation;
+        private string lastKey;
+        private long nextApply;
+        private uint lastRequestPid;
+        private readonly Stopwatch clock = Stopwatch.StartNew();
+        private volatile MaterialSnapshot snapshot = new MaterialSnapshot(MaterialState.Waiting, "等待有效场景，尚未应用材质");
+        internal MaterialSnapshot Snapshot { get { return snapshot; } }
+        internal string Status { get { return snapshot.Message; } }
+        private long completedUpdates;
+        private long nextSequence, lastQueuedSequence, appliedSequence;
+        internal long AppliedSequence { get { return Interlocked.Read(ref appliedSequence); } }
+        internal long CompletedUpdates { get { return Interlocked.Read(ref completedUpdates); } }
+
+        internal MaterialController() : this(new NativeMaterialBackend()) { }
+        internal MaterialController(IMaterialBackend backend)
+        {
+            this.backend = backend;
+            worker = new Thread(Run) { IsBackground = true, Name = "LumaBar taskbar materials" };
+            worker.SetApartmentState(ApartmentState.STA); worker.Start();
+        }
+        internal void Retry()
+        { lock (gate) { Interlocked.Increment(ref retryEpoch); lastKey = null; } }
+        internal void InvalidatePending()
+        {
+            lock (gate)
+            {
+                if (disposed) return;
+                generation++;
+                Request[] pending = requests.ToArray(); requests.Clear();
+                foreach (Request request in pending) if (request.RestoreResult != null) requests.Enqueue(request);
+                lastKey = null;
+            }
+        }
+        internal long Apply(GlassSettings settings, MaterialScene scene, Tone tone, bool force = false)
+        { return Apply(ReadabilityPolicy.Capture(settings, scene, tone), force); }
+        internal long Apply(MaterialPlan plan, bool force = false)
+        {
+            string key = plan.Key;
+            lock (gate)
+            {
+                if (disposed) return 0;
+                uint explorer = backend.ExplorerPid;
+                if (!force && key == lastKey && explorer == lastRequestPid &&
+                    (clock.ElapsedMilliseconds < nextApply || snapshot.State != MaterialState.Waiting)) return lastQueuedSequence;
+                lastRequestPid = explorer;
+                lastKey = key; nextApply = clock.ElapsedMilliseconds + 2000;
+                if (requests.Count > 0 && requests.Peek().RestoreResult == null) requests.Dequeue();
+                pendingRestore = null;
+                lastQueuedSequence = ++nextSequence;
+                requests.Enqueue(new Request { Plan = plan.Enabled ? plan : null, Generation = generation, Sequence = lastQueuedSequence });
+                ready.Set();
+                return lastQueuedSequence;
+            }
+        }
+        internal void Restore() { RestoreAsync().GetAwaiter().GetResult(); }
+        internal async Task RestoreAsync()
+        {
+            Task<Exception> result;
+            lock (gate)
+            {
+                if (disposed) return;
+                // A retry after a timeout can still await the in-flight native call.
+                if (pendingRestore == null || pendingRestore.IsCompleted)
+                {
+                    InvalidatePending();
+                    Request request = new Request { RestoreResult = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously) };
+                    pendingRestore = request.RestoreResult.Task;
+                    requests.Enqueue(request);
+                    ready.Set();
+                }
+                result = pendingRestore;
+            }
+            if (!result.IsCompleted) await Task.WhenAny(result, Task.Delay(5000)).ConfigureAwait(false);
+            if (!result.IsCompleted)
+                throw new TimeoutException("任务栏材质仍在连接或恢复，请稍后重试。");
+            if (result.Result != null) throw new InvalidOperationException("材质恢复未确认，请重试或正常退出。", result.Result);
+        }
+        private void RestoreOwned()
+        {
+            if (owned) { backend.Restore(); owned = false; }
+        }
+        private void Run()
+        {
+            try
+            {
+                while (true)
+                {
+                    ready.WaitOne();
+                    while (true)
+                    {
+                        Request request;
+                        lock (gate) { if (requests.Count == 0) break; request = requests.Dequeue(); }
+                        if (request.Stop)
+                        {
+                            try { backend.Dispose(); } catch (Exception error) { Files.Log("Material cleanup: " + error); }
+                            return;
+                        }
+                        Exception failure = null;
+                        try
+                        {
+                            if (request.Plan == null)
+                            {
+                                RestoreOwned();
+                                snapshot = new MaterialSnapshot(MaterialState.Native, "系统原生材质", faulted);
+                                Interlocked.Exchange(ref appliedSequence, request.Sequence);
+                            }
+                            else if (ApplyCore(request.Plan, request.Generation)) Interlocked.Exchange(ref appliedSequence, request.Sequence);
+                        }
+                        catch (Exception error)
+                        {
+                            failure = error; faulted = true; failurePid = backend.ExplorerPid; failureReason = error.Message;
+                            failureTopology = request.Plan == null ? null : request.Plan.TopologyKey;
+                            if (request.RestoreResult != null)
+                            {
+                                Files.Log("Material restore unconfirmed: " + error);
+                                snapshot = new MaterialSnapshot(MaterialState.RestoreFailed, "材质恢复未确认 · 请重试", true);
+                                continue;
+                            }
+                            Files.Log("Material fallback: " + error);
+                            try
+                            {
+                                RestoreOwned();
+                                snapshot = new MaterialSnapshot(MaterialState.Fallback, "已降级为原生材质 · " + failureReason + "（自动明暗继续）", true);
+                            }
+                            catch (Exception restoreError)
+                            {
+                                Files.Log("Material restore unconfirmed: " + restoreError);
+                                snapshot = new MaterialSnapshot(MaterialState.RestoreFailed, "材质恢复未确认 · 请重试，自动明暗继续", true);
+                            }
+                        }
+                        finally
+                        {
+                            Interlocked.Increment(ref completedUpdates);
+                            if (request.RestoreResult != null) request.RestoreResult.SetResult(failure);
+                        }
+                    }
+                }
+            }
+            finally { ready.Dispose(); stopped.TrySetResult(true); }
+        }
+        private bool ApplyCore(MaterialPlan plan, int requestedGeneration)
+        {
+            // Explorer/desktop transitions can make one enumeration temporarily empty.
+            // Retain the last brush and retry on the next valid topology; do not flash a fallback.
+            if (plan.Targets.Count == 0)
+            {
+                snapshot = new MaterialSnapshot(MaterialState.Waiting, "正在等待 Windows 任务栏就绪");
+                return false;
+            }
+            uint pid = backend.ExplorerPid;
+            int requestedRetry = Interlocked.CompareExchange(ref retryEpoch, 0, 0);
+            if (requestedRetry != seenRetryEpoch || (faulted && (pid != failurePid || plan.TopologyKey != failureTopology)))
+            { faulted = false; seenRetryEpoch = requestedRetry; }
+            if (owned && pid != ownerPid) { backend.Dispose(); owned = false; }
+            if (faulted)
+            {
+                if (snapshot.State != MaterialState.RestoreFailed)
+                    snapshot = new MaterialSnapshot(MaterialState.Fallback, "已降级为原生材质 · " + failureReason + "（可手动重试）", true);
+                return false;
+            }
+            if (!plan.Custom && !owned)
+            { snapshot = new MaterialSnapshot(MaterialState.Native, "系统原生材质"); return true; }
+            snapshot = new MaterialSnapshot(MaterialState.Connecting, "正在连接材质组件，尚未确认应用");
+            backend.Connect(); ownerPid = pid;
+            // A newer scene or pause may arrive while upstream initialization waits for Explorer.
+            lock (gate) { if (requests.Count > 0 || requestedGeneration != generation) return false; }
+            snapshot = new MaterialSnapshot(MaterialState.Applying, "正在应用外观，等待组件完成");
+            owned = true;
+            foreach (MaterialTarget target in plan.Targets)
+            {
+                lock (gate) { if (requestedGeneration != generation) return false; }
+                backend.Apply(target);
+            }
+            snapshot = new MaterialSnapshot(plan.Custom ? MaterialState.Applied : MaterialState.Native,
+                plan.Custom ? "玻璃效果已应用 · " + plan.Description : "系统原生材质");
+            return true;
+        }
+        internal Task StopAfterRestore()
+        {
+            lock (gate)
+            {
+                if (!disposed)
+                {
+                    disposed = true;
+                    requests.Enqueue(new Request { Stop = true });
+                    ready.Set();
+                }
+                return stopped.Task;
+            }
+        }
+        public void Dispose() { Restore(); StopAfterRestore().Wait(1000); }
+    }
+}

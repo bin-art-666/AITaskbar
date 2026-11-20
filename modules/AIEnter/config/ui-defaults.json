@@ -1,0 +1,68 @@
+{
+  "CapturedOn": "2026-11-15",
+  "ButtonRadius": 16,
+  "ButtonSize": 30,
+  "WindowPadding": 4,
+  "TaskbarIconSize": 25,
+  "FlowSpeed": 200,
+  "ScreenshotDoubleClick": true,
+  "ScreenshotSeconds": 20,
+  "ScreenshotFolder": "",
+  "GlowEnabled": true,
+  "GlowRange": 6,
+  "GlowIntensity": 100,
+  "BackplateRadius": 20,
+  "BackplateTransparency": 20,
+  "BackplateBlur": 0,
+  "ButtonColor": "#1C14DDFF",
+  "SelectedButtonColor": "#FF32D4EB",
+  "Provider": "deepseek",
+  "Pinned": false,
+  "FloatingPanel": true,
+  "DockWidth": 388.5,
+  "DockHeight": 816.5,
+  "FollowGlobalCorners": false,
+  "WebCornerRadius": 28,
+  "Hotkey": "Alt+SPACE",
+  "ProviderOrder": [
+    "deepseek",
+    "chatgpt",
+    "doubao",
+    "xiaoyi",
+    "ai-gemini",
+    "ai-grok",
+    "ai-kimi"
+  ],
+  "AddedProviders": [
+    {
+      "Id": "ai-gemini",
+      "Name": "Gemini",
+      "Url": "https://gemini.google.com/app"
+    },
+    {
+      "Id": "ai-grok",
+      "Name": "Grok",
+      "Url": "https://grok.com/"
+    },
+    {
+      "Id": "ai-kimi",
+      "Name": "Kimi",
+      "Url": "https://www.kimi.com/en"
+    }
+  ],
+  "DefaultProvider": "deepseek",
+  "PanelAnimation": "FloatFade",
+  "PanelEnterMilliseconds": 180,
+  "PanelExitMilliseconds": 130,
+  "PanelMotionOffset": 16,
+  "UiStyle": {
+    "Preset": "Default",
+    "Roundness": 8,
+    "Density": "Standard",
+    "Icons": "Standard",
+    "Tint": 22,
+    "Shade": 78,
+    "Motion": "Gentle",
+    "Duration": 160
+  }
+}

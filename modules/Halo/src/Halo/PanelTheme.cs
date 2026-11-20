@@ -1,0 +1,196 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Media;
+using System.Runtime.CompilerServices;
+
+namespace Halo;
+
+// One resource vocabulary for native feature panels. Top-bar geometry is independent.
+internal static partial class PanelTheme
+{
+    sealed record Target(WeakReference<FrameworkElement> Element, Action<FrameworkElement> Update);
+    static readonly List<Target> targets = [];
+    static readonly List<WeakReference<PanelWindow>> panels = [];
+    static readonly ConditionalWeakTable<Control, object> automaticCorners = new();
+    internal static UiStyleOptions Current { get; private set; } = new();
+    internal static event Action? Changed;
+    internal static T Track<T>(T element, Action<T> update) where T : FrameworkElement
+    {
+        if (targets.Count % 128 == 0) targets.RemoveAll(t => !t.Element.TryGetTarget(out _));
+        targets.Add(new(new(element), e => update((T)e))); update(element); return element;
+    }
+    internal static void Register(PanelWindow panel)
+    {
+        panels.RemoveAll(p => !p.TryGetTarget(out _)); panels.Add(new(panel));
+        if (panel.Content is FrameworkElement content) content.Loaded += (_, _) => Refresh(panel);
+        Refresh(panel);
+    }
+    internal static void Unregister(PanelWindow panel) => panels.RemoveAll(p => !p.TryGetTarget(out var current) || ReferenceEquals(current, panel));
+    internal static void Refresh(PanelWindow panel)
+    {
+        if (panel.SystemBackdrop is GlassBackdrop glass) glass.Update(Material());
+        if (panel.Content is DependencyObject root) Controls(root, new HashSet<DependencyObject>());
+    }
+    static void Controls(DependencyObject node, HashSet<DependencyObject> visited)
+    {
+        if (!visited.Add(node) || node is WebView2) return;
+        if (node is Control control && (automaticCorners.TryGetValue(control, out _) || control.ReadLocalValue(Control.CornerRadiusProperty) == DependencyProperty.UnsetValue))
+        {
+            automaticCorners.GetValue(control, _ => new object());
+            control.CornerRadius = Value<CornerRadius>(control is Expander ? "CardRadius" : "ControlRadius");
+        }
+        if (node is Panel layout) foreach (var child in layout.Children) Controls(child, visited);
+        if (node is Border border && border.Child != null) Controls(border.Child, visited);
+        if (node is ContentControl host && host.Content is DependencyObject content) Controls(content, visited);
+        if (node is Expander expander && expander.Content is DependencyObject expanded) Controls(expanded, visited);
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Controls(VisualTreeHelper.GetChild(node, i), visited);
+    }
+    internal static void Apply(UiStyleOptions options)
+    {
+        UiStyleOptions.Validate(options); Current = options;
+        double density = options.Density switch { UiDensity.Compact => .85, UiDensity.Spacious => 1.15, _ => 1 };
+        var resources = Application.Current.Resources;
+        void Set(string key, object value) => resources["Halo" + key] = value;
+        Set("PanelPadding", new Thickness(Math.Round(20 * density), Math.Round(16 * density), Math.Round(20 * density), Math.Round(16 * density)));
+        Set("CardPadding", new Thickness(Math.Round(12 * density)));
+        Set("PanelGap", Math.Round(12 * density)); Set("ActionGap", 4d);
+        Set("ControlRadius", new CornerRadius(options.Roundness));
+        Set("CardRadius", new CornerRadius(options.Roundness * 1.5)); Set("PanelRadius", new CornerRadius(options.Roundness * 2));
+        Set("IconSize", options.Icons switch { UiIconSize.Small => 16d, UiIconSize.Large => 24d, _ => 20d });
+        Set("ActionSize", options.Icons == UiIconSize.Large ? 40d : 36d);
+        Set("PanelTintOpacity", options.Tint / 100d); Set("PanelLuminosityOpacity", options.Shade / 100d);
+        Set("EnterMilliseconds", (double)options.Duration);
+        ConfigureAppearance(App.Appearance);
+        targets.RemoveAll(t => !t.Element.TryGetTarget(out _));
+        foreach (var target in targets.ToArray()) if (target.Element.TryGetTarget(out var element)) target.Update(element);
+        panels.RemoveAll(p => !p.TryGetTarget(out _));
+        foreach (var reference in panels.ToArray()) if (reference.TryGetTarget(out var panel)) Refresh(panel);
+        Changed?.Invoke();
+    }
+    static void ConfigureAppearance(UiAppearance options)
+    {
+        options.Validate();
+        var resources = Application.Current.Resources;
+        resources["HaloControlRadius"] = new CornerRadius(options.ButtonRadius);
+        resources["HaloActionSize"] = (double)options.ButtonSize;
+        resources["HaloIconSize"] = Math.Clamp(options.ButtonSize * .55, 16d, 24d);
+        resources["HaloPanelPadding"] = new Thickness(options.WindowPadding);
+        resources["HaloPanelGap"] = 6d;
+    }
+    internal static void ApplyAppearance(UiAppearance options)
+    {
+        ConfigureAppearance(options);
+        targets.RemoveAll(t => !t.Element.TryGetTarget(out _));
+        foreach (var target in targets.ToArray()) if (target.Element.TryGetTarget(out var element)) target.Update(element);
+        foreach (var panel in panels.ToArray()) if (panel.TryGetTarget(out var value)) Refresh(value);
+        Changed?.Invoke();
+    }
+    internal static T Value<T>(string key) => (T)Application.Current.Resources["Halo" + key];
+    internal static Style Style(string name) => Value<Style>(name + "Style");
+    static MaterialOptions Material() => new(TintOpacity: (float)Value<double>("PanelTintOpacity"), LuminosityOpacity: (float)Value<double>("PanelLuminosityOpacity"));
+    internal static GlassBackdrop Backdrop() => new(Material());
+    internal static GlassBackdrop DesktopBackdrop() => new(new MaterialOptions(TintOpacity: 0, LuminosityOpacity: 0, NoBase: true)) { TransparentCanvas = true };
+    internal static void ApplyDesktopBackdrop(Grid root, BackplateSurface surface, GlassBackdrop glass)
+    {
+        var appearance = App.Appearance;
+        root.CornerRadius = surface.CornerRadius = new CornerRadius(appearance.BackplateRadius);
+        // The window blurs the desktop. The XAML surface supplies the tint.
+        surface.UpdateAppearance(appearance with { BackplateBlur = 0 }, surface.ActualTheme == ElementTheme.Dark);
+        glass.UpdateBlur(appearance.BackplateBlur);
+        glass.ReapplyTransparentFrame();
+        ClipDesktopBackdrop(root);
+    }
+    internal static void ClipDesktopBackdrop(Grid root)
+    {
+        var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(root);
+        var current = visual.Clip as Microsoft.UI.Composition.RectangleClip;
+        var clip = current ?? visual.Compositor.CreateRectangleClip();
+        var radius = new System.Numerics.Vector2((float)root.CornerRadius.TopLeft);
+        clip.TopLeftRadius = clip.TopRightRadius = clip.BottomLeftRadius = clip.BottomRightRadius = radius;
+        clip.Right = (float)root.ActualWidth; clip.Bottom = (float)root.ActualHeight;
+        if (current == null) visual.Clip = clip;
+    }
+    internal static BackplateSurface BackdropSurface() => Track(new BackplateSurface
+    { IsHitTestVisible = false, VerticalAlignment = VerticalAlignment.Top }, static surface => surface.UpdateAppearance(App.Appearance, surface.ActualTheme == ElementTheme.Dark));
+    internal static Windows.UI.Color BackplateColor(UiAppearance appearance, bool dark)
+    {
+        var color = Material().FlatColor(dark);
+        double baselineOpacity = (100 - UiDefaults.BackplateTransparencyReference) / 100d;
+        byte alpha = appearance.BackplateTransparency == 0 ? (byte)255
+            : (byte)Math.Clamp(Math.Round(color.Alpha * (100 - appearance.BackplateTransparency) / 100d / baselineOpacity), 0, 255);
+        return Windows.UI.Color.FromArgb(alpha, (byte)(color.Rgb >> 16), (byte)(color.Rgb >> 8), (byte)color.Rgb);
+    }
+    internal static Grid Layout() => Track(new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) }, static grid =>
+    { grid.Padding = Value<Thickness>("PanelPadding"); grid.RowSpacing = Value<double>("PanelGap"); grid.CornerRadius = Value<CornerRadius>("PanelRadius"); });
+    internal static Grid Header(UIElement title, FrameworkElement actions)
+    {
+        var header = Track(new Grid(), static grid => grid.ColumnSpacing = Value<double>("PanelGap"));
+        header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        header.Children.Add(title); Grid.SetColumn(actions, 1); header.Children.Add(actions); return header;
+    }
+    internal static StackPanel Actions() => Track(new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center }, static panel => panel.Spacing = Value<double>("ActionGap"));
+    internal static TextBlock Title(string text) => new() { Text = text, FontSize = Value<double>("TitleSize"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+    internal static TextBlock Hint(string text) => new() { Text = text, FontSize = Value<double>("HintSize"), Opacity = .7, TextWrapping = TextWrapping.Wrap };
+    internal static Windows.UI.Color SolidContentSurface(bool dark) =>
+        dark ? PaletteColor(0xFF26292D) : PaletteColor(0xFFF6F9FA);
+
+    internal static void StyleDialog(ContentDialog dialog)
+    {
+        dialog.Resources["ContentDialogTopOverlay"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        void Apply()
+        {
+            dialog.CornerRadius = new CornerRadius(App.Appearance.BackplateRadius);
+            if (HighContrastPalette != null) dialog.ClearValue(Control.BackgroundProperty);
+            else dialog.Background = new SolidColorBrush(SolidContentSurface(dialog.ActualTheme == ElementTheme.Dark));
+        }
+        Apply();
+        dialog.ActualThemeChanged += (_, _) => Apply();
+    }
+
+    internal static void CompactDialog(ContentDialog dialog)
+    {
+        dialog.Resources["ContentDialogPadding"] = new Thickness(16, 12, 16, 12);
+        dialog.Resources["ContentDialogTitleMargin"] = new Thickness(0, 0, 0, 8);
+        dialog.Resources["ContentDialogMinHeight"] = 0d;
+    }
+
+    internal static void StyleTextAction(ButtonBase button, bool useButtonColor = false)
+    {
+        button.CornerRadius = Value<CornerRadius>("ControlRadius");
+        button.UseSystemFocusVisuals = true;
+        if (!useButtonColor) return;
+        ApplyButtonColors(button);
+        button.ActualThemeChanged += (_, _) => ApplyButtonColors(button);
+        RegisterThemedButton(button);
+    }
+
+    internal static FontIcon Glyph(string glyph, double? size = null)
+    {
+        var icon = new FontIcon { Glyph = glyph, FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = size ?? Value<double>("IconSize") };
+        return size != null ? icon : Track(icon, static value => value.FontSize = Value<double>("IconSize"));
+    }
+    internal static void IconStyle(ButtonBase button, string name)
+    {
+        button.Style = Style(button is ToggleButton ? "IconToggle" : "IconButton");
+        Track(button, static value => { value.Width = value.Height = Value<double>("ActionSize"); value.CornerRadius = Value<CornerRadius>("ControlRadius"); });
+        AutomationProperties.SetName(button, name); ToolTipService.SetToolTip(button, name);
+    }
+    internal static Button Icon(string glyph, string name, double? size = null)
+    {
+        var button = new Button { Content = Glyph(glyph, size) }; IconStyle(button, name); return button;
+    }
+    // Framed actions share native keyboard, pointer and checked states.
+    internal static void FramedIconStyle(ButtonBase button, string name)
+    {
+        IconStyle(button,name);
+        button.Style=Style(button is ToggleButton ? "FramedToggle" : "ItemAction");
+        Track(button, static value => { value.CornerRadius=Value<CornerRadius>("ControlRadius"); ApplyButtonColors(value); });
+        button.ActualThemeChanged += (_, _) => ApplyButtonColors(button);
+        RegisterThemedButton(button);
+    }
+    internal static Border Card(UIElement content) => Track(new Border { Child = content, Style = Style("Card") }, static card =>
+    { card.CornerRadius = Value<CornerRadius>("CardRadius"); card.Padding = Value<Thickness>("CardPadding"); if (card.Child != null) Controls(card.Child, new HashSet<DependencyObject>()); });
+}
