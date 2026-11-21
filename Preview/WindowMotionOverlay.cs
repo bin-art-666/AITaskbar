@@ -26,13 +26,15 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
     private readonly CanvasBitmap image;
     private readonly WindowMotionMesh? mesh;
     private readonly Rect window, icon, source, content;
+    private readonly nint insertAfter;
     private int left, top, width, height;
     private bool visible;
 
     internal WindowMotionOverlay(FrameworkElement owner, WindowMotionNative.Snapshot snapshot, Rect window, Rect icon,
-        WindowAnimationStyle style)
+        WindowAnimationStyle style, nint insertAfter = -1)
     {
         if (!owner.IsLoaded) throw new InvalidOperationException("The taskbar is no longer open.");
+        this.insertAfter = insertAfter;
         left = (int)Math.Floor(Math.Min(window.Left, icon.Left)) - 1;
         int bendMargin = style == WindowAnimationStyle.Curved ? WindowMotionMesh.BendMargin(window) : 1;
         top = (int)Math.Floor(Math.Min(window.Top, icon.Top)) - bendMargin;
@@ -105,7 +107,7 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
         if (visible) return;
 
         const uint NoActivateShow = 0x0010 | 0x0040;
-        if (!SetWindowPos(Handle, -1, left, top, width, height, NoActivateShow))
+        if (!SetWindowPos(Handle, insertAfter, left, top, width, height, NoActivateShow))
             throw new Win32Exception(Marshal.GetLastWin32Error());
         visible = true;
     }

@@ -6,10 +6,154 @@ using Windows.Foundation;
 
 namespace AITaskbar;
 
-internal sealed class WindowMotion(FrameworkElement owner)
+internal sealed class WindowMotion(FrameworkElement owner, nint taskbarHandle)
 {
     private readonly Dictionary<(nint Handle, uint Process), WindowMotionNative.Snapshot> recent = [];
+    private RectangularRequest? rectangularRequest;
     private int capturing;
+
+    internal bool HasRectangularRequest => rectangularRequest is { } request && !request.Token.IsCancellationRequested;
+
+    private sealed class RectangularRequest(RunningWindow window, bool opening, CancellationToken token)
+    {
+        internal RunningWindow Window { get; } = window;
+        internal CancellationToken Token { get; } = token;
+        internal bool Opening { get; set; } = opening;
+    }
+
+    internal bool RetargetRectangular(RunningWindow window, bool? opening)
+    {
+        if (rectangularRequest is not { } request || request.Token.IsCancellationRequested ||
+            request.Window.Handle != window.Handle || request.Window.ProcessId != window.ProcessId) return false;
+        request.Opening = opening ?? !request.Opening;
+        return true;
+    }
+
+    internal async Task<bool> RunRectangularAsync(RunningWindow window, Rect icon, bool opening, int duration,
+        CancellationToken token)
+    {
+        var request = new RectangularRequest(window, opening, token);
+        rectangularRequest = request;
+        try
+        {
+            // A click during the real-window handoff is handled as soon as that handoff finishes.
+            do
+            {
+                if (!await PlayRectangularAsync(request, icon, duration) || !RunningWindows.IsCurrent(window))
+                    return false;
+            } while (request.Opening == RunningWindows.IsMinimized(window));
+            return true;
+        }
+        finally
+        {
+            if (ReferenceEquals(rectangularRequest, request)) rectangularRequest = null;
+        }
+    }
+
+    private async Task<bool> PlayRectangularAsync(RectangularRequest request, Rect icon, int duration)
+    {
+        var window = request.Window;
+        var token = request.Token;
+        token.ThrowIfCancellationRequested();
+        bool startsMinimized = RunningWindows.IsMinimized(window);
+        if (request.Opening != startsMinimized) return startsMinimized || RunningWindows.Activate(window);
+
+        var key = (window.Handle, window.ProcessId);
+        var image = startsMinimized && recent.TryGetValue(key, out var saved) ? saved : await CaptureAsync(window, token);
+        token.ThrowIfCancellationRequested();
+        if (!RunningWindows.IsCurrent(window)) return false;
+        if (request.Opening != startsMinimized) return startsMinimized || RunningWindows.Activate(window);
+        if (image is null) return await FinishRectangularNativelyAsync(window, request.Opening, token);
+
+        try
+        {
+            using var overlay = new WindowMotionOverlay(owner, image, image.Bounds, icon, WindowAnimationStyle.WindowsStyle,
+                insertAfter: taskbarHandle);
+            using var transitions = new WindowMotionNative.NativeTransitionScope(window);
+            using var restoreTransitions = token.Register(transitions.Dispose);
+            if (!startsMinimized)
+            {
+                overlay.DrawFlatFrame();
+                await PresentWindowAsync(token);
+                if (request.Opening) return RunningWindows.Activate(window);
+                if (!await ChangeWindowStateAsync(window, minimized: true, transitions.Suppressed, token))
+                    return await FinishRectangularNativelyAsync(window, request.Opening, token);
+                Remember(window, image);
+            }
+
+            double extent = startsMinimized ? 0 : 1;
+            while (await AnimateRectangularAsync(overlay, request, extent, duration))
+            {
+                WindowMotionNative.DwmFlush();
+                await Task.Delay(16, token);
+                if (request.Opening)
+                {
+                    if (!await ChangeWindowStateAsync(window, minimized: false, transitions.Suppressed, token))
+                        return await FinishRectangularNativelyAsync(window, request.Opening, token);
+                    bool activated = RunningWindows.Activate(window);
+                    recent.Remove(key);
+                    await HandOffAsync(overlay, window, token);
+                    return activated;
+                }
+                extent = 1;
+            }
+            return true;
+        }
+        catch (Exception error) when (Recoverable(error))
+        {
+            Debug.WriteLine(error);
+            return await FinishRectangularNativelyAsync(window, request.Opening, token);
+        }
+    }
+
+    private static async Task<bool> AnimateRectangularAsync(WindowMotionOverlay overlay, RectangularRequest request,
+        double extent, int duration)
+    {
+        double from = extent;
+        bool opening = request.Opening;
+        bool reversing = false;
+        long start = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            request.Token.ThrowIfCancellationRequested();
+            if (opening != request.Opening)
+            {
+                from = extent;
+                opening = request.Opening;
+                reversing = true;
+                start = Stopwatch.GetTimestamp();
+            }
+            double target = opening ? 1 : 0;
+            double legDuration = Math.Abs(target - from) * duration;
+            double progress = legDuration == 0 ? 1 : Math.Min(1, Stopwatch.GetElapsedTime(start).TotalMilliseconds / legDuration);
+            double interpolation = reversing ? WindowMotionMesh.SmoothStep(0, 1, progress) : progress;
+            extent = from + (target - from) * interpolation;
+            overlay.DrawTransition(extent, opening: true);
+            if (progress == 1) return opening;
+            await Task.Delay(12, request.Token);
+        }
+    }
+
+    private static async Task<bool> ChangeWindowStateAsync(RunningWindow window, bool minimized, bool transitionsSuppressed,
+        CancellationToken token)
+    {
+        bool queued = transitionsSuppressed
+            ? minimized ? RunningWindows.Minimize(window) : RunningWindows.RequestRestore(window)
+            : await TransitionFromHiddenAsync(window, minimized, token);
+        return queued && await WaitForWindowStateAsync(window, minimized, token);
+    }
+
+    private static async Task<bool> FinishRectangularNativelyAsync(RunningWindow window, bool opening, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!RunningWindows.IsCurrent(window)) return false;
+        if (RunningWindows.IsMinimized(window) != opening) return !opening || RunningWindows.Activate(window);
+        // A window that can't supply a frame should still change state without flying to the system taskbar.
+        using var transitions = new WindowMotionNative.NativeTransitionScope(window);
+        using var restoreTransitions = token.Register(transitions.Dispose);
+        return await ChangeWindowStateAsync(window, minimized: !opening, transitions.Suppressed, token) &&
+            (!opening || RunningWindows.Activate(window));
+    }
 
     internal async Task<bool> MinimizeAsync(RunningWindow window, Rect icon, WindowAnimationStyle style, int duration,
         CancellationToken token)

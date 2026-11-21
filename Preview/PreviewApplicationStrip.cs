@@ -95,7 +95,7 @@ internal sealed class PreviewApplicationStrip
         pinnedApps = new(pinnedPanel);
         this.owner = owner;
         this.report = report;
-        windowMotion = new(items);
+        windowMotion = new(items, owner);
         appCenterIcon = new AppCenterIcon(iconSize);
         appCenterIcon.Apply(appCenterStyle);
         AppCenterButton = IconButton("应用中心", appCenterIcon);
@@ -126,7 +126,7 @@ internal sealed class PreviewApplicationStrip
 
     public void Refresh()
     {
-        if (openFlyout is not null || pinPress is not null) return;
+        if (openFlyout is not null || pinPress is not null || windowMotion.HasRectangularRequest) return;
         var foregroundWindow = RunningWindows.Foreground();
         groups = AppGroups.Build(pins.Items, RunningWindows.List());
         if (groups.Any(group => group.Windows.Any(window => window.Handle == foregroundWindow)))
@@ -654,6 +654,9 @@ internal sealed class PreviewApplicationStrip
     private bool UsePreviewWindowAnimation => iconLayout.UsesPreviewWindowAnimation &&
         system.AnimationsEnabled && !accessibility.HighContrast;
 
+    private bool UseRectangularWindowAnimation => UsePreviewWindowAnimation &&
+        iconLayout.WindowAnimation == WindowAnimationStyle.WindowsStyle;
+
     internal void EnableTitleBarMinimize() =>
         titleBarMinimize ??= new TitleBarMinimizeHook(items.DispatcherQueue, FindTitleBarWindow, MinimizeFromTitleBar);
 
@@ -671,6 +674,7 @@ internal sealed class PreviewApplicationStrip
 
     private void MinimizeFromTitleBar(RunningWindow window)
     {
+        if (UseRectangularWindowAnimation && windowMotion.RetargetRectangular(window, opening: false)) return;
         if (!RunningWindows.IsCurrent(window) || RunningWindows.IsMinimized(window)) return;
         var view = Shown.FirstOrDefault(view => view.Group.Windows.Contains(window));
         var origin = UsePreviewWindowAnimation && view is not null ? WindowMotionNative.ScreenBounds(owner, view.IconPlate) : null;
@@ -685,6 +689,14 @@ internal sealed class PreviewApplicationStrip
 
     private void Open(AppGroup group, FrameworkElement anchor, FrameworkElement plate)
     {
+        // A window can appear between the last strip refresh and a click on its pinned icon.
+        if (UseRectangularWindowAnimation && group.Windows.Count == 0)
+        {
+            group = AppGroups.Build(pins.Items, RunningWindows.List())
+                .FirstOrDefault(current => StringComparer.OrdinalIgnoreCase.Equals(current.Key, group.Key)) ?? group;
+        }
+        if (UseRectangularWindowAnimation && group.Windows.Any(window => windowMotion.RetargetRectangular(window, opening: null)))
+            return;
         windowAction?.Cancel();
         if (group.Windows.Count == 0)
         {
@@ -716,6 +728,7 @@ internal sealed class PreviewApplicationStrip
 
     private void OpenWindow(RunningWindow window, FrameworkElement plate, bool toggle)
     {
+        if (UseRectangularWindowAnimation && windowMotion.RetargetRectangular(window, opening: toggle ? null : true)) return;
         windowAction?.Cancel();
         if (!RunningWindows.IsCurrent(window)) { report("暂时无法切换到该窗口。"); return; }
         bool minimized = RunningWindows.IsMinimized(window);
@@ -731,6 +744,11 @@ internal sealed class PreviewApplicationStrip
         }
         if (origin is not { } icon) { Activate(window); return; }
 
+        if (UseRectangularWindowAnimation)
+        {
+            RunRectangularWindowAction(window, icon, opening: true);
+            return;
+        }
         int duration = iconLayout.EffectiveWindowDurationMs;
         var style = iconLayout.WindowAnimation;
         _ = RunWindowAction(async token =>
@@ -748,10 +766,29 @@ internal sealed class PreviewApplicationStrip
             CompleteMinimize(window, RunningWindows.Minimize(window));
             return;
         }
+        if (UseRectangularWindowAnimation)
+        {
+            RunRectangularWindowAction(window, icon, opening: false);
+            return;
+        }
         int duration = iconLayout.EffectiveWindowDurationMs;
         var style = iconLayout.WindowAnimation;
         _ = RunWindowAction(async token =>
             CompleteMinimize(window, await windowMotion.MinimizeAsync(window, icon, style, duration, token)));
+    }
+
+    private void RunRectangularWindowAction(RunningWindow window, Rect icon, bool opening)
+    {
+        int duration = iconLayout.EffectiveWindowDurationMs;
+        _ = RunWindowAction(async token =>
+        {
+            if (!await windowMotion.RunRectangularAsync(window, icon, opening, duration, token))
+                report("暂时无法切换到该窗口。");
+            else if (RunningWindows.IsMinimized(window))
+                CompleteMinimize(window, success: true);
+            else
+                ActivateIndicators(window);
+        });
     }
 
     private async Task RunWindowAction(Func<CancellationToken, Task> action)
