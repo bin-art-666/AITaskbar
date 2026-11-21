@@ -18,7 +18,7 @@ internal sealed class PreviewModuleIcons : IDisposable
     private readonly Halo.RingAppearanceBridge? ringBridge = Halo.App.RingBridge;
     private readonly Image ai = new() { Stretch = Stretch.Uniform };
     private readonly Image halo = new() { Stretch = Stretch.Uniform };
-    private readonly ImageSource staticAi = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AIEnter.png")));
+    private readonly ImageSource staticAi = CreateStaticAiIcon();
     private readonly WriteableBitmap flow = new(Side, Side), ring = new(Side, Side);
     private readonly byte[] aiPixels = new byte[Side * Side * 4], ringPixels = new byte[Side * Side * 4];
     private readonly Grid glow = new() { IsHitTestVisible = false };
@@ -31,6 +31,18 @@ internal sealed class PreviewModuleIcons : IDisposable
     private long lastTick;
 
     public FrameworkElement AiEntrance => aiHost;
+    internal Image AiIcon => ai;
+
+    internal static ImageSource CreateStaticAiIcon() =>
+        new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AIEnter.png")));
+
+    internal static ImageSource CreateStaticHaloIcon(Halo.UiAppearance appearance, bool light, Color? foreground)
+    {
+        var bitmap = new WriteableBitmap(Side, Side);
+        var color = RingColor(appearance, light, foreground);
+        DrawRing(bitmap, new byte[Side * Side * 4], appearance.RingThickness, _ => color);
+        return bitmap;
+    }
 
     public PreviewModuleIcons(Button haloButton, Button aiButton, DispatcherQueue dispatcher)
     {
@@ -133,19 +145,28 @@ internal sealed class PreviewModuleIcons : IDisposable
 
     private void PaintRing(Halo.UiAppearance appearance, bool animate, int import, uint age)
     {
-        uint baseColor = Halo.UiAppearance.ColorValue(light ? appearance.RingLightColor : appearance.RingColor,
-            light ? 0xFF505050u : 0xFFE6E6E6u);
-        uint accent = light ? Mix(baseColor, 0, .65) : 0xFFFFFF;
-        if (highContrast)
-        {
-            var value = system.GetColorValue(UIColorType.Foreground);
-            baseColor = accent = (uint)(value.R << 16 | value.G << 8 | value.B);
-        }
+        uint baseColor = RingColor(appearance, light, highContrast ? system.GetColorValue(UIColorType.Foreground) : null);
+        uint accent = highContrast ? baseColor : light ? Mix(baseColor, 0, .65) : 0xFFFFFF;
         if (!animate && hover) baseColor = accent;
         if (import == 1 && !highContrast) accent = light ? 0x006B61u : 0x84F1D3u;
         if (import == 2 && !highContrast) baseColor = light ? 0x943C00u : 0xFFB462u;
-        var inner = Side * (.5 - appearance.RingThickness / 100.0);
         var importAngle = age / 75.0 * Math.Tau + Math.Tau * .75;
+        DrawRing(ring, ringPixels, appearance.RingThickness, phase =>
+        {
+            double weight = hoverOpacity * FlowWeight(angle, phase, appearance.RingFlowLength);
+            if (import == 1) weight = Math.Max(weight, animations && !highContrast ? FlowWeight(importAngle, phase, 38) : 1);
+            return Mix(baseColor, accent, weight);
+        }, import == 2);
+    }
+
+    private static uint RingColor(Halo.UiAppearance appearance, bool light, Color? foreground) =>
+        foreground is { } value ? (uint)(value.R << 16 | value.G << 8 | value.B) :
+        Halo.UiAppearance.ColorValue(light ? appearance.RingLightColor : appearance.RingColor,
+            light ? 0xFF505050u : 0xFFE6E6E6u);
+
+    private static void DrawRing(WriteableBitmap bitmap, byte[] pixels, int thickness, Func<double, uint> colorAt, bool interrupted = false)
+    {
+        var inner = Side * (.5 - thickness / 100.0);
         for (var y = 0; y < Side; y++)
         for (var x = 0; x < Side; x++)
         {
@@ -153,12 +174,10 @@ internal sealed class PreviewModuleIcons : IDisposable
             double radius = Math.Sqrt(dx * dx + dy * dy);
             double phase = Math.Atan2(dy, dx) + Math.Tau;
             double alpha = Math.Clamp(Math.Min(radius - inner + .5, Side / 2.0 - radius), 0, 1);
-            double weight = hoverOpacity * FlowWeight(angle, phase, appearance.RingFlowLength);
-            if (import == 1) weight = Math.Max(weight, animations && !highContrast ? FlowWeight(importAngle, phase, 38) : 1);
-            if (import == 2) alpha *= Math.Clamp((Math.Abs(phase - Math.Tau * .75) - .21) / .07, 0, 1);
-            WritePixel(ringPixels, (y * Side + x) * 4, Mix(baseColor, accent, weight), alpha);
+            if (interrupted) alpha *= Math.Clamp((Math.Abs(phase - Math.Tau * .75) - .21) / .07, 0, 1);
+            WritePixel(pixels, (y * Side + x) * 4, alpha > 0 ? colorAt(phase) : 0, alpha);
         }
-        Present(ring, ringPixels);
+        Present(bitmap, pixels);
     }
 
     private static double FlowWeight(double head, double phase, int length)

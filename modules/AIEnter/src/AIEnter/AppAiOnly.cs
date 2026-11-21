@@ -98,7 +98,8 @@ public partial class App
         ((AITaskbar.App)Application.Current).ShowSettings(AITaskbar.SettingsSection.AIEnter);
     }
 
-    internal SettingsPage CreateSettingsPage(Window host) => new(Ai.Options, SaveOptions, hotkeyWarning, host);
+    internal SettingsPage CreateSettingsPage(Window host, AITaskbar.SettingsPaneWidths widths) =>
+        new(Ai.Options, SaveOptions, hotkeyWarning, host, widths);
 
     void SaveOptions(AiOptions value)
     {

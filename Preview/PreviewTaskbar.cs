@@ -17,6 +17,7 @@ internal sealed class PreviewTaskbar : Window
     private readonly PreviewApplicationStrip tasks;
     private readonly TextBlock feedback = new() { MaxWidth = 200, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
     private bool closed, menuOpen;
+    internal PreviewModuleIcons ModuleIcons { get; }
 
     public PreviewTaskbar(App app, string root, AppearanceHost appearance, int iconSize, Windows.UI.Color? indicatorColor,
         Action<Exception> reportFailure)
@@ -47,7 +48,7 @@ internal sealed class PreviewTaskbar : Window
             await AIEnter.App.Ai.OpenForDrop(AIEnter.Native.Monitors().First(monitor => monitor.Primary), true);
             return await AIEnter.App.Ai.ReceiveDrop(view);
         });
-        var icons = new PreviewModuleIcons(halo, ai, DispatcherQueue);
+        var icons = ModuleIcons = new PreviewModuleIcons(halo, ai, DispatcherQueue);
         left.Children.Add(halo);
         left.Children.Add(Button("\uE718", "固定应用", () => _ = PickPinAsync(), glyph: true));
 

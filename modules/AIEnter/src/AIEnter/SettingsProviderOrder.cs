@@ -42,7 +42,7 @@ internal sealed partial class SettingsPage
             if (!control.IsEnabled) control = (Button)row.Children[direction < 0 ? 2 : 1];
             control.Focus(FocusState.Programmatic);
         }
-        status.Text = "AI 顺序已调整，点击保存设置后生效。"; RefreshDirty();
+        status.Text = "AI 顺序已调整，点「保存」后生效。"; RefreshDirty();
     }
     void RenderProviderOrder()
     {
@@ -107,7 +107,7 @@ internal sealed partial class SettingsPage
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || edited == null) return;
         providerDraft = providerDraft with { AddedProviders = (providerDraft.AddedProviders ?? []).Where(p => p.Id != edited.Id).Append(edited).ToArray() };
         if (!providerOrder.Contains(edited.Id)) providerOrder.Add(edited.Id);
-        providerSearch.Text = ""; RenderProviderOrder(); status.Text = "AI 列表已修改，点击保存设置后生效。"; RefreshDirty();
+        providerSearch.Text = ""; RenderProviderOrder(); status.Text = "AI 列表已修改，点「保存」后生效。"; RefreshDirty();
     }
     async Task RemoveProvider(AiProvider item)
     {
@@ -117,6 +117,6 @@ internal sealed partial class SettingsPage
         string preferred = provider.SelectedItem is ComboBoxItem chosen ? (string)chosen.Tag : UiDefaults.Provider;
         providerOrder.Remove(item.Id);
         providerDraft = AiPolicy.WithProviderSettings(providerDraft, (providerDraft.AddedProviders ?? []).Where(p => p.Id != item.Id).ToArray(), providerOrder.ToArray(), preferred);
-        provider.Items.Clear(); RenderProviderOrder(); status.Text = "AI 入口已标记移除，点击保存设置后生效。"; RefreshDirty();
+        provider.Items.Clear(); RenderProviderOrder(); status.Text = "AI 入口已标记移除，点「保存」后生效。"; RefreshDirty();
     }
 }

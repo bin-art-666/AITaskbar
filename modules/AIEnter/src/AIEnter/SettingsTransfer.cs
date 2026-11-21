@@ -15,7 +15,7 @@ internal sealed partial class SettingsPage
     void InitializeSettingsTransfer(StackPanel fields)
     {
         fields.Children.Add(Section("设置备份"));
-        fields.Children.Add(PanelTheme.Hint("导出文件只包含 AI 列表、默认服务、快捷键和界面设置，不包含网页登录、聊天记录或窗口位置。导入和恢复默认需再点“保存设置”才会生效。"));
+        fields.Children.Add(PanelTheme.Hint("导出文件只包含 AI 列表、默认服务、快捷键和界面设置，不包含网页登录、聊天记录或窗口位置。导入和恢复默认后，点「保存」应用。"));
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var export = new Button { Content = "导出设置" }; export.Click += async (_, _) => await ExportSettings();
         var import = new Button { Content = "导入设置" }; import.Click += async (_, _) => await ImportSettings();
@@ -67,7 +67,7 @@ internal sealed partial class SettingsPage
             floatingMode.IsOn = draft.FloatingPanel; pinned.IsOn = draft.Pinned;
             followCorners.IsOn = draft.FollowGlobalCorners; radius.Value = draft.WebCornerRadius;
             LoadAppearance(draft.Appearance ?? new()); hotkey.Text = draft.Hotkey; resetPanelSize = false; resetLayouts = false;
-            RefreshFields(); Preview(); RefreshDirty(); status.Text = "设置已载入预览；检查后点击“保存设置”应用。网页登录资料和窗口位置未导入。";
+            RefreshFields(); Preview(); RefreshDirty(); status.Text = "设置已载入预览，点「保存」应用。网页登录资料和窗口位置未导入。";
         }
         catch (Exception error) when (error is IOException or InvalidDataException or NotSupportedException or UnauthorizedAccessException or ArgumentException or JsonException)
         { status.Text = "导入失败：" + error.Message; }

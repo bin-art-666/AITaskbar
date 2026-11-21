@@ -7,7 +7,6 @@ namespace AIEnter;
 
 internal sealed partial class SettingsPage
 {
-    TextBlock? dirtyStatus;
     Button? saveButton, discardButton;
     string savedSnapshot = "";
     BackplateSurface? previewPlate;
@@ -19,7 +18,6 @@ internal sealed partial class SettingsPage
         try { return new Windows.UI.ViewManagement.UISettings().GetColorValue(type); }
         catch { return fallback; }
     }
-    static Windows.UI.Color SurfaceColor() => SystemColor(Windows.UI.ViewManagement.UIColorType.Background, Microsoft.UI.Colors.White);
     static Windows.UI.Color TextColor() => SystemColor(Windows.UI.ViewManagement.UIColorType.Foreground, Windows.UI.Color.FromArgb(255, 35, 43, 48));
     bool IsDirty => savedSnapshot.Length > 0 && Snapshot() != savedSnapshot;
 
@@ -33,41 +31,21 @@ internal sealed partial class SettingsPage
 
     void RefreshDirty()
     {
-        if (syncing || dirtyStatus is null) return;
-        bool dirty = IsDirty;
-        dirtyStatus.Text = dirty ? "有未保存的更改" : "所有更改已保存";
-        saveButton!.IsEnabled = discardButton!.IsEnabled = dirty && !options.ReadOnly;
-    }
-
-    void SelectPage(string name, Grid host, Dictionary<string, StackPanel> pages, StackPanel sidebar)
-    {
-        foreach (var element in host.Children.OfType<ScrollViewer>())
-            element.Visibility = Equals(element.Tag, name) ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var button in sidebar.Children.OfType<Button>())
-        {
-            bool selected = Equals(button.Tag, name);
-            button.Background = new SolidColorBrush(selected ? SystemColor(Windows.UI.ViewManagement.UIColorType.Accent, Windows.UI.Color.FromArgb(35, 0, 160, 190)) : Windows.UI.Color.FromArgb(0, 0, 0, 0));
-            button.Foreground = new SolidColorBrush(selected && !HighContrast ? Windows.UI.Color.FromArgb(255, 0, 115, 145) : TextColor());
-            button.FontWeight = selected ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal;
-        }
+        if (!syncing && saveButton is not null && discardButton is not null)
+            saveButton.IsEnabled = discardButton.IsEnabled = IsDirty && !options.ReadOnly;
     }
 
     void ArrangeSettingsPages(UIElement[] elements, Dictionary<string, StackPanel> pages)
     {
-        string pageName = "任务栏", cardTitle = "", title = "";
-        var cardContent = new StackPanel { Spacing = 8 };
+        string pageName = "任务栏", groupTitle = "", title = "";
+        var group = new List<UIElement>();
         void Flush()
         {
-            if (cardContent.Children.Count == 0) return;
-            var body = new StackPanel { Spacing = 8 };
-            if (cardTitle.Length > 0) body.Children.Add(new TextBlock { Text = cardTitle, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 3) });
-            foreach (var child in cardContent.Children.ToArray())
-            {
-                cardContent.Children.Remove(child);
-                if (child is Slider slider) body.Children.Add(SliderRow(slider)); else body.Children.Add(child);
-            }
-            pages[pageName].Children.Add(new Border { Padding = new Thickness(14), CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(HighContrast ? TextColor() : Windows.UI.Color.FromArgb(255, 224, 231, 234)), Background = new SolidColorBrush(SurfaceColor()), Child = body });
-            cardContent = new StackPanel { Spacing = 8 };
+            if (group.Count == 0) return;
+            var body = pages[pageName];
+            if (groupTitle.Length > 0) body.Children.Add(Section(groupTitle));
+            foreach (var field in group) body.Children.Add(field is Slider slider ? SliderRow(slider) : field);
+            group.Clear();
         }
         foreach (var element in elements)
         {
@@ -76,22 +54,22 @@ internal sealed partial class SettingsPage
                 title = heading.Text;
                 if (title == "AI 与窗口") continue;
                 Flush();
-                if (title == "任务栏图标") { pageName = "任务栏"; cardTitle = "任务栏入口"; }
-                else if (title == "截图") { pageName = "任务栏"; cardTitle = title; }
-                else if (title == "全局快捷键") { pageName = "窗口与操作"; cardTitle = title; }
-                else if (title == "管理 AI 与顶栏排序") { pageName = "AI 服务"; cardTitle = "AI 列表与顺序"; }
-                else if (title == "窗口外观") { pageName = "外观"; cardTitle = "窗口外观"; }
-                else if (title == "顶栏按钮颜色") { pageName = "外观"; cardTitle = title; }
-                else if (title == "设置备份") { pageName = "备份与恢复"; cardTitle = title; }
+                if (title == "任务栏图标") { pageName = "任务栏"; groupTitle = "任务栏入口"; }
+                else if (title == "截图") { pageName = "任务栏"; groupTitle = title; }
+                else if (title == "全局快捷键") { pageName = "窗口与操作"; groupTitle = title; }
+                else if (title == "管理 AI 与顶栏排序") { pageName = "AI 服务"; groupTitle = "AI 列表与顺序"; }
+                else if (title == "窗口外观") { pageName = "外观"; groupTitle = "窗口外观"; }
+                else if (title == "顶栏按钮颜色") { pageName = "外观"; groupTitle = title; }
+                else if (title == "设置备份") { pageName = "备份与恢复"; groupTitle = title; }
                 continue;
             }
-            if (ReferenceEquals(element, provider)) { Flush(); pageName = "AI 服务"; cardTitle = "默认 AI"; }
-            if (ReferenceEquals(element, floatingMode)) { Flush(); pageName = "窗口与操作"; cardTitle = "窗口行为"; }
-            if (ReferenceEquals(element, backplateTransparency)) { Flush(); pageName = "外观"; cardTitle = "顶栏背板"; }
-            if (ReferenceEquals(element, buttonRadius)) { Flush(); pageName = "外观"; cardTitle = "按钮与提示"; }
-            if (ReferenceEquals(element, followCorners)) { Flush(); pageName = "外观"; cardTitle = "网页圆角"; }
-            if (ReferenceEquals(element, taskbarSize)) { Flush(); pageName = "任务栏"; cardTitle = "任务栏入口"; }
-            cardContent.Children.Add(element);
+            if (ReferenceEquals(element, provider)) { Flush(); pageName = "AI 服务"; groupTitle = "默认 AI"; }
+            if (ReferenceEquals(element, floatingMode)) { Flush(); pageName = "窗口与操作"; groupTitle = "窗口行为"; }
+            if (ReferenceEquals(element, backplateTransparency)) { Flush(); pageName = "外观"; groupTitle = "顶栏背板"; }
+            if (ReferenceEquals(element, buttonRadius)) { Flush(); pageName = "外观"; groupTitle = "按钮与提示"; }
+            if (ReferenceEquals(element, followCorners)) { Flush(); pageName = "外观"; groupTitle = "网页圆角"; }
+            if (ReferenceEquals(element, taskbarSize)) { Flush(); pageName = "任务栏"; groupTitle = "任务栏入口"; }
+            group.Add(element);
         }
         Flush();
         pages["外观"].Children.Insert(0, CreateAppearancePreview());
@@ -106,19 +84,11 @@ internal sealed partial class SettingsPage
 
     FrameworkElement SliderRow(Slider slider)
     {
-        // Keep WinUI's native slider template (including keyboard, focus and high-contrast states),
-        // while giving the track and thumb the softer proportions used by the settings references.
-        slider.Height = 42;
-        slider.CornerRadius = new CornerRadius(999);
-        slider.Resources["SliderTrackThemeHeight"] = 7d;
-        slider.Resources["SliderHorizontalThumbWidth"] = 26d;
-        slider.Resources["SliderHorizontalThumbHeight"] = 26d;
-
         string label = slider.Header?.ToString() ?? ""; slider.Header = null;
         var row = new Grid { ColumnSpacing = 10, RowSpacing = 3 };
         row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         row.RowDefinitions.Add(new() { Height = GridLength.Auto }); row.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center });
+        row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap });
         var value = new TextBox { Text = ((int)slider.Value).ToString(), Width = 64, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, Padding = new Thickness(4, 2, 4, 2) };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(value, label + "数值");
         Grid.SetColumn(value, 1); row.Children.Add(value);
@@ -143,9 +113,9 @@ internal sealed partial class SettingsPage
         previewPlate = new BackplateSurface { Padding = new Thickness(10), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 218, 228, 231)),
             CornerRadius = new CornerRadius(UiDefaults.BackplateRadius) };
         previewPlate.SetSurfaceContent(content);
-        var card = new StackPanel { Spacing = 8 };
-        card.Children.Add(new TextBlock { Text = "实时预览", FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        card.Children.Add(new TextBlock { Text = "按钮、底部状态提示和背板会随设置即时更新。", Foreground = new SolidColorBrush(HighContrast ? TextColor() : Windows.UI.Color.FromArgb(255, 95, 107, 112)), TextWrapping = TextWrapping.Wrap });
+        var sample = new StackPanel { Spacing = 8 };
+        sample.Children.Add(Section("实时预览"));
+        sample.Children.Add(PanelTheme.Hint("按钮、底部状态提示和背板会随设置即时更新。"));
         var previewBackdrop = new Grid { MinHeight = 110 };
         previewBackdrop.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         previewBackdrop.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -154,8 +124,8 @@ internal sealed partial class SettingsPage
         Grid.SetColumn(lightBackdrop, 1); previewBackdrop.Children.Add(lightBackdrop);
         Grid.SetColumnSpan(previewPlate, 2);
         previewBackdrop.Children.Add(previewPlate);
-        card.Children.Add(previewBackdrop);
-        return new Border { Padding = new Thickness(14), CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(HighContrast ? TextColor() : Windows.UI.Color.FromArgb(255, 224, 231, 234)), Background = new SolidColorBrush(SurfaceColor()), Child = card };
+        sample.Children.Add(previewBackdrop);
+        return sample;
     }
 
     void UpdateAppearancePreview()

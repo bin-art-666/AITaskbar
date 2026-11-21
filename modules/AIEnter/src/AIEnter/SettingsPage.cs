@@ -26,7 +26,7 @@ internal sealed partial class SettingsPage : UserControl
     readonly Slider glowRange = Slider("光晕范围", 0, 12);
     readonly Slider glowIntensity = Slider("光晕强度（%）", 0, 100);
     readonly TextBox hotkey = new() { Header = "全局快捷键", PlaceholderText = "点击后按下快捷键，例如 Ctrl+Alt+Space", IsReadOnly = true };
-    readonly TextBlock status = PanelTheme.Hint("外观调整实时预览，保存后记住；关闭撤销未保存的预览。");
+    readonly TextBlock status = PanelTheme.Hint("");
     bool syncing = true, resetPanelSize;
     readonly HashSet<int> pressedModifiers = [];
     readonly Action<AiOptions> saveOptions;
@@ -36,11 +36,12 @@ internal sealed partial class SettingsPage : UserControl
     { Header = header, Minimum = min, Maximum = max, StepFrequency = 1, TickFrequency = 0 };
     static TextBlock Section(string title) => new() { Text = title, FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(0, 10, 0, 0) };
 
-    internal SettingsPage(AiOptionsStore options, Action<AiOptions> saveOptions, string? hotkeyWarning, Window host)
+    internal SettingsPage(AiOptionsStore options, Action<AiOptions> saveOptions, string? hotkeyWarning, Window host,
+        AITaskbar.SettingsPaneWidths widths)
     {
         this.options = options; this.saveOptions = saveOptions; initialHotkeyWarning = hotkeyWarning;
         pickerWindow = WinRT.Interop.WindowNative.GetWindowHandle(host);
-        var layout = new Grid { Padding = new Thickness(14), RowSpacing = 8 };
+        var layout = new Grid();
         layout.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var fields = new StackPanel { Spacing = 16 };
@@ -100,30 +101,25 @@ internal sealed partial class SettingsPage : UserControl
         };
         fields.Children.Add(defaults);
         InitializeSettingsTransfer(fields);
-        var pages = new Dictionary<string, StackPanel>();
         var pageNames = new[] { "AI 服务", "窗口与操作", "任务栏", "外观", "备份与恢复" };
-        var pageHost = new Grid();
-        foreach (var name in pageNames) { var page = new StackPanel { Spacing = 12 }; pages[name] = page; pageHost.Children.Add(new ScrollViewer { Content = page, Tag = name, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Visibility = name == "AI 服务" ? Visibility.Visible : Visibility.Collapsed }); }
-        var sidebar = new StackPanel { Spacing = 5, Width = 132 };
-        foreach (var name in pageNames) { var nav = new Button { Content = name, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Tag = name, Padding = new Thickness(12, 9, 10, 9) }; nav.Click += (_, _) => SelectPage((string)nav.Tag, pageHost, pages, sidebar); sidebar.Children.Add(nav); }
-        var contentGrid = new Grid { ColumnSpacing = 16 };
-        contentGrid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); contentGrid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        contentGrid.Children.Add(sidebar); Grid.SetColumn(pageHost, 1); contentGrid.Children.Add(pageHost); Grid.SetRow(contentGrid, 0); layout.Children.Add(contentGrid);
+        var pages = pageNames.ToDictionary(name => name, _ => new StackPanel());
         var settingsChildren = fields.Children.ToArray();
-        foreach (var child in settingsChildren) fields.Children.Remove(child);
-        // Existing controls retain their state while navigation only changes visibility.
+        fields.Children.Clear();
         ArrangeSettingsPages(settingsChildren, pages);
-        SelectPage("AI 服务", pageHost, pages, sidebar);
-        var bottom = new StackPanel { Spacing = 8, Padding = new Thickness(10), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(SurfaceColor()) };
-        bottom.Children.Add(status);
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var dirtyLabel = new TextBlock { Text = "所有更改已保存", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0,0,12,0) };
-        var save = new Button { Content = "保存设置", IsEnabled = false }; save.Click += (_, _) => Save();
-        var discard = new Button { Content = "放弃更改", IsEnabled = false }; discard.Click += (_, _) => DiscardDraft();
-        bottom.Children.Add(dirtyLabel);
-        actions.Children.Add(discard); actions.Children.Add(save); bottom.Children.Add(actions);
-        dirtyStatus = dirtyLabel; saveButton = save; discardButton = discard;
-        Grid.SetRow(bottom, 1); layout.Children.Add(bottom);
+        var nav = AITaskbar.SettingsNavigation.Sidebar(132);
+        foreach (var name in pageNames)
+            nav.MenuItems.Add(new NavigationViewItem { Content = name, Tag = AITaskbar.SettingsNavigation.Subpage(name, pages[name]) });
+        var compact = AITaskbar.SettingsNavigation.ConnectSubpages(nav, item => item.Tag);
+        layout.Children.Add(new AITaskbar.SettingsSplitView(nav, widths, AITaskbar.SettingsSection.AIEnter,
+            (length, condensed) => { nav.OpenPaneLength = length; nav.IsPaneVisible = !condensed; }, compact));
+
+        saveButton = new Button { Content = "保存", IsEnabled = false };
+        discardButton = new Button { Content = "取消", IsEnabled = false };
+        saveButton.Click += (_, _) => Save();
+        discardButton.Click += (_, _) => DiscardDraft();
+        var footer = AITaskbar.SettingsNavigation.Footer(status, discardButton, saveButton);
+        Grid.SetRow(footer, 1);
+        layout.Children.Add(footer);
         Content = layout;
         Reload();
     }
@@ -136,7 +132,7 @@ internal sealed partial class SettingsPage : UserControl
         hotkey.Text = value.Hotkey;
         followCorners.IsOn = value.FollowGlobalCorners; radius.Value = value.WebCornerRadius;
         LoadAppearance(value.Appearance ?? new());
-        status.Text = initialHotkeyWarning is not null ? "快捷键未能注册：" + initialHotkeyWarning : options.Warning ?? "调整会先预览；保存后生效。";
+        status.Text = initialHotkeyWarning is not null ? "快捷键未能注册：" + initialHotkeyWarning : options.Warning ?? "";
         syncing = false; RefreshFields(); savedSnapshot = Snapshot(); RefreshDirty();
     }
     void LoadVisualDefaults()

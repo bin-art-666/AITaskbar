@@ -9,7 +9,7 @@ internal sealed partial class SettingsPage : Grid
 {
     readonly StationWindow owner;
     readonly Window settingsHost;
-    readonly NavigationView nav = new() { IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed, IsSettingsVisible = false, IsPaneToggleButtonVisible = false, PaneDisplayMode = NavigationViewPaneDisplayMode.Left, OpenPaneLength = 128, IsPaneOpen = true };
+    readonly NavigationView nav = AITaskbar.SettingsNavigation.Sidebar(128);
     readonly Button save = new() { Content = "保存" };
     readonly Button cancel = new() { Content = "取消" };
     readonly TextBlock saveError = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
@@ -36,7 +36,7 @@ internal sealed partial class SettingsPage : Grid
     readonly ComboBox sortMode = new();
     ScrollViewer storageSettingsPage = null!;
     internal Task PendingSave { get; private set; } = Task.CompletedTask;
-    internal SettingsPage(StationWindow owner, Window? settingsHost = null)
+    internal SettingsPage(StationWindow owner, Window? settingsHost = null, AITaskbar.SettingsPaneWidths? widths = null)
     {
         this.owner = owner;
         this.settingsHost = settingsHost ?? owner;
@@ -53,11 +53,6 @@ internal sealed partial class SettingsPage : Grid
             KeyboardAccelerators.Add(cancelShortcut);
         }
         Visibility = Visibility.Collapsed;
-        var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        nav.Background = transparent;
-        nav.Resources["NavigationViewDefaultPaneBackground"] = transparent;
-        nav.Resources["NavigationViewExpandedPaneBackground"] = transparent;
-        nav.Resources["NavigationViewContentBackground"] = transparent;
 
         var pages = new (string Tag, string Title, Action<StackPanel> Build)[]
         {
@@ -70,30 +65,27 @@ internal sealed partial class SettingsPage : Grid
         var pageByTag = new Dictionary<string, ScrollViewer>();
         foreach (var (tag, title, build) in pages)
         {
-            var page = new StackPanel { Padding = new Thickness(16), Spacing = 12 };
-            page.Children.Add(new TextBlock { Text = title, FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            build(page);
-            pageByTag[tag] = new ScrollViewer { Content = page, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Disabled };
-            if (tag == "window") storageSettingsPage = pageByTag[tag];
+            var body = new StackPanel();
+            build(body);
+            var page = AITaskbar.SettingsNavigation.Subpage(title, body);
+            pageByTag.Add(tag, page);
+            if (tag == "window") storageSettingsPage = page;
             nav.MenuItems.Add(new NavigationViewItem { Content = title, Tag = tag });
         }
-        nav.SelectedItem = nav.MenuItems[0];
-        nav.Content = pageByTag["appearance"];
-        nav.SelectionChanged += (_, e) => { if (e.SelectedItem is NavigationViewItem item && item.Tag is string tag && pageByTag.TryGetValue(tag, out var page)) nav.Content = page; };
+        var compact = AITaskbar.SettingsNavigation.ConnectSubpages(nav, item => pageByTag[(string)item.Tag]);
 
         save.Click += (_, _) => StartSave();
         cancel.Click += (_, _) => Reset();
         RegisterButton(save); RegisterButton(cancel);
         RegisterCheckBox(pinned); RegisterCheckBox(autoHide); RegisterCheckBox(hoverFlow);
         RegisterCheckBox(showInteractionBorders);
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8 };
-        buttons.Children.Add(cancel); buttons.Children.Add(save);
-        var footer = new StackPanel { Spacing = 6, Padding = new Thickness(16, 10, 16, 12) };
-        footer.Children.Add(saveError); footer.Children.Add(buttons);
+        var footer = AITaskbar.SettingsNavigation.Footer(saveError, cancel, save);
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         SetRow(footer, 1);
-        Children.Add(nav); Children.Add(footer);
+        Children.Add(widths is null ? nav : new AITaskbar.SettingsSplitView(nav, widths, AITaskbar.SettingsSection.Halo,
+            (length, condensed) => { nav.OpenPaneLength = length; nav.IsPaneVisible = !condensed; }, compact));
+        Children.Add(footer);
     }
 
     void StartSave()

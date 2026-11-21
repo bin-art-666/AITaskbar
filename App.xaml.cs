@@ -160,7 +160,7 @@ public partial class App : Application
         if (shuttingDown) return;
         if (settingsWindow is null)
         {
-            settingsWindow = new TaskbarSettingsWindow(this);
+            settingsWindow = new TaskbarSettingsWindow(this, root);
             _ = settingsWindow.ResetGlassAsync();
         }
         settingsWindow.Select(section);
@@ -176,6 +176,7 @@ public partial class App : Application
     }
 
     internal int IconSize => iconSize;
+    internal PreviewModuleIcons? ModuleIcons => preview?.ModuleIcons;
     internal Color? IndicatorColor => indicatorColor;
     internal void FocusPreview() => preview?.Activate();
     internal LumaBar.BarAppearance? BarAppearance => appearance.CurrentBarAppearance;

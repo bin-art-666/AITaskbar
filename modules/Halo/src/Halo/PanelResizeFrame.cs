@@ -9,14 +9,17 @@ internal sealed class PanelResizeFrame : IDisposable
     readonly Func<bool> enabled;
     readonly Action frameChanged;
     readonly Func<Microsoft.UI.Xaml.CornerRadius> corners;
+    readonly (int Width, int Height)? minimumSize;
     readonly Procedure procedure;
     static readonly UIntPtr Id = new(0x41495246);
     (int Width, int Height, int Diameter) appliedRegion;
     bool disposed;
     delegate IntPtr Procedure(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, UIntPtr id, UIntPtr data);
-    internal PanelResizeFrame(IntPtr window, Func<bool> enabled, Action frameChanged, Func<Microsoft.UI.Xaml.CornerRadius> corners)
+    internal PanelResizeFrame(IntPtr window, Func<bool> enabled, Action frameChanged, Func<Microsoft.UI.Xaml.CornerRadius> corners,
+        (int Width, int Height)? minimumSize = null)
     {
-        this.window = window; this.corners = corners; this.enabled = enabled; this.frameChanged = frameChanged; procedure = Handle;
+        this.window = window; this.corners = corners; this.enabled = enabled; this.frameChanged = frameChanged;
+        this.minimumSize = minimumSize; procedure = Handle;
         if (!SetWindowSubclass(window, procedure, Id, UIntPtr.Zero)) throw new InvalidOperationException("无法初始化 AI 窗口边框。");
         SetWindowPos(window, IntPtr.Zero, 0, 0, 0, 0, 0x0037);
     }
@@ -69,6 +72,16 @@ internal sealed class PanelResizeFrame : IDisposable
     {
         if (!disposed)
         {
+            if (message == 0x0024 && lParam != IntPtr.Zero && minimumSize is { } size) // WM_GETMINMAXINFO
+            {
+                var result = DefSubclassProc(hwnd, message, wParam, lParam);
+                double scale = Native.GetDpiForWindow(hwnd) / 96d;
+                var info = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+                info.Minimum.X = Math.Max(info.Minimum.X, (int)Math.Round(size.Width * scale));
+                info.Minimum.Y = Math.Max(info.Minimum.Y, (int)Math.Round(size.Height * scale));
+                Marshal.StructureToPtr(info, lParam, false);
+                return result;
+            }
             if (message is 0x007D or 0x02E0 or 0x031E) frameChanged(); // style, DPI, DWM composition changes
             if (message == 0x0083 && wParam != IntPtr.Zero) return IntPtr.Zero; // WM_NCCALCSIZE: client fills window.
             // WinUI may consume a non-client pointer after the custom hit test.
@@ -104,6 +117,11 @@ internal sealed class PanelResizeFrame : IDisposable
             }
         }
         return DefSubclassProc(hwnd, message, wParam, lParam);
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MinMaxInfo
+    {
+        public Native.Point Reserved, MaximumSize, MaximumPosition, Minimum, Maximum;
     }
     internal void VerifyEdges()
     {

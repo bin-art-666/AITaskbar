@@ -83,10 +83,10 @@ public partial class App
     internal static void OpenSettings()
         => ((AITaskbar.App)Application.Current).ShowSettings(AITaskbar.SettingsSection.Halo);
 
-    internal SettingsPage CreateSettingsPage(Window host)
+    internal SettingsPage CreateSettingsPage(Window host, AITaskbar.SettingsPaneWidths widths)
     {
         Panel ??= new StationWindow();
-        var page = new SettingsPage(Panel, host) { Visibility = Visibility.Visible };
+        var page = new SettingsPage(Panel, host, widths) { Visibility = Visibility.Visible };
         page.Reset();
         return page;
     }
