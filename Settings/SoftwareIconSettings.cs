@@ -40,6 +40,8 @@ internal sealed partial class TaskbarSettingsWindow
         var windowSpeed = FeedbackSlider("窗口开合速度", PreviewIconLayout.MinWindowDurationMs, PreviewIconLayout.MaxWindowDurationMs);
         windowSpeed.LargeChange = 50;
         var windowSpeedValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center, MinWidth = 72 };
+        var recentFiles = new ToggleSwitch();
+        AutomationProperties.SetName(recentFiles, "显示最近文件");
 
         bool syncing = false;
         void Sync()
@@ -54,6 +56,7 @@ internal sealed partial class TaskbarSettingsWindow
             windowSpeed.IsEnabled = app.IconLayout.WindowAnimation == WindowAnimationStyle.Curved;
             windowSpeed.Value = app.IconLayout.EffectiveWindowDurationMs;
             windowSpeedValue.Text = $"{app.IconLayout.EffectiveWindowDurationMs} 毫秒";
+            recentFiles.IsOn = app.IconLayout.ShowRecentFiles;
             syncing = false;
             preview.ApplyLayout(app.IconSize, app.IconLayout);
         }
@@ -88,6 +91,12 @@ internal sealed partial class TaskbarSettingsWindow
             app.TrySetIconLayout(app.IconLayout with { WindowDurationMs = (int)Math.Round(args.NewValue) });
             Sync();
         };
+        recentFiles.Toggled += (_, _) =>
+        {
+            if (syncing || recentFiles.IsOn == app.IconLayout.ShowRecentFiles) return;
+            app.TrySetIconLayout(app.IconLayout with { ShowRecentFiles = recentFiles.IsOn });
+            Sync();
+        };
 
         page.Children.Add(IconSettingsHeading("图标布局"));
         page.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
@@ -95,6 +104,7 @@ internal sealed partial class TaskbarSettingsWindow
         page.Children.Add(SettingRow("滚动动画", "运行区图标溢出时生效。关闭后仍可用滚轮切换。", animation));
         page.Children.Add(SettingRow("窗口开合动画", "适用于预览栏和窗口标题栏的开合操作。", windowAnimation));
         page.Children.Add(SettingRow("窗口开合速度", "曲面动画可调节为 200–1000 毫秒。Windows 风格使用 200 毫秒。", Actions(windowSpeed, windowSpeedValue)));
+        page.Children.Add(SettingRow("显示最近文件", "在 Chrome 右键菜单中显示 Windows 提供的最近文件。", recentFiles));
         BuildAppFeedbackSettings(page, preview.ApplyFeedback);
         page.Children.Add(IconSettingsHeading("单个应用的图标"));
         BuildSoftwareIconSettings(page);

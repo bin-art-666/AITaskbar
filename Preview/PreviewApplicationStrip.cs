@@ -907,7 +907,7 @@ internal sealed class PreviewApplicationStrip
     private void SetAppMenu(AppButton view)
     {
         var menu = NewMenu();
-        void Populate(AppGroup group, IReadOnlyList<AppGroup> current)
+        void Populate(AppGroup group, IReadOnlyList<AppGroup> current, bool readRecent = false)
         {
             menu.Items.Clear();
             var theme = view.Button.ActualTheme;
@@ -924,6 +924,8 @@ internal sealed class PreviewApplicationStrip
                 menu.Items.Add(AppMenuItem(theme, "新建窗口", AppMenuIcon.NewWindow, () => Launch(group, arguments)));
             if (privateWindow is { } task)
                 menu.Items.Add(AppMenuItem(theme, task.Text, AppMenuIcon.PrivateWindow, () => Launch(group, task.Arguments)));
+            if (readRecent && iconLayout.ShowRecentFiles && app == "chrome.exe")
+                AddChromeRecentFiles(menu, group, theme);
             if (PinItem(group, theme) is { } pin) menu.Items.Add(pin);
             if (group.Windows.Count == 0) return;
 
@@ -944,13 +946,29 @@ internal sealed class PreviewApplicationStrip
         menu.Opening += (_, _) =>
         {
             var current = windowMotion.HasRectangularRequest ? groups : AppGroups.Build(pins.Items, RunningWindows.List());
-            Populate(FindApp(current, view.Group.Key) ?? view.Group, current);
+            Populate(FindApp(current, view.Group.Key) ?? view.Group, current, readRecent: true);
         };
         view.Button.ContextFlyout = menu;
     }
 
     private static AppGroup? FindApp(IEnumerable<AppGroup> apps, string key) =>
         apps.FirstOrDefault(app => StringComparer.OrdinalIgnoreCase.Equals(app.Key, key));
+
+    private void AddChromeRecentFiles(MenuFlyout menu, AppGroup group, ElementTheme theme)
+    {
+        var files = ChromeRecentFiles.Read(group);
+        if (files.Length == 0) return;
+        var recent = new MenuFlyoutSubItem { Text = "最近文件", Icon = appMenuIcons.Create(AppMenuIcon.RecentFile, theme) };
+        foreach (string path in files)
+        {
+            recent.Items.Add(AppMenuItem(theme, Path.GetFileName(path), AppMenuIcon.RecentFile, () =>
+            {
+                if (!ChromeRecentFiles.IsAvailable(path)) { report("文件已移动或无法访问。"); return; }
+                Launch(group, new Uri(path).AbsoluteUri);
+            }));
+        }
+        menu.Items.Add(recent);
+    }
 
     private MenuFlyoutItem AppMenuItem(ElementTheme theme, string text, AppMenuIcon icon, Action action, bool enabled = true)
     {
@@ -1042,19 +1060,21 @@ internal sealed class PreviewApplicationStrip
         report("");
     }
 
-    private bool Launch(AppGroup group, string? arguments = null)
+    private bool Launch(AppGroup group, string? argument = null)
     {
         try
         {
-            if (arguments is null && group.PinAppId is { } appId) PackagedAppPin.Launch(appId);
+            if (argument is null && group.PinAppId is { } appId) PackagedAppPin.Launch(appId);
             else
             {
                 var executable = group.Executable;
                 if (!RunningWindows.CanPin(executable)) throw new FileNotFoundException("应用已移动或无法启动。");
-                using var process = Process.Start(new ProcessStartInfo(executable!)
+                var start = new ProcessStartInfo(executable!)
                 {
-                    UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(executable), Arguments = arguments ?? ""
-                });
+                    UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(executable)
+                };
+                if (argument is not null) start.ArgumentList.Add(argument);
+                using var process = Process.Start(start);
             }
             report("");
             return true;

@@ -10,7 +10,7 @@ using Windows.UI.ViewManagement;
 
 namespace AITaskbar;
 
-internal enum AppMenuIcon { Open, NewWindow, PrivateWindow, Pin, Unpin, CloseWindow, CloseAllWindows, EndTask, Empty }
+internal enum AppMenuIcon { Open, NewWindow, PrivateWindow, RecentFile, Pin, Unpin, CloseWindow, CloseAllWindows, EndTask, Empty }
 
 internal sealed class AppMenuFlyoutItem : MenuFlyoutItem
 {
@@ -102,6 +102,11 @@ internal sealed class AppMenuIcons(UISettings system, AccessibilitySettings acce
                     Line(8.35f, Center, 9.65f, Center);
                     Line(4.25f, 7.75f, 5.35f, 8.65f);
                     Line(12.65f, 8.65f, 13.75f, 7.75f);
+                    break;
+                case AppMenuIcon.RecentFile:
+                    drawing.DrawRoundedRectangle(5.9f, 4.9f, 6.2f, 8.2f, .75f, .75f, palette.Ink, 1);
+                    Line(7.7f, 8.0f, 10.3f, 8.0f);
+                    Line(7.7f, 10.1f, 10.3f, 10.1f);
                     break;
                 case AppMenuIcon.Pin:
                 case AppMenuIcon.Unpin:

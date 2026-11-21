@@ -141,7 +141,7 @@ internal static class RunningWindows
     private static bool IsPackagedExecutable(string? executable) =>
         executable?.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) == true;
 
-    private static string? WindowAppId(nint handle)
+    internal static string? WindowAppId(nint handle)
     {
         if (SHGetPropertyStoreForWindow(handle, typeof(IPropertyStore).GUID, out var store) < 0 || store is null)
             return null;
