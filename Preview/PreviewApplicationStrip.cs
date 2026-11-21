@@ -651,14 +651,15 @@ internal sealed class PreviewApplicationStrip
         }
     }
 
-    private bool AnimateWindows => system.AnimationsEnabled && !accessibility.HighContrast;
+    private bool UseCurvedWindowAnimation => iconLayout.WindowAnimation == WindowAnimationStyle.Curved &&
+        system.AnimationsEnabled && !accessibility.HighContrast;
 
     internal void EnableTitleBarMinimize() =>
         titleBarMinimize ??= new TitleBarMinimizeHook(items.DispatcherQueue, FindTitleBarWindow, MinimizeFromTitleBar);
 
     private RunningWindow? FindTitleBarWindow(nint handle)
     {
-        if (handle == 0 || !AnimateWindows || !items.IsLoaded) return null;
+        if (handle == 0 || !UseCurvedWindowAnimation || !items.IsLoaded) return null;
         foreach (var view in Shown)
         {
             var window = view.Group.Windows.FirstOrDefault(window => window.Handle == handle);
@@ -672,7 +673,7 @@ internal sealed class PreviewApplicationStrip
     {
         if (!RunningWindows.IsCurrent(window) || RunningWindows.IsMinimized(window)) return;
         var view = Shown.FirstOrDefault(view => view.Group.Windows.Contains(window));
-        var origin = AnimateWindows && view is not null ? WindowMotionNative.ScreenBounds(owner, view.IconPlate) : null;
+        var origin = UseCurvedWindowAnimation && view is not null ? WindowMotionNative.ScreenBounds(owner, view.IconPlate) : null;
         if (origin is null)
         {
             TitleBarMinimizeHook.RequestNativeMinimize(window);
@@ -687,7 +688,7 @@ internal sealed class PreviewApplicationStrip
         windowAction?.Cancel();
         if (group.Windows.Count == 0)
         {
-            if (!Launch(group) || !AnimateWindows) return;
+            if (!Launch(group) || !UseCurvedWindowAnimation) return;
             WindowMotion.Pulse(plate);
             if (WindowMotionNative.ScreenBounds(owner, plate) is { } origin)
             {
@@ -721,7 +722,7 @@ internal sealed class PreviewApplicationStrip
         bool minimize = toggle && !minimized &&
             (current == window.Handle || foreground == window.Handle && AIEnter.Native.PanelHasFocus(owner));
         if (!minimize && !minimized) { Activate(window); return; }
-        var origin = AnimateWindows ? WindowMotionNative.ScreenBounds(owner, plate) : null;
+        var origin = UseCurvedWindowAnimation ? WindowMotionNative.ScreenBounds(owner, plate) : null;
         if (minimize)
         {
             MinimizeWindow(window, origin);

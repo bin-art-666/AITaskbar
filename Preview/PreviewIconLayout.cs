@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 namespace AITaskbar;
 
 internal enum IconScrollAnimation { Off, Fast, Standard, Relaxed }
+internal enum WindowAnimationStyle { Curved, WindowsDefault }
 
 internal sealed record PreviewIconLayout
 {
@@ -14,6 +15,8 @@ internal sealed record PreviewIconLayout
     public int Gap { get; init; } = DefaultGap;
     [JsonConverter(typeof(JsonStringEnumConverter<IconScrollAnimation>))]
     public IconScrollAnimation Animation { get; init; } = IconScrollAnimation.Standard;
+    [JsonConverter(typeof(JsonStringEnumConverter<WindowAnimationStyle>))]
+    public WindowAnimationStyle WindowAnimation { get; init; } = WindowAnimationStyle.WindowsDefault;
     public int WindowDurationMs { get; init; } = DefaultWindowDurationMs;
 
     internal int DurationMs => Animation switch
@@ -39,6 +42,7 @@ internal sealed record PreviewIconLayout
                 {
                     Gap = Math.Clamp(value.Gap, MinGap, MaxGap),
                     Animation = Enum.IsDefined(value.Animation) ? value.Animation : Default.Animation,
+                    WindowAnimation = Enum.IsDefined(value.WindowAnimation) ? value.WindowAnimation : Default.WindowAnimation,
                     WindowDurationMs = Math.Clamp(duration, MinWindowDurationMs, MaxWindowDurationMs)
                 };
             }
