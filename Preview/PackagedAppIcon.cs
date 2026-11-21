@@ -5,7 +5,25 @@ namespace AITaskbar;
 
 internal static class PackagedAppIcon
 {
+    internal const string StoreAppId = "Microsoft.WindowsStore_8wekyb3d8bbwe!App";
     private const uint ShellIcon = 0x100, ItemIdList = 0x8;
+
+    internal static Bitmap? LoadStoreIconForLightBackground()
+    {
+        try
+        {
+            var package = Windows.ApplicationModel.AppInfo.GetFromAppUserModelId(StoreAppId)?.Package;
+            if (package is null) return null;
+            string tiles = Path.Combine(package.InstalledLocation.Path, "Assets", "AppTiles");
+            foreach (int size in new[] { 96, 48, 32 })
+            {
+                string path = Path.Combine(tiles, $"StoreAppList.targetsize-{size}_altform-lightunplated.png");
+                if (File.Exists(path)) return new Bitmap(path);
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or ExternalException) { }
+        return null;
+    }
 
     internal static Bitmap? Load(string appId)
     {

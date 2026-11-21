@@ -11,11 +11,14 @@ internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage Graphic,
     {
         using var bitmap = LoadArtwork(executable, appId);
         if (bitmap is null) return null;
-        var (bounds, hasPlate, luminance) = Measure(bitmap);
+        using var storeIcon = StringComparer.OrdinalIgnoreCase.Equals(appId, PackagedAppIcon.StoreAppId)
+            ? PackagedAppIcon.LoadStoreIconForLightBackground() : null;
+        var artwork = storeIcon ?? bitmap;
+        var (bounds, hasPlate, luminance) = Measure(artwork);
         var original = ToImage(bitmap);
         if (bounds.IsEmpty) return null;
-        if (hasPlate && executable is not null) bounds = RemoveTtCloudFrame(executable, bitmap, bounds);
-        using var foreground = bitmap.Clone(bounds, PixelFormat.Format32bppArgb);
+        if (hasPlate && executable is not null) bounds = RemoveTtCloudFrame(executable, artwork, bounds);
+        using var foreground = artwork.Clone(bounds, PixelFormat.Format32bppArgb);
         if (!hasPlate) return new(original, ToImage(foreground), false, luminance);
         using var plate = RoundedPlate(foreground);
         return new(original, ToImage(plate), true, luminance);

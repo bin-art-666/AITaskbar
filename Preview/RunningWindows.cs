@@ -11,7 +11,6 @@ internal static class RunningWindows
     private const long AppWindow = 0x00040000, ToolWindow = 0x00000080, NoActivate = 0x08000000;
     private const ushort VariantWideString = 31;
     private const string PhotosAppId = "Microsoft.OneDrive.Photos_8wekyb3d8bbwe!OneDrive.App";
-    private const string StoreAppId = "Microsoft.WindowsStore_8wekyb3d8bbwe!App";
     private static readonly PropertyKey appUserModelId = new(new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5);
     internal static readonly string SystemSettingsExecutable = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.Windows), "ImmersiveControlPanel", "SystemSettings.exe");
@@ -46,7 +45,7 @@ internal static class RunningWindows
             bool settings = StringComparer.OrdinalIgnoreCase.Equals(appId, PackagedAppPin.SettingsId);
             var pinAppId = PackagedAppPin.Name(appId) is not null ? appId : null;
             var iconAppId = StringComparer.OrdinalIgnoreCase.Equals(appId, PhotosAppId) ||
-                StringComparer.OrdinalIgnoreCase.Equals(appId, StoreAppId) ? appId : null;
+                StringComparer.OrdinalIgnoreCase.Equals(appId, PackagedAppIcon.StoreAppId) ? appId : null;
             windows.Add(new(handle, processId, title, process.Executable,
                 settings ? SystemSettingsExecutable : null, iconAppId, pinAppId));
             return true;
