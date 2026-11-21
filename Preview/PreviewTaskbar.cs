@@ -81,6 +81,7 @@ internal sealed class PreviewTaskbar : Window
         {
             closed = true;
             refresh.Stop();
+            tasks.CloseThumbnails();
             icons.Dispose();
             visual.Dispose();
             bar?.Dispose();

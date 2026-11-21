@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Microsoft.UI.Dispatching;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -32,6 +34,11 @@ internal sealed class PreviewApplicationStrip
     private Color? indicatorColor;
     private double available = double.PositiveInfinity;
     private FlyoutBase? openFlyout;
+    private readonly DispatcherQueueTimer hoverTimer;
+    private WindowThumbnailPopup? thumbnails;
+    private Button? hoverAnchor;
+    private string? thumbnailGroup;
+    private IReadOnlyList<RunningWindow>? thumbnailWindows;
     private Button? more;
     private Border? separator;
     private bool? dark, contrast;
@@ -48,6 +55,9 @@ internal sealed class PreviewApplicationStrip
         this.indicatorColor = indicatorColor;
         this.owner = owner;
         this.report = report;
+        hoverTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
+        hoverTimer.IsRepeating = false;
+        hoverTimer.Tick += (_, _) => UpdateThumbnails();
         Surface.ActualThemeChanged += (_, _) => { RefreshTheme(); UpdateIndicators(); };
     }
 
@@ -61,6 +71,10 @@ internal sealed class PreviewApplicationStrip
         else if (!AIEnter.Native.PanelHasFocus(owner))
             foreground = 0;
         Render();
+        if (thumbnailGroup is { } key && thumbnailWindows is { } opened &&
+            (groups.FirstOrDefault(group => StringComparer.OrdinalIgnoreCase.Equals(group.Key, key)) is not { } current
+                || !opened.SequenceEqual(current.Windows)))
+            DismissThumbnails();
     }
 
     public void SetAvailableWidth(double width)
@@ -95,6 +109,7 @@ internal sealed class PreviewApplicationStrip
         string[] next = [divided ? "divider:" + pinned : "", overflow ? "overflow" : "", .. order];
         if (layout is null || !layout.SequenceEqual(next, StringComparer.OrdinalIgnoreCase))
         {
+            DismissThumbnails();
             layout = next;
             items.Children.Clear();
             shown.Clear();
@@ -128,8 +143,9 @@ internal sealed class PreviewApplicationStrip
             if (view.Group.Name != group.Name)
             {
                 AutomationProperties.SetName(view.Button, group.Name);
-                ToolTipService.SetToolTip(view.Button, group.Name);
             }
+            if (view.Group.Name != group.Name || (view.Group.Windows.Count == 0) != (group.Windows.Count == 0))
+                ToolTipService.SetToolTip(view.Button, group.Windows.Count == 0 ? group.Name : null);
             if (view.Group.Pin != group.Pin) SetAppMenu(view, group);
             shown[index] = view with { Group = group };
         }
@@ -147,6 +163,28 @@ internal sealed class PreviewApplicationStrip
     private AppButton BuildButton(AppGroup group)
     {
         var button = IconButton(group.Name, "\uE7C5", glyph: true);
+        if (group.Windows.Count > 0) ToolTipService.SetToolTip(button, null);
+        button.PointerEntered += (_, args) =>
+        {
+            if (args.Pointer.PointerDeviceType != PointerDeviceType.Mouse || openFlyout is not null) return;
+            var current = shown.FirstOrDefault(item => ReferenceEquals(item.Button, button));
+            if (current is null || current.Group.Windows.Count == 0) { DismissThumbnails(); return; }
+            hoverAnchor = button;
+            if (StringComparer.OrdinalIgnoreCase.Equals(thumbnailGroup, current.Group.Key)) hoverTimer.Stop();
+            else
+            {
+                thumbnails?.Dismiss();
+                thumbnailGroup = null;
+                thumbnailWindows = null;
+                ScheduleHover(400);
+            }
+        };
+        button.PointerExited += (_, _) =>
+        {
+            if (!ReferenceEquals(hoverAnchor, button)) return;
+            hoverAnchor = null;
+            ScheduleHover(260);
+        };
         var mark = new Border { Height = 3, CornerRadius = new CornerRadius(2), HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Bottom };
         var contents = new Grid { Width = iconSize, Height = iconSize + IndicatorSpace };
@@ -165,6 +203,7 @@ internal sealed class PreviewApplicationStrip
         button.Content = contents;
         button.Click += (_, _) =>
         {
+            DismissThumbnails();
             if (groups.FirstOrDefault(value => StringComparer.OrdinalIgnoreCase.Equals(value.Key, group.Key)) is { } current)
                 Open(current, button);
         };
@@ -284,12 +323,59 @@ internal sealed class PreviewApplicationStrip
     private MenuFlyout NewMenu()
     {
         var menu = new MenuFlyout { Placement = FlyoutPlacementMode.Top };
-        menu.Opening += (_, _) => openFlyout = menu;
+        menu.Opening += (_, _) => { DismissThumbnails(); openFlyout = menu; };
         menu.Closed += (_, _) =>
         {
             if (ReferenceEquals(openFlyout, menu)) openFlyout = null;
         };
         return menu;
+    }
+
+    private void ScheduleHover(int milliseconds)
+    {
+        hoverTimer.Stop();
+        hoverTimer.Interval = TimeSpan.FromMilliseconds(milliseconds);
+        hoverTimer.Start();
+    }
+
+    private void UpdateThumbnails()
+    {
+        if (hoverAnchor is not { } anchor || openFlyout is not null ||
+            shown.FirstOrDefault(view => ReferenceEquals(view.Button, anchor)) is not { } hovered || hovered.Group.Windows.Count == 0)
+        {
+            DismissThumbnails();
+            return;
+        }
+        try
+        {
+            thumbnails ??= new WindowThumbnailPopup(window => { Activate(window); DismissThumbnails(); },
+                () => hoverTimer.Stop(), () => ScheduleHover(260));
+            thumbnails.Open(owner, anchor, hovered.Group.Windows);
+            thumbnailGroup = hovered.Group.Key;
+            thumbnailWindows = hovered.Group.Windows;
+        }
+        catch (Exception error)
+        {
+            DismissThumbnails();
+            report("暂时无法显示窗口缩略图。");
+            Debug.WriteLine(error);
+        }
+    }
+
+    public void DismissThumbnails()
+    {
+        hoverAnchor = null;
+        thumbnailGroup = null;
+        thumbnailWindows = null;
+        hoverTimer.Stop();
+        thumbnails?.Dismiss();
+    }
+
+    public void CloseThumbnails()
+    {
+        DismissThumbnails();
+        thumbnails?.Close();
+        thumbnails = null;
     }
 
     private void SetAppMenu(AppButton view, AppGroup group)

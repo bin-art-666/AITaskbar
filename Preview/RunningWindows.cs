@@ -42,12 +42,15 @@ internal static class RunningWindows
 
     public static bool Activate(RunningWindow window)
     {
-        GetWindowThreadProcessId(window.Handle, out var processId);
-        if (processId != window.ProcessId || !IsWindowVisible(window.Handle)) return false;
+        if (!IsCurrent(window)) return false;
         if (IsIconic(window.Handle)) ShowWindowAsync(window.Handle, 9); // SW_RESTORE
         var popup = GetLastActivePopup(window.Handle);
         return SetForegroundWindow(popup != 0 && IsWindowVisible(popup) ? popup : window.Handle);
     }
+
+    public static bool IsCurrent(RunningWindow window) =>
+        GetWindowThreadProcessId(window.Handle, out var processId) != 0
+        && processId == window.ProcessId && IsWindowVisible(window.Handle);
 
     public static nint Foreground()
     {
