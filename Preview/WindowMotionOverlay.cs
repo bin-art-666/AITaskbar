@@ -24,16 +24,17 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
     private readonly CompositionGraphicsDevice graphics;
     private readonly CompositionDrawingSurface frame;
     private readonly CanvasBitmap image;
-    private readonly WindowMotionMesh mesh;
+    private readonly WindowMotionMesh? mesh;
     private readonly Rect window, icon, source, content;
     private int left, top, width, height;
     private bool visible;
 
-    internal WindowMotionOverlay(FrameworkElement owner, WindowMotionNative.Snapshot snapshot, Rect window, Rect icon)
+    internal WindowMotionOverlay(FrameworkElement owner, WindowMotionNative.Snapshot snapshot, Rect window, Rect icon,
+        WindowAnimationStyle style)
     {
         if (!owner.IsLoaded) throw new InvalidOperationException("The taskbar is no longer open.");
         left = (int)Math.Floor(Math.Min(window.Left, icon.Left)) - 1;
-        int bendMargin = WindowMotionMesh.BendMargin(window);
+        int bendMargin = style == WindowAnimationStyle.Curved ? WindowMotionMesh.BendMargin(window) : 1;
         top = (int)Math.Floor(Math.Min(window.Top, icon.Top)) - bendMargin;
         width = (int)Math.Ceiling(Math.Max(window.Right, icon.Right)) - left + 1;
         height = (int)Math.Ceiling(Math.Max(window.Bottom, icon.Bottom)) - top + bendMargin;
@@ -49,7 +50,8 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
             DirectXPixelFormat.B8G8R8A8UIntNormalized);
         try
         {
-            mesh = new WindowMotionMesh(device, image, this.window, this.icon, content);
+            if (style == WindowAnimationStyle.Curved)
+                mesh = new WindowMotionMesh(device, image, this.window, this.icon, content);
             graphics = CanvasComposition.CreateCompositionGraphicsDevice(compositor, device);
             frame = graphics.CreateDrawingSurface(new Size(width, height), Microsoft.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized,
                 Microsoft.Graphics.DirectX.DirectXAlphaMode.Premultiplied);
@@ -94,7 +96,10 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
             if (extent == 1)
                 DrawFlat(drawing, window);
             else if (extent > 0)
-                mesh.Draw(drawing, extent, opening);
+            {
+                if (mesh is not null) mesh.Draw(drawing, extent, opening);
+                else DrawFlat(drawing, RectangularBounds(extent));
+            }
         }
         visual.Opacity = (float)WindowMotionMesh.SmoothStep(0, .12, extent);
         if (visible) return;
@@ -104,6 +109,15 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
             throw new Win32Exception(Marshal.GetLastWin32Error());
         visible = true;
     }
+
+    private Rect RectangularBounds(double extent)
+    {
+        double progress = WindowMotionMesh.SmoothStep(0, 1, extent);
+        return new Rect(Mix(icon.X, window.X, progress), Mix(icon.Y, window.Y, progress),
+            Mix(icon.Width, window.Width, progress), Mix(icon.Height, window.Height, progress));
+    }
+
+    private static double Mix(double from, double to, double progress) => from + (to - from) * progress;
 
     internal void AlignFinalFrame(Rect bounds)
     {

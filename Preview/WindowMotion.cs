@@ -11,13 +11,14 @@ internal sealed class WindowMotion(FrameworkElement owner)
     private readonly Dictionary<(nint Handle, uint Process), WindowMotionNative.Snapshot> recent = [];
     private int capturing;
 
-    internal async Task<bool> MinimizeAsync(RunningWindow window, Rect icon, int duration, CancellationToken token)
+    internal async Task<bool> MinimizeAsync(RunningWindow window, Rect icon, WindowAnimationStyle style, int duration,
+        CancellationToken token)
     {
         var image = await CaptureAsync(window, token);
         if (image is null) return RunningWindows.Minimize(window);
         try
         {
-            using var overlay = new WindowMotionOverlay(owner, image, image.Bounds, icon);
+            using var overlay = new WindowMotionOverlay(owner, image, image.Bounds, icon, style);
             overlay.DrawFlatFrame();
             await PresentWindowAsync(token);
             using var transitions = new WindowMotionNative.NativeTransitionScope(window);
@@ -38,7 +39,8 @@ internal sealed class WindowMotion(FrameworkElement owner)
         }
     }
 
-    internal async Task<bool> RestoreAsync(RunningWindow window, Rect icon, int duration, CancellationToken token)
+    internal async Task<bool> RestoreAsync(RunningWindow window, Rect icon, WindowAnimationStyle style, int duration,
+        CancellationToken token)
     {
         var key = (window.Handle, window.ProcessId);
         recent.Remove(key, out var saved);
@@ -49,7 +51,7 @@ internal sealed class WindowMotion(FrameworkElement owner)
             using var transitions = new WindowMotionNative.NativeTransitionScope(window);
             using var restoreTransitions = token.Register(transitions.Dispose);
 
-            using var overlay = new WindowMotionOverlay(owner, image, image.Bounds, icon);
+            using var overlay = new WindowMotionOverlay(owner, image, image.Bounds, icon, style);
             await AnimateAsync(overlay, opening: true, duration, token);
             WindowMotionNative.DwmFlush();
             await Task.Delay(16, token);
@@ -70,7 +72,8 @@ internal sealed class WindowMotion(FrameworkElement owner)
         }
     }
 
-    internal async Task ExpandLaunchedAsync(RunningWindow window, Rect icon, int duration, CancellationToken token)
+    internal async Task ExpandLaunchedAsync(RunningWindow window, Rect icon, WindowAnimationStyle style, int duration,
+        CancellationToken token)
     {
         if (RunningWindows.IsMinimized(window)) return;
         var image = await CaptureAsync(window, token);
@@ -82,7 +85,7 @@ internal sealed class WindowMotion(FrameworkElement owner)
         if (image is null || RunningWindows.Foreground() != window.Handle) return;
         try
         {
-            using var overlay = new WindowMotionOverlay(owner, image, image.Bounds, icon);
+            using var overlay = new WindowMotionOverlay(owner, image, image.Bounds, icon, style);
             overlay.DrawTransition(0, opening: true);
             using var cloak = new WindowMotionNative.WindowCover(window);
             if (!cloak.Applied) return;

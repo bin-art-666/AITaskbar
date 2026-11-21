@@ -651,7 +651,7 @@ internal sealed class PreviewApplicationStrip
         }
     }
 
-    private bool UseCurvedWindowAnimation => iconLayout.WindowAnimation == WindowAnimationStyle.Curved &&
+    private bool UsePreviewWindowAnimation => iconLayout.UsesPreviewWindowAnimation &&
         system.AnimationsEnabled && !accessibility.HighContrast;
 
     internal void EnableTitleBarMinimize() =>
@@ -659,7 +659,7 @@ internal sealed class PreviewApplicationStrip
 
     private RunningWindow? FindTitleBarWindow(nint handle)
     {
-        if (handle == 0 || !UseCurvedWindowAnimation || !items.IsLoaded) return null;
+        if (handle == 0 || !UsePreviewWindowAnimation || !items.IsLoaded) return null;
         foreach (var view in Shown)
         {
             var window = view.Group.Windows.FirstOrDefault(window => window.Handle == handle);
@@ -673,7 +673,7 @@ internal sealed class PreviewApplicationStrip
     {
         if (!RunningWindows.IsCurrent(window) || RunningWindows.IsMinimized(window)) return;
         var view = Shown.FirstOrDefault(view => view.Group.Windows.Contains(window));
-        var origin = UseCurvedWindowAnimation && view is not null ? WindowMotionNative.ScreenBounds(owner, view.IconPlate) : null;
+        var origin = UsePreviewWindowAnimation && view is not null ? WindowMotionNative.ScreenBounds(owner, view.IconPlate) : null;
         if (origin is null)
         {
             TitleBarMinimizeHook.RequestNativeMinimize(window);
@@ -688,12 +688,13 @@ internal sealed class PreviewApplicationStrip
         windowAction?.Cancel();
         if (group.Windows.Count == 0)
         {
-            if (!Launch(group) || !UseCurvedWindowAnimation) return;
+            if (!Launch(group) || !UsePreviewWindowAnimation) return;
             WindowMotion.Pulse(plate);
             if (WindowMotionNative.ScreenBounds(owner, plate) is { } origin)
             {
-                int duration = iconLayout.WindowDurationMs;
-                _ = RunWindowAction(token => AnimateLaunchAsync(group.Key, origin, duration, token));
+                int duration = iconLayout.EffectiveWindowDurationMs;
+                var style = iconLayout.WindowAnimation;
+                _ = RunWindowAction(token => AnimateLaunchAsync(group.Key, origin, style, duration, token));
             }
         }
         else if (group.Windows.Count == 1) OpenWindow(group.Windows[0], plate, toggle: true);
@@ -722,7 +723,7 @@ internal sealed class PreviewApplicationStrip
         bool minimize = toggle && !minimized &&
             (current == window.Handle || foreground == window.Handle && AIEnter.Native.PanelHasFocus(owner));
         if (!minimize && !minimized) { Activate(window); return; }
-        var origin = UseCurvedWindowAnimation ? WindowMotionNative.ScreenBounds(owner, plate) : null;
+        var origin = UsePreviewWindowAnimation ? WindowMotionNative.ScreenBounds(owner, plate) : null;
         if (minimize)
         {
             MinimizeWindow(window, origin);
@@ -730,10 +731,11 @@ internal sealed class PreviewApplicationStrip
         }
         if (origin is not { } icon) { Activate(window); return; }
 
-        int duration = iconLayout.WindowDurationMs;
+        int duration = iconLayout.EffectiveWindowDurationMs;
+        var style = iconLayout.WindowAnimation;
         _ = RunWindowAction(async token =>
         {
-            if (await windowMotion.RestoreAsync(window, icon, duration, token))
+            if (await windowMotion.RestoreAsync(window, icon, style, duration, token))
                 ActivateIndicators(window);
             else report("暂时无法切换到该窗口。");
         });
@@ -746,9 +748,10 @@ internal sealed class PreviewApplicationStrip
             CompleteMinimize(window, RunningWindows.Minimize(window));
             return;
         }
-        int duration = iconLayout.WindowDurationMs;
+        int duration = iconLayout.EffectiveWindowDurationMs;
+        var style = iconLayout.WindowAnimation;
         _ = RunWindowAction(async token =>
-            CompleteMinimize(window, await windowMotion.MinimizeAsync(window, icon, duration, token)));
+            CompleteMinimize(window, await windowMotion.MinimizeAsync(window, icon, style, duration, token)));
     }
 
     private async Task RunWindowAction(Func<CancellationToken, Task> action)
@@ -760,7 +763,7 @@ internal sealed class PreviewApplicationStrip
         finally { if (ReferenceEquals(windowAction, request)) windowAction = null; }
     }
 
-    private async Task AnimateLaunchAsync(string key, Windows.Foundation.Rect origin, int duration, CancellationToken token)
+    private async Task AnimateLaunchAsync(string key, Rect origin, WindowAnimationStyle style, int duration, CancellationToken token)
     {
         long started = Stopwatch.GetTimestamp();
         while (Stopwatch.GetElapsedTime(started).TotalSeconds < 2.5)
@@ -772,7 +775,7 @@ internal sealed class PreviewApplicationStrip
                 .FirstOrDefault(group => StringComparer.OrdinalIgnoreCase.Equals(group.Key, key))?
                 .Windows.FirstOrDefault(window => window.Handle == current);
             if (launched is null) continue;
-            await windowMotion.ExpandLaunchedAsync(launched, origin, duration, token);
+            await windowMotion.ExpandLaunchedAsync(launched, origin, style, duration, token);
             return;
         }
     }

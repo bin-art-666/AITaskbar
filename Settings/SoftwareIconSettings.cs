@@ -33,7 +33,8 @@ internal sealed partial class TaskbarSettingsWindow
         (WindowAnimationStyle Value, string Label)[] windowModes =
         [
             (WindowAnimationStyle.Curved, "曲面动画"),
-            (WindowAnimationStyle.WindowsDefault, "Windows 默认动画")
+            (WindowAnimationStyle.WindowsDefault, "Windows 默认动画"),
+            (WindowAnimationStyle.WindowsStyle, "Windows 风格（跟随预览栏）")
         ];
         foreach (var mode in windowModes) windowAnimation.Items.Add(mode.Label);
         var windowSpeed = FeedbackSlider("窗口开合速度", PreviewIconLayout.MinWindowDurationMs, PreviewIconLayout.MaxWindowDurationMs);
@@ -51,8 +52,8 @@ internal sealed partial class TaskbarSettingsWindow
             animation.SelectedIndex = Array.FindIndex(modes, mode => mode.Value == app.IconLayout.Animation);
             windowAnimation.SelectedIndex = Array.FindIndex(windowModes, mode => mode.Value == app.IconLayout.WindowAnimation);
             windowSpeed.IsEnabled = app.IconLayout.WindowAnimation == WindowAnimationStyle.Curved;
-            windowSpeed.Value = app.IconLayout.WindowDurationMs;
-            windowSpeedValue.Text = $"{app.IconLayout.WindowDurationMs} 毫秒";
+            windowSpeed.Value = app.IconLayout.EffectiveWindowDurationMs;
+            windowSpeedValue.Text = $"{app.IconLayout.EffectiveWindowDurationMs} 毫秒";
             syncing = false;
             preview.ApplyLayout(app.IconSize, app.IconLayout);
         }
@@ -93,7 +94,7 @@ internal sealed partial class TaskbarSettingsWindow
         page.Children.Add(SettingRow("图标间距", "分别调整固定区和运行区内相邻图标的间隔。", Actions(gap, gapValue)));
         page.Children.Add(SettingRow("滚动动画", "运行区图标溢出时生效。关闭后仍可用滚轮切换。", animation));
         page.Children.Add(SettingRow("窗口开合动画", "适用于预览栏和窗口标题栏的开合操作。", windowAnimation));
-        page.Children.Add(SettingRow("窗口开合速度", "曲面动画的时长，范围为 200–1000 毫秒。", Actions(windowSpeed, windowSpeedValue)));
+        page.Children.Add(SettingRow("窗口开合速度", "曲面动画可调节为 200–1000 毫秒。Windows 风格使用 200 毫秒。", Actions(windowSpeed, windowSpeedValue)));
         BuildAppFeedbackSettings(page, preview.ApplyFeedback);
         page.Children.Add(IconSettingsHeading("单个应用的图标"));
         BuildSoftwareIconSettings(page);

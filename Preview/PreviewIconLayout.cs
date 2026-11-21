@@ -4,12 +4,13 @@ using System.Text.Json.Serialization;
 namespace AITaskbar;
 
 internal enum IconScrollAnimation { Off, Fast, Standard, Relaxed }
-internal enum WindowAnimationStyle { Curved, WindowsDefault }
+internal enum WindowAnimationStyle { Curved, WindowsDefault, WindowsStyle }
 
 internal sealed record PreviewIconLayout
 {
     internal const int MinGap = 2, MaxGap = 12, DefaultGap = 7;
     internal const int MinWindowDurationMs = 200, MaxWindowDurationMs = 1000, DefaultWindowDurationMs = 240;
+    private const int WindowsStyleDurationMs = 200; // Match the visible resize in the native animation comparison.
     internal static PreviewIconLayout Default { get; } = new();
 
     public int Gap { get; init; } = DefaultGap;
@@ -18,6 +19,9 @@ internal sealed record PreviewIconLayout
     [JsonConverter(typeof(JsonStringEnumConverter<WindowAnimationStyle>))]
     public WindowAnimationStyle WindowAnimation { get; init; } = WindowAnimationStyle.WindowsDefault;
     public int WindowDurationMs { get; init; } = DefaultWindowDurationMs;
+    internal bool UsesPreviewWindowAnimation => WindowAnimation is WindowAnimationStyle.Curved or WindowAnimationStyle.WindowsStyle;
+    internal int EffectiveWindowDurationMs => WindowAnimation == WindowAnimationStyle.WindowsStyle
+        ? WindowsStyleDurationMs : WindowDurationMs;
 
     internal int DurationMs => Animation switch
     {
