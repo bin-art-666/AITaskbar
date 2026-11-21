@@ -17,11 +17,14 @@ internal sealed class AppearanceHost
 
     private void UpdateBarAppearance(LumaBar.BarAppearance? value)
     {
-        if (Interlocked.Exchange(ref barAppearance, value) != value)
+        var previous = Interlocked.Exchange(ref barAppearance, value);
+        if (previous is null && value is not null)
+            LumaBar.Files.Log($"AITaskbar preview appearance published: material={value.Material}, mouseGlow={value.MouseGlow}.");
+        if (previous != value)
             BarAppearanceChanged?.Invoke();
     }
 
-    public Task ShowAsync(string dataDirectory, bool hidden, bool monitorOnly = false)
+    public Task ShowAsync(string dataDirectory, bool hidden, bool verification = false)
     {
         lock (gate)
         {
@@ -38,7 +41,7 @@ internal sealed class AppearanceHost
             finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var startup = ready;
             var completion = finished;
-            var worker = new Thread(() => Run(dataDirectory, hidden, monitorOnly, startup, completion))
+            var worker = new Thread(() => Run(dataDirectory, hidden, verification, startup, completion))
             {
                 IsBackground = true,
                 Name = "AITaskbar appearance"
@@ -73,18 +76,18 @@ internal sealed class AppearanceHost
         context?.StopFromHost(error => failure.TrySetException(error));
     }
 
-    private void Run(string dataDirectory, bool hidden, bool monitorOnly, TaskCompletionSource startup, TaskCompletionSource completion)
+    private void Run(string dataDirectory, bool hidden, bool verification, TaskCompletionSource startup, TaskCompletionSource completion)
     {
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
-            var mutexPrefix = monitorOnly ? @"Local\AITaskbar-LumaBar-Verification-" : @"Local\LumaBar-";
+            var mutexPrefix = verification ? @"Local\AITaskbar-LumaBar-Verification-" : @"Local\AITaskbar-LumaBar-Preview-";
             using var owner = new Mutex(false, mutexPrefix + identity.User!.Value);
             bool acquired;
             try { acquired = owner.WaitOne(0); }
             catch (AbandonedMutexException) { acquired = true; }
             if (!acquired)
-                throw new InvalidOperationException("LumaBar 已在运行。请先从原版托盘选择「退出并恢复」，再启用 AITaskbar 的外观模块。");
+                throw new InvalidOperationException("AITaskbar 外观模块已在运行。");
 
             try
             {
@@ -96,12 +99,11 @@ internal sealed class AppearanceHost
                 }
                 Directory.CreateDirectory(dataDirectory);
                 LumaBar.Files.Root = dataDirectory;
-                LumaBar.IThemeStore store = monitorOnly ? new VerificationThemeStore() : new LumaBar.RegistryThemeStore();
-                var controller = new LumaBar.ThemeController(store, new LumaBar.FileJournal());
+                var state = new PreviewThemeState();
+                var controller = new LumaBar.ThemeController(state, state);
                 var settings = LumaBar.Files.ReadSettings();
-                controller.Restore();
-                using var app = new LumaBar.TrayApp(settings, controller, monitorOnly, startHidden: hidden,
-                    publishBarAppearance: UpdateBarAppearance);
+                using var app = new LumaBar.TrayApp(settings, controller, monitorOnly: false, startHidden: hidden,
+                    publishBarAppearance: UpdateBarAppearance, previewOnly: true);
                 lock (gate) context = app;
                 Forms.Application.Idle += OnIdle;
                 try { Forms.Application.Run(app); }
@@ -135,10 +137,15 @@ internal sealed class AppearanceHost
         }
     }
 
-    private sealed class VerificationThemeStore : LumaBar.IThemeStore
+    private sealed class PreviewThemeState : LumaBar.IThemeStore, LumaBar.ISessionJournal
     {
-        public LumaBar.ThemeValue Read() => new(true, 1);
+        private LumaBar.ThemeValue current = new LumaBar.RegistryThemeStore().Read();
+        private LumaBar.SessionRecord? session;
+        public LumaBar.ThemeValue Read() => current;
         public void Refresh() { }
-        public void Write(LumaBar.ThemeValue value) => throw new InvalidOperationException("Appearance verification cannot write the system theme.");
+        public void Write(LumaBar.ThemeValue value) => current = value;
+        public LumaBar.SessionRecord Load() => session!;
+        public void Save(LumaBar.SessionRecord record) => session = record;
+        public void Delete() => session = null;
     }
 }

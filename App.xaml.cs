@@ -110,7 +110,9 @@ public partial class App : Application
         try
         {
             Directory.CreateDirectory(directory);
-            var fixtures = new LumaBar.Settings { MouseGlowRadius = 65, Transition = "soft" };
+            var fixtures = new LumaBar.Settings { MouseGlow = true, MouseGlowRadius = 65, Transition = "soft" };
+            fixtures.Glass.Enabled = true;
+            fixtures.Glass.Desktop.Material = fixtures.Glass.Window.Material = fixtures.Glass.Maximized.Material = "blur";
             File.WriteAllText(Path.Combine(directory, "settings.json"), LumaBar.Files.Json.Serialize(fixtures));
             var restored = LumaBar.Files.Json.Deserialize<LumaBar.Settings>(File.ReadAllText(Path.Combine(directory, "settings.json")));
             if (restored.MouseGlowRadius != 65 || restored.TransitionMilliseconds != 280)
@@ -118,10 +120,16 @@ public partial class App : Application
 
             for (var cycle = 0; cycle < 2; cycle++)
             {
-                await appearance.ShowAsync(directory, hidden: true, monitorOnly: true).WaitAsync(TimeSpan.FromSeconds(15));
+                await appearance.ShowAsync(directory, hidden: true, verification: true).WaitAsync(TimeSpan.FromSeconds(15));
+                for (int attempt = 0; appearance.CurrentBarAppearance is null && attempt < 60; attempt++)
+                    await Task.Delay(250);
+                if (appearance.CurrentBarAppearance is not { Material: "blur", MouseGlow: true, GlowRadius: 65, TransitionMilliseconds: 280 })
+                    throw new InvalidDataException("Preview-only glass, glow and transition parameters were not published.");
                 await appearance.StopAsync().WaitAsync(TimeSpan.FromSeconds(15));
+                if (appearance.CurrentBarAppearance is not null)
+                    throw new InvalidDataException("Preview-only appearance remained after stopping.");
             }
-            File.WriteAllText(Path.Combine(directory, "appearance-result.json"), "{\"passed\":true,\"startStopCycles\":2}");
+            File.WriteAllText(Path.Combine(directory, "appearance-result.json"), "{\"passed\":true,\"startStopCycles\":2,\"previewGlassAndGlow\":true}");
             await ShutdownAsync();
         }
         catch (Exception error)

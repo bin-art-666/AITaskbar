@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.UI;
 using Windows.UI.ViewManagement;
@@ -17,6 +18,7 @@ internal sealed class PreviewBarAppearance : IDisposable
     private readonly AppearanceHost host;
     private readonly Border surface;
     private readonly Canvas lightLayer = new() { IsHitTestVisible = false };
+    private readonly Border fadingTint = new() { IsHitTestVisible = false, Opacity = 0 };
     private readonly Image cursorLight = new() { Visibility = Visibility.Collapsed };
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
@@ -26,6 +28,8 @@ internal sealed class PreviewBarAppearance : IDisposable
     private LumaBar.BarAppearance? last;
     private bool? lastContrast, lastEffects, lastLight;
     private (int Diameter, bool Light, int Strength) sprite;
+    private Color? previousTint;
+    private Storyboard? tintTransition;
     private bool disposed;
     public bool? IsLight => lastLight;
 
@@ -38,6 +42,7 @@ internal sealed class PreviewBarAppearance : IDisposable
         this.updateIconTone = updateIconTone;
         lightLayer.Children.Add(cursorLight);
         var layers = new Grid();
+        layers.Children.Add(fadingTint);
         layers.Children.Add(lightLayer);
         layers.Children.Add(content);
         surface.Child = layers;
@@ -74,6 +79,7 @@ internal sealed class PreviewBarAppearance : IDisposable
         surface.BorderBrush = new SolidColorBrush(contrast ? system.GetColorValue(UIColorType.Foreground)
             : Color.FromArgb(90, light ? (byte)93 : (byte)180, light ? (byte)110 : (byte)195, light ? (byte)138 : (byte)217));
         var tint = appearance is null ? normal : FromAbgr(appearance.Abgr);
+        var displayTint = kind == "normal" ? normal : kind == "opaque" || !effects ? SolidTint(tint, normal) : tint;
         if (contrast || kind is "normal" or "opaque" || !effects)
         {
             SetBackdrop(null);
@@ -95,6 +101,30 @@ internal sealed class PreviewBarAppearance : IDisposable
         }
         if (contrast || appearance?.MouseGlow != true || appearance.GlowStrength == 0)
             cursorLight.Visibility = Visibility.Collapsed;
+        UpdateTransition(contrast ? null : displayTint, contrast || !system.AnimationsEnabled
+            ? 0 : appearance?.TransitionMilliseconds ?? 0);
+    }
+
+    private void UpdateTransition(Color? tint, int milliseconds)
+    {
+        if (milliseconds > 0 && tint == previousTint) return;
+        tintTransition?.Stop();
+        tintTransition = null;
+        if (milliseconds > 0 && tint is not null && previousTint is { } previous)
+        {
+            fadingTint.Background = new SolidColorBrush(previous);
+            var fade = new DoubleAnimation
+            {
+                From = 1, To = 0, Duration = TimeSpan.FromMilliseconds(milliseconds),
+                FillBehavior = FillBehavior.Stop
+            };
+            Storyboard.SetTarget(fade, fadingTint);
+            Storyboard.SetTargetProperty(fade, nameof(UIElement.Opacity));
+            tintTransition = new Storyboard();
+            tintTransition.Children.Add(fade);
+            tintTransition.Begin();
+        }
+        previousTint = tint;
     }
 
     private void SetBackdrop(string? kind)
@@ -148,6 +178,7 @@ internal sealed class PreviewBarAppearance : IDisposable
     public void Dispose()
     {
         disposed = true;
+        tintTransition?.Stop();
         host.BarAppearanceChanged -= OnAppearanceChanged;
     }
 }

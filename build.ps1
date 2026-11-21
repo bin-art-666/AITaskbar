@@ -1,7 +1,6 @@
 param(
     [string]$DotnetPath,
-    [switch]$Offline,
-    [string]$WindhawkRoot
+    [switch]$Offline
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,12 +21,6 @@ if (Get-Process AITaskbar -ErrorAction SilentlyContinue | Where-Object Path -eq 
     throw 'Exit AITaskbar before rebuilding dist.'
 }
 
-$nativeDll = Join-Path $workspace 'modules\LumaBar\native\ExplorerTAP.dll'
-$expectedHash = 'C48F1A06168ACD7839269DDE0D15CCF5D09C702512B94DD6BA9A05DF1B153DC2'
-if ((Get-FileHash -LiteralPath $nativeDll -Algorithm SHA256).Hash -ne $expectedHash) {
-    throw 'Unexpected ExplorerTAP.dll checksum.'
-}
-
 $restore = @()
 if ($Offline) { $restore = @('--source', (Join-Path $workspace '.tools\feed'), '-p:NuGetAudit=false') }
 Push-Location $workspace
@@ -37,12 +30,13 @@ try {
 }
 finally { Pop-Location }
 
-foreach ($file in @('AITaskbar.exe', 'resources.pri', 'Assets\AITaskbar-Ring.ico', 'Assets\AIEnter.png', 'Assets\Folder.png', 'native\ExplorerTAP.dll')) {
+foreach ($file in @('AITaskbar.exe', 'resources.pri', 'Assets\AITaskbar-Ring.ico', 'Assets\AIEnter.png', 'Assets\Folder.png')) {
     if (!(Test-Path -LiteralPath (Join-Path $output $file) -PathType Leaf)) {
         throw "Publish output is incomplete: $file"
     }
 }
-if ($WindhawkRoot) {
-    & (Join-Path $workspace 'tools\BuildTaskbar.ps1') -RuntimeRoot $WindhawkRoot
+$obsoleteLibrary = Join-Path $output 'native\ExplorerTAP.dll'
+if (Test-Path -LiteralPath $obsoleteLibrary -PathType Leaf) {
+    Remove-Item -LiteralPath $obsoleteLibrary
 }
 Write-Output "Built: $program"

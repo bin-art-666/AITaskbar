@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,7 +21,8 @@ namespace LumaBar
         private readonly SamplingCadence cadence = new SamplingCadence();
         private readonly ForegroundActivity activity;
         private readonly TaskbarBlend blend = new TaskbarBlend();
-        private readonly TaskbarGlow glow;
+        private readonly TaskbarGlow? glow;
+        private readonly bool previewOnly;
         private string visualKey;
         private GlassSettings previewGlass;
         private bool? previewGlowEnabled;
@@ -56,13 +58,14 @@ namespace LumaBar
         internal bool StatusHandleCreated { get { return window.IsHandleCreated; } }
 
         internal TrayApp(Settings settings, ThemeController controller, bool monitorOnly, bool startHidden = false,
-            Action<BarAppearance?>? publishBarAppearance = null)
+            Action<BarAppearance?>? publishBarAppearance = null, bool previewOnly = false)
         {
             this.settings = settings;
             this.publishBarAppearance = publishBarAppearance;
             this.controller = controller;
+            this.previewOnly = previewOnly;
             engine = new DecisionEngine(settings);
-            window = new StatusWindow();
+            window = new StatusWindow(previewOnly);
             if (monitorOnly) { mode = "仅检测（不修改）"; window.SelectMode(mode); }
             window.HideRequested += delegate { window.Hide(); };
             window.ExitRequested += delegate { ExitThread(); };
@@ -97,14 +100,15 @@ namespace LumaBar
             });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("退出并恢复", null, delegate { ExitThread(); });
-            tray = new NotifyIcon { Icon = Ui.AppIcon, Text = "LumaBar · 自动适应", Visible = true, ContextMenuStrip = menu };
+            tray = new NotifyIcon { Icon = Ui.AppIcon, Text = "LumaBar · 自动适应", Visible = !previewOnly, ContextMenuStrip = menu };
             tray.DoubleClick += delegate { ShowWindow(); };
             timer = new System.Windows.Forms.Timer { Interval = settings.PollMilliseconds };
             timer.Tick += delegate {
                 Tick();
             };
             activity = new ForegroundActivity(WakeSampling);
-            glow = new TaskbarGlow(delegate { return (previewGlowEnabled ?? this.settings.MouseGlow) && mode != "仅检测（不修改）" && !paused && !sessionLocked && !suspended && !restoring && !exiting && recoveryAt < 0 && !blend.Active; }, delegate { return controller.Current.Tone == Tone.Light; }, radius: delegate { return previewGlowEnabled.HasValue ? previewGlowRadius : this.settings.MouseGlowRadius; }, strength: delegate { return previewGlowEnabled.HasValue ? previewGlowStrength : this.settings.MouseGlowStrength; });
+            if (!previewOnly)
+                glow = new TaskbarGlow(delegate { return (previewGlowEnabled ?? this.settings.MouseGlow) && mode != "仅检测（不修改）" && !paused && !sessionLocked && !suspended && !restoring && !exiting && recoveryAt < 0 && !blend.Active; }, delegate { return controller.Current.Tone == Tone.Light; }, radius: delegate { return previewGlowEnabled.HasValue ? previewGlowRadius : this.settings.MouseGlowRadius; }, strength: delegate { return previewGlowEnabled.HasValue ? previewGlowStrength : this.settings.MouseGlowStrength; });
             SystemEvents.SessionSwitch += OnSessionSwitch;
             SystemEvents.SessionEnding += OnSessionEnding;
             SystemEvents.PowerModeChanged += OnPowerMode;
@@ -116,7 +120,7 @@ namespace LumaBar
             if (!startHidden) window.Show();
             controller.Refresh(); // Also repair stale visuals when the registry already matches.
             timer.Start();
-            Files.Log("Started. No images or window titles are recorded.");
+            Files.Log(previewOnly ? "AITaskbar-only appearance started." : "Started. No images or window titles are recorded.");
         }
 
         private void WakeSampling()
@@ -143,7 +147,7 @@ namespace LumaBar
         private void Resync()
         {
             if (restoring || exiting || restoreFailure != null) return;
-            try { controller.Refresh(); ApplyMaterials(true); window.UpdateStatus("已重新发送主题与任务栏设置通知", null, controller.Current.Tone); }
+            try { controller.Refresh(); ApplyMaterials(true); window.UpdateStatus(previewOnly ? "已刷新 AITaskbar 外观" : "已重新发送主题与任务栏设置通知", null, controller.Current.Tone); }
             catch (Exception error) { Report(error); }
         }
         private bool SavePreferences(Action<Settings> change)
@@ -154,7 +158,7 @@ namespace LumaBar
                 // live rules or timing without also persisting that choice.
                 Settings next = Files.Json.Deserialize<Settings>(Files.Json.Serialize(settings));
                 next.Validate(); change(next); next.Validate(); Files.SaveSettings(next);
-                settings = next; if (!settings.MouseGlow || settings.MouseGlowStrength == 0) glow.Clear(); engine = new DecisionEngine(settings); visualTransition.Reset();
+                settings = next; if (!settings.MouseGlow || settings.MouseGlowStrength == 0) glow?.Clear(); engine = new DecisionEngine(settings); visualTransition.Reset();
                 cadence.Wake(clock.ElapsedMilliseconds);
                 timer.Interval = settings.PollMilliseconds;
                 window.UpdateStatus("设置已保存，立即生效", null, controller.Current.Tone);
@@ -167,9 +171,10 @@ namespace LumaBar
         private MaterialPlan PrepareAppearance(Tone tone)
         {
             GlassSettings glass = previewGlass ?? settings.Glass;
-            MaterialPlan plan = ReadabilityPolicy.Capture(glass, materialScene, tone);
+            MaterialPlan plan = previewOnly ? ReadabilityPolicy.CapturePreview(glass, materialScene, tone)
+                : ReadabilityPolicy.Capture(glass, materialScene, tone);
             string key = plan.Key;
-            if (visualKey != null && visualKey != key) { glow.Clear(); blend.Begin(settings.TransitionMilliseconds); }
+            if (!previewOnly && visualKey != null && visualKey != key) { glow?.Clear(); blend.Begin(settings.TransitionMilliseconds); }
             visualKey = key;
             return plan;
         }
@@ -180,6 +185,7 @@ namespace LumaBar
             MaterialPlan plan = PrepareAppearance(controller.Current.Tone);
             lastBarPlan = plan;
             PublishBarAppearance();
+            if (previewOnly) return;
             if (materials == null && glass.Enabled) materials = new MaterialController();
             if (materials != null)
             {
@@ -203,7 +209,7 @@ namespace LumaBar
         }
         private void ClearManagedAppearance()
         {
-            glow.Clear(); blend.Cancel(); visualKey = null; lastBarPlan = null;
+            glow?.Clear(); blend.Cancel(); visualKey = null; lastBarPlan = null;
             publishBarAppearance?.Invoke(null);
         }
 
@@ -217,7 +223,8 @@ namespace LumaBar
                 material?.Abgr(plan.Tone) ?? 0, material?.BlurRadius ?? 0, material?.ShowLine ?? true,
                 previewGlowEnabled ?? settings.MouseGlow,
                 previewGlowEnabled.HasValue ? previewGlowRadius : settings.MouseGlowRadius,
-                previewGlowEnabled.HasValue ? previewGlowStrength : settings.MouseGlowStrength));
+                previewGlowEnabled.HasValue ? previewGlowStrength : settings.MouseGlowStrength,
+                settings.TransitionMilliseconds));
         }
         private void ResetDecisions() { engine.Reset(); sceneCoordinator.ResetPending(); visualTransition.Reset(); }
         private void SetPaused(bool value)
@@ -229,7 +236,8 @@ namespace LumaBar
         }
         private void ShowRestoreProgress()
         {
-            window.UpdateStatusText(exitRequested ? "正在恢复任务栏与主题，完成后退出…" : "正在恢复任务栏与主题…");
+            window.UpdateStatusText(previewOnly ? "正在清除 AITaskbar 外观…" :
+                exitRequested ? "正在恢复任务栏与主题，完成后退出…" : "正在恢复任务栏与主题…");
             UpdateMaterialStatus();
         }
         private void BeginRestore()
@@ -309,9 +317,15 @@ namespace LumaBar
         }
         private void UpdateMaterialStatus()
         {
-            if (restoring) { window.UpdateMaterialStatus("正在恢复系统原生外观…", false, false); return; }
+            if (restoring) { window.UpdateMaterialStatus(previewOnly ? "正在清除 AITaskbar 外观…" : "正在恢复系统原生外观…", false, false); return; }
             if (restoreFailure != null) { window.UpdateMaterialStatus("恢复未确认 · 请重试", true, true, "重试恢复"); return; }
             if (mode == "仅检测（不修改）") { window.UpdateMaterialStatus("仅检测 · 不修改材质", false, false); return; }
+            if (previewOnly)
+            {
+                string detail = lastBarPlan?.Targets.FirstOrDefault()?.Detail ?? "等待取样或使用默认外观";
+                window.UpdateMaterialStatus(detail, false);
+                return;
+            }
             if (materials == null) { window.UpdateMaterialStatus("尚未应用 / 系统原生", false); return; }
             MaterialSnapshot state = materials.Snapshot;
             window.UpdateMaterialStatus(state.Message, state.CanRetry, state.CanRetry || (!paused && !sessionLocked && !suspended && !SystemInformation.HighContrast));
@@ -329,16 +343,16 @@ namespace LumaBar
             if (restoring || exiting) return;
             try
             {
-                using (PreferencesWindow preferences = new PreferencesWindow(settings, StartupRegistration.Read(), SavePreferences))
+                using (PreferencesWindow preferences = new PreferencesWindow(settings, previewOnly ? "" : StartupRegistration.Read(), SavePreferences, previewOnly))
                 {
                     preferences.GlowPreviewChanged += delegate(bool enabled, int radius, int strength) {
                         previewGlowEnabled = enabled; previewGlowRadius = radius; previewGlowStrength = strength;
-                        if (!enabled || strength == 0) glow.Clear();
+                        if (!enabled || strength == 0) glow?.Clear();
                         PublishBarAppearance();
                     };
                     preferences.AppearancePreview += delegate(GlassSettings glass) { previewGlass = glass; ApplyMaterials(true); };
                     try { preferences.ShowDialog(window); }
-                    finally { previewGlowEnabled = null; glow.Clear(); previewGlass = null; engine = new DecisionEngine(settings); visualTransition.Reset(); cadence.Wake(clock.ElapsedMilliseconds); ApplyMaterials(true); }
+                    finally { previewGlowEnabled = null; glow?.Clear(); previewGlass = null; engine = new DecisionEngine(settings); visualTransition.Reset(); cadence.Wake(clock.ElapsedMilliseconds); ApplyMaterials(true); }
                 }
             }
             catch (Exception error) { Report(error); }
@@ -589,7 +603,7 @@ namespace LumaBar
             exiting = true;
             timer.Stop();
             Task stopped = materials == null ? null : materials.StopAfterRestore();
-            if ((stopped == null || stopped.IsCompleted) && Native.WaitForThemeRefresh(0)) { CloseTray(); return; }
+            if (previewOnly || ((stopped == null || stopped.IsCompleted) && Native.WaitForThemeRefresh(0))) { CloseTray(); return; }
             WaitForExitCleanup(stopped).ContinueWith(task => Dispatch(CloseTray, true), CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
@@ -606,14 +620,14 @@ namespace LumaBar
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettings;
             SystemEvents.UserPreferenceChanged -= OnPreferenceChanged;
             activity.Dispose();
-            glow.Dispose(); blend.Dispose();
+            glow?.Dispose(); blend.Dispose();
             tray.Visible = false;
             tray.Dispose();
             timer.Dispose();
             window.AllowClose = true;
             window.Close();
             window.Dispose();
-            Files.Log("Stopped; restored owned theme changes.");
+            Files.Log(previewOnly ? "AITaskbar-only appearance stopped." : "Stopped; restored owned theme changes.");
             base.ExitThreadCore();
         }
     }
@@ -630,11 +644,13 @@ namespace LumaBar
         private readonly CheckBox startup;
         private readonly DataGridView rules;
         private readonly bool originalStartup;
+        private readonly bool previewOnly;
         private readonly Func<Action<Settings>, bool> save;
 
-        internal PreferencesWindow(Settings settings, string startupCommand, Func<Action<Settings>, bool> save)
+        internal PreferencesWindow(Settings settings, string startupCommand, Func<Action<Settings>, bool> save, bool previewOnly = false)
         {
             this.save = save;
+            this.previewOnly = previewOnly;
             originalStartup = !String.IsNullOrEmpty(startupCommand);
             SuspendLayout();
             Text = "LumaBar · 设置";
@@ -659,9 +675,11 @@ namespace LumaBar
             UiCard launch = AddCard(general, 47, 88);
             startup = new ModernCheckBox { Text = "登录 Windows 后自动启动", AccessibleName = "登录 Windows 后自动启动并收起到托盘",
                 Checked = originalStartup, Location = new Point(16, 12), Size = new Size(565, 30) };
-            launch.Controls.Add(startup);
+            if (previewOnly) AddLabel(launch, "外观随 AITaskbar 启动", 16, 12, 570, 30);
+            else launch.Controls.Add(startup);
             string expected = StartupRegistration.Command(Application.ExecutablePath);
-            AddLabel(launch, originalStartup && !String.Equals(expected, startupCommand, StringComparison.OrdinalIgnoreCase)
+            AddLabel(launch, previewOnly ? "玻璃、明暗和鼠标光效应用到 AITaskbar 预览栏。" :
+                originalStartup && !String.Equals(expected, startupCommand, StringComparison.OrdinalIgnoreCase)
                 ? "检测到其他位置的自启项。保存时将改用当前程序，请先放到固定文件夹。"
                 : "启动后收起到托盘。若自启被禁用，请在 Windows 的“启动应用”中启用。",
                 16, 47, 570, 32, muted: true);
@@ -836,7 +854,7 @@ namespace LumaBar
                 }
                 edited.Validate();
                 string selectedPace = pace.SelectedIndex < 3 ? pace.SelectedItem.ToString() : null;
-                bool startupChanged = startup.Checked != originalStartup || (startup.Checked && previousCommand != expected);
+                bool startupChanged = !previewOnly && (startup.Checked != originalStartup || (startup.Checked && previousCommand != expected));
                 if (startupChanged) StartupRegistration.Set(startup.Checked);
                 bool saved = save(delegate(Settings next) {
                     if (selectedPace != null) next.SetPace(selectedPace);
@@ -892,10 +910,10 @@ namespace LumaBar
         private readonly ProgressBar meter;
         private readonly ComboBox modes;
 
-        internal StatusWindow()
+        internal StatusWindow(bool previewOnly = false)
         {
             SuspendLayout();
-            Text = "LumaBar";
+            Text = previewOnly ? "AITaskbar · LumaBar 外观" : "LumaBar";
             Ui.Window(this);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
@@ -933,15 +951,15 @@ namespace LumaBar
             AddButton(operation, "HomePace", "切换节奏…", 276, 79, 236, delegate { if (PaceRequested != null) PaceRequested(); });
 
             UiCard appearance = AddCard(369, 151);
-            AddLabel(appearance, "任务栏外观", 16, 13, 180, 28, 12, FontStyle.Bold);
+            AddLabel(appearance, previewOnly ? "AITaskbar 外观" : "任务栏外观", 16, 13, 180, 28, 12, FontStyle.Bold);
             retry = AddButton(appearance, "HomeRetry", "重新应用任务栏外观", 328, 10, 184, delegate { if (RetryRequested != null) RetryRequested(); });
             sceneValue = AddDetail(appearance, "场景", "等待场景", 50, 24);
             basisValue = AddDetail(appearance, "依据", "等待取样", 77, 24);
             materialValue = AddDetail(appearance, "材质", "尚未应用", 104, 36);
 
             Controls.Add(new Panel { BackColor = Ui.Border, Location = new Point(20, 532), Size = new Size(528, 1) });
-            AddButton(this, "HomeHide", "收起到托盘", 276, 544, 130, delegate { if (HideRequested != null) HideRequested(); });
-            AddButton(this, "HomeExit", "退出并恢复", 418, 544, 130, delegate { if (ExitRequested != null) ExitRequested(); });
+            AddButton(this, "HomeHide", previewOnly ? "关闭窗口" : "收起到托盘", 276, 544, 130, delegate { if (HideRequested != null) HideRequested(); });
+            AddButton(this, "HomeExit", previewOnly ? "退出外观模块" : "退出并恢复", 418, 544, 130, delegate { if (ExitRequested != null) ExitRequested(); });
             Ui.Apply(this);
             theme.ForeColor = Ui.SelectionText(true);
             Ui.OrderTabStops(this);

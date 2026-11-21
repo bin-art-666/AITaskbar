@@ -34,7 +34,7 @@ public partial class App
             instance.Dispose(); Application.Current.Exit(); return;
         }
         Settings = new(Path.Combine(DataDirectory, "settings.json")); Station = new(Path.Combine(DataDirectory, "station.json"));
-        RingBridge = new(prefix); RingBridge.Publish(Appearance); RingBridge.PublishImportFeedback(null);
+        RingBridge = new(); RingBridge.Publish(Appearance); RingBridge.PublishImportFeedback(null);
         PanelTheme.Apply(new()); lifetime = new Window { Title = "Halo 后台" };
         var dispatcher = DispatcherQueue.GetForCurrentThread();
         Settings.SaveFailed += error => { Log(error); dispatcher.TryEnqueue(() => Panel?.Notify("设置保存失败：" + error.Message, true)); };
@@ -92,7 +92,7 @@ public partial class App
         if (Panel is { } panel) await panel.PendingSettingsSave;
         await Station.Flush(); Panel?.Destroy();
         try { await Settings.Flush(); } catch (Exception error) { Log(error); }
-        RingBridge?.Dispose(); RingBridge = null;
+        RingBridge = null;
         foreach (var wait in waits) wait.Unregister(null); foreach (var signal in events) signal.Dispose();
         lifetime?.Close(); instance?.Dispose();
     }

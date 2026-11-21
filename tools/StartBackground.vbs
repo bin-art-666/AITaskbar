@@ -1,19 +1,17 @@
 Option Explicit
 
-Dim shell, files, root, windhawk, app, data, logPath, windhawkStarted, appStarted
+Dim shell, files, root, app, data, logPath, appStarted
 Set shell = CreateObject("WScript.Shell")
 Set files = CreateObject("Scripting.FileSystemObject")
 root = files.GetParentFolderName(files.GetParentFolderName(WScript.ScriptFullName))
-windhawk = files.BuildPath(root, ".tools\windhawk\windhawk.exe")
 app = files.BuildPath(root, "dist\AITaskbar.exe")
 data = files.BuildPath(shell.ExpandEnvironmentStrings("%LOCALAPPDATA%"), "AITaskbar")
 logPath = files.BuildPath(data, "startup.log")
 
 WriteLog "Launcher started"
 shell.CurrentDirectory = root
-windhawkStarted = StartProgram("Windhawk", windhawk, "-tray-only")
 appStarted = StartProgram("AITaskbar", app, "--startup --compare")
-If Not (windhawkStarted And appStarted) Then WScript.Quit 1
+If Not appStarted Then WScript.Quit 1
 WScript.Quit 0
 
 Function StartProgram(label, executable, arguments)

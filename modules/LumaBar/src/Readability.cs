@@ -5,7 +5,7 @@ using System.Drawing;
 namespace LumaBar
 {
     internal sealed record BarAppearance(Tone Tone, string Material, uint Abgr, int Blur, bool ShowLine,
-        bool MouseGlow, int GlowRadius, int GlowStrength);
+        bool MouseGlow, int GlowRadius, int GlowStrength, int TransitionMilliseconds);
 
     internal sealed class BackdropReading
     {
@@ -134,6 +134,20 @@ namespace LumaBar
                 displays.Add(new DisplayBackdrop { DeviceName = screen.DeviceName, Label = label, Taskbar = taskbar, Reading = wallpaper == null ? null : wallpaper.Backdrop });
             }
             return Build(settings, scene, tone, displays, active);
+        }
+
+        internal static MaterialPlan CapturePreview(GlassSettings settings, MaterialScene scene, Tone tone)
+        {
+            if (!settings.Enabled) return new MaterialPlan { Enabled = false, Scene = scene, Tone = tone };
+            var screen = System.Windows.Forms.Screen.PrimaryScreen;
+            if (screen == null) return new MaterialPlan { Enabled = false, Scene = scene, Tone = tone };
+            var appearance = settings.For(scene, settings.PerMonitor ? screen.DeviceName : null);
+            bool analyze = settings.AutoContrast && appearance.AutomaticColor
+                && appearance.Material != "normal" && appearance.Material != "opaque";
+            var reading = analyze ? WallpaperSampler.ReadTaskbar(screen.Bounds) : null;
+            return Build(settings, scene, tone, new[] {
+                new DisplayBackdrop { DeviceName = screen.DeviceName, Reading = reading?.Backdrop, Label = "AITaskbar" }
+            }, screen.DeviceName);
         }
     }
 
