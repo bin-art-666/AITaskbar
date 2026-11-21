@@ -31,6 +31,9 @@ internal sealed class PreviewApplicationStrip
     private readonly Dictionary<string, AppIconArtwork?> icons = new(StringComparer.OrdinalIgnoreCase);
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
+    private readonly WindowMotion windowMotion;
+    private TitleBarMinimizeHook? titleBarMinimize;
+    private CancellationTokenSource? windowAction;
     private readonly StackPanel pinnedPanel = new() { Orientation = Orientation.Horizontal };
     private readonly AppRange pinnedApps;
     private readonly AppRange runningApps = new(new Canvas());
@@ -92,6 +95,7 @@ internal sealed class PreviewApplicationStrip
         pinnedApps = new(pinnedPanel);
         this.owner = owner;
         this.report = report;
+        windowMotion = new(items);
         appCenterIcon = new AppCenterIcon(iconSize);
         appCenterIcon.Apply(appCenterStyle);
         AppCenterButton = IconButton("应用中心", appCenterIcon);
@@ -136,6 +140,12 @@ internal sealed class PreviewApplicationStrip
             DismissThumbnails();
     }
 
+    internal void RememberForeground()
+    {
+        var current = RunningWindows.Foreground();
+        if (current != owner) foreground = current;
+    }
+
     public void SetAvailableWidth(double width)
     {
         available = Math.Max(0, width);
@@ -164,8 +174,9 @@ internal sealed class PreviewApplicationStrip
     internal void SetIconLayout(PreviewIconLayout layout)
     {
         bool gapChanged = iconLayout.Gap != layout.Gap;
+        bool scrollChanged = iconLayout.Animation != layout.Animation;
         iconLayout = layout;
-        if (!gapChanged && scrollStarted is null) return;
+        if (!gapChanged && (!scrollChanged || scrollStarted is null)) return;
         pinnedPanel.Spacing = layout.Gap;
         runningApps.Layout = null;
         Render();
@@ -465,7 +476,7 @@ internal sealed class PreviewApplicationStrip
             if (ReferenceEquals(suppressedClick, button)) return;
             DismissThumbnails();
             if (groups.FirstOrDefault(value => StringComparer.OrdinalIgnoreCase.Equals(value.Key, group.Key)) is { } current)
-                Open(current, button);
+                Open(current, button, plate);
         };
         var view = new AppButton(group, button, feedback, plate, icon, pinMarker);
         SetAppMenu(view, group);
@@ -640,24 +651,129 @@ internal sealed class PreviewApplicationStrip
         }
     }
 
-    private void Open(AppGroup group, FrameworkElement anchor)
+    private bool AnimateWindows => system.AnimationsEnabled && !accessibility.HighContrast;
+
+    internal void EnableTitleBarMinimize() =>
+        titleBarMinimize ??= new TitleBarMinimizeHook(items.DispatcherQueue, FindTitleBarWindow, MinimizeFromTitleBar);
+
+    private RunningWindow? FindTitleBarWindow(nint handle)
     {
-        if (group.Windows.Count == 0) Launch(group);
-        else if (group.Windows.Count == 1) Activate(group.Windows[0]);
+        if (handle == 0 || !AnimateWindows || !items.IsLoaded) return null;
+        foreach (var view in Shown)
+        {
+            var window = view.Group.Windows.FirstOrDefault(window => window.Handle == handle);
+            if (window is not null && RunningWindows.IsCurrent(window) && !RunningWindows.IsMinimized(window) &&
+                WindowMotionNative.ScreenBounds(owner, view.IconPlate) is not null) return window;
+        }
+        return null;
+    }
+
+    private void MinimizeFromTitleBar(RunningWindow window)
+    {
+        if (!RunningWindows.IsCurrent(window) || RunningWindows.IsMinimized(window)) return;
+        var view = Shown.FirstOrDefault(view => view.Group.Windows.Contains(window));
+        var origin = AnimateWindows && view is not null ? WindowMotionNative.ScreenBounds(owner, view.IconPlate) : null;
+        if (origin is null)
+        {
+            TitleBarMinimizeHook.RequestNativeMinimize(window);
+            return;
+        }
+        windowAction?.Cancel();
+        MinimizeWindow(window, origin);
+    }
+
+    private void Open(AppGroup group, FrameworkElement anchor, FrameworkElement plate)
+    {
+        windowAction?.Cancel();
+        if (group.Windows.Count == 0)
+        {
+            if (!Launch(group) || !AnimateWindows) return;
+            WindowMotion.Pulse(plate);
+            if (WindowMotionNative.ScreenBounds(owner, plate) is { } origin)
+            {
+                int duration = iconLayout.WindowDurationMs;
+                _ = RunWindowAction(token => AnimateLaunchAsync(group.Key, origin, duration, token));
+            }
+        }
+        else if (group.Windows.Count == 1) OpenWindow(group.Windows[0], plate, toggle: true);
         else
         {
             var menu = NewMenu();
             foreach (var window in group.Windows)
-                menu.Items.Add(WindowItem(window));
+                menu.Items.Add(WindowItem(window, plate));
             menu.ShowAt(anchor);
         }
     }
 
-    private MenuFlyoutItem WindowItem(RunningWindow window)
+    private MenuFlyoutItem WindowItem(RunningWindow window, FrameworkElement plate)
     {
         var item = new MenuFlyoutItem { Text = window.Title };
-        item.Click += (_, _) => Activate(window);
+        item.Click += (_, _) => OpenWindow(window, plate, toggle: false);
         return item;
+    }
+
+    private void OpenWindow(RunningWindow window, FrameworkElement plate, bool toggle)
+    {
+        windowAction?.Cancel();
+        if (!RunningWindows.IsCurrent(window)) { report("暂时无法切换到该窗口。"); return; }
+        bool minimized = RunningWindows.IsMinimized(window);
+        nint current = RunningWindows.Foreground();
+        bool minimize = toggle && !minimized &&
+            (current == window.Handle || foreground == window.Handle && AIEnter.Native.PanelHasFocus(owner));
+        if (!minimize && !minimized) { Activate(window); return; }
+        var origin = AnimateWindows ? WindowMotionNative.ScreenBounds(owner, plate) : null;
+        if (minimize)
+        {
+            MinimizeWindow(window, origin);
+            return;
+        }
+        if (origin is not { } icon) { Activate(window); return; }
+
+        int duration = iconLayout.WindowDurationMs;
+        _ = RunWindowAction(async token =>
+        {
+            if (await windowMotion.RestoreAsync(window, icon, duration, token))
+                ActivateIndicators(window);
+            else report("暂时无法切换到该窗口。");
+        });
+    }
+
+    private void MinimizeWindow(RunningWindow window, Rect? origin)
+    {
+        if (origin is not { } icon)
+        {
+            CompleteMinimize(window, RunningWindows.Minimize(window));
+            return;
+        }
+        int duration = iconLayout.WindowDurationMs;
+        _ = RunWindowAction(async token =>
+            CompleteMinimize(window, await windowMotion.MinimizeAsync(window, icon, duration, token)));
+    }
+
+    private async Task RunWindowAction(Func<CancellationToken, Task> action)
+    {
+        using var request = new CancellationTokenSource();
+        windowAction = request;
+        try { await action(request.Token); }
+        catch (OperationCanceledException) when (request.IsCancellationRequested) { }
+        finally { if (ReferenceEquals(windowAction, request)) windowAction = null; }
+    }
+
+    private async Task AnimateLaunchAsync(string key, Windows.Foundation.Rect origin, int duration, CancellationToken token)
+    {
+        long started = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(started).TotalSeconds < 2.5)
+        {
+            await Task.Delay(45, token);
+            var current = RunningWindows.Foreground();
+            if (current == 0 || current == owner) continue;
+            var launched = AppGroups.Build(pins.Items, RunningWindows.List())
+                .FirstOrDefault(group => StringComparer.OrdinalIgnoreCase.Equals(group.Key, key))?
+                .Windows.FirstOrDefault(window => window.Handle == current);
+            if (launched is null) continue;
+            await windowMotion.ExpandLaunchedAsync(launched, origin, duration, token);
+            return;
+        }
     }
 
     private MenuFlyout NewMenu()
@@ -711,8 +827,11 @@ internal sealed class PreviewApplicationStrip
         thumbnails?.Dismiss();
     }
 
-    public void CloseThumbnails()
+    public void Close()
     {
+        titleBarMinimize?.Dispose();
+        windowAction?.Cancel();
+        windowMotion.Clear();
         StopScrollAnimation();
         DismissThumbnails();
         thumbnails?.Close();
@@ -754,12 +873,25 @@ internal sealed class PreviewApplicationStrip
     private void Activate(RunningWindow window)
     {
         if (!RunningWindows.Activate(window)) { report("暂时无法切换到该窗口。"); return; }
+        ActivateIndicators(window);
+    }
+
+    private void ActivateIndicators(RunningWindow window)
+    {
         foreground = window.Handle;
         UpdateIndicators();
         report("");
     }
 
-    private void Launch(AppGroup group)
+    private void CompleteMinimize(RunningWindow window, bool success)
+    {
+        if (!success) { report("暂时无法最小化该窗口。"); return; }
+        if (foreground == window.Handle) foreground = 0;
+        UpdateIndicators();
+        report("");
+    }
+
+    private bool Launch(AppGroup group)
     {
         try
         {
@@ -774,8 +906,9 @@ internal sealed class PreviewApplicationStrip
                 });
             }
             report("");
+            return true;
         }
-        catch (Exception error) { report(error.Message); }
+        catch (Exception error) { report(error.Message); return false; }
     }
 
     private AppIconArtwork? ProgramIcon(string? executable, string? appId)

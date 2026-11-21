@@ -263,7 +263,7 @@ public partial class App : Application
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             Log(error);
-            settingsWindow?.SetStatus("无法保存图标间距和滚动动画设置。");
+            settingsWindow?.SetStatus("无法保存图标布局和动画设置。");
             return false;
         }
         IconLayout = layout;

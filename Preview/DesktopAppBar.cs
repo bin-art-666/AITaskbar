@@ -11,6 +11,7 @@ internal sealed class DesktopAppBar : IDisposable
     private readonly nint handle;
     private readonly DispatcherQueue dispatcher;
     private readonly Action<Exception> reportFailure;
+    private readonly Action beforeMouseActivation;
     private readonly SubclassProcedure callback;
     private readonly uint notification = RegisterWindowMessage("AITaskbar.Preview.AppBar");
     private readonly uint taskbarCreated = RegisterWindowMessage("TaskbarCreated");
@@ -18,11 +19,12 @@ internal sealed class DesktopAppBar : IDisposable
     private int heightDip;
     private bool registered, disposed, queued, shellRestarted, fullscreen;
 
-    public DesktopAppBar(nint handle, DispatcherQueue dispatcher, int iconSize, Action<Exception> reportFailure)
+    public DesktopAppBar(nint handle, DispatcherQueue dispatcher, int iconSize, Action beforeMouseActivation, Action<Exception> reportFailure)
     {
         this.handle = handle;
         this.dispatcher = dispatcher;
         this.reportFailure = reportFailure;
+        this.beforeMouseActivation = beforeMouseActivation;
         heightDip = HeightFor(iconSize);
         callback = WndProc;
         if (notification == 0 || taskbarCreated == 0 || !SetWindowSubclass(handle, callback, 1, 0))
@@ -112,7 +114,8 @@ internal sealed class DesktopAppBar : IDisposable
     {
         if (!disposed)
         {
-            if (message == taskbarCreated) QueuePosition(newShell: true);
+            if (message == 0x0021) beforeMouseActivation(); // WM_MOUSEACTIVATE
+            else if (message == taskbarCreated) QueuePosition(newShell: true);
             else if (message == 0x007e || message == 0x02e0) QueuePosition(); // Display or DPI change
             else if (registered && message == notification)
             {

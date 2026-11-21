@@ -88,7 +88,7 @@ internal sealed class PreviewTaskbar : Window
         {
             closed = true;
             refresh.Stop();
-            tasks.CloseThumbnails();
+            tasks.Close();
             icons.Dispose();
             visual.Dispose();
             bar?.Dispose();
@@ -97,7 +97,7 @@ internal sealed class PreviewTaskbar : Window
         {
             Content = surface;
             visual.Refresh();
-            bar = new(handle, DispatcherQueue, iconSize, error => { Close(); reportFailure(error); });
+            bar = new(handle, DispatcherQueue, iconSize, tasks.RememberForeground, error => { Close(); reportFailure(error); });
             tasks.Refresh();
             refresh.Start();
         }
@@ -115,6 +115,7 @@ internal sealed class PreviewTaskbar : Window
         else AppWindow.Show(activateWindow: false);
         // WinUI can initially move the window back into the now smaller work area.
         bar.Reposition();
+        tasks.EnableTitleBarMinimize();
     }
 
     internal void SetIconSize(int size)

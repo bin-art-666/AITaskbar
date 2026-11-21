@@ -46,7 +46,7 @@ internal sealed class IconSettingsPreview
 
     internal void ApplyLayout(int size, PreviewIconLayout next)
     {
-        if (iconSize == size && layout == next) return;
+        if (iconSize == size && layout.Gap == next.Gap && layout.Animation == next.Animation) return;
         bool newSize = iconSize != size;
         iconSize = size;
         layout = next;

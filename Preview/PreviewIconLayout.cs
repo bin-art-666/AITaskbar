@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 namespace AITaskbar;
 
 internal enum IconScrollAnimation { Off, Fast, Standard, Relaxed }
+internal enum WindowMotionSpeed { Standard, Slow }
 
 internal sealed record PreviewIconLayout
 {
@@ -13,6 +14,10 @@ internal sealed record PreviewIconLayout
     public int Gap { get; init; } = DefaultGap;
     [JsonConverter(typeof(JsonStringEnumConverter<IconScrollAnimation>))]
     public IconScrollAnimation Animation { get; init; } = IconScrollAnimation.Standard;
+    [JsonConverter(typeof(JsonStringEnumConverter<WindowMotionSpeed>))]
+    public WindowMotionSpeed WindowSpeed { get; init; } = WindowMotionSpeed.Standard;
+
+    internal int WindowDurationMs => WindowSpeed == WindowMotionSpeed.Slow ? 1000 : 240;
 
     internal int DurationMs => Animation switch
     {
@@ -30,7 +35,8 @@ internal sealed record PreviewIconLayout
                 return value with
                 {
                     Gap = Math.Clamp(value.Gap, MinGap, MaxGap),
-                    Animation = Enum.IsDefined(value.Animation) ? value.Animation : Default.Animation
+                    Animation = Enum.IsDefined(value.Animation) ? value.Animation : Default.Animation,
+                    WindowSpeed = Enum.IsDefined(value.WindowSpeed) ? value.WindowSpeed : Default.WindowSpeed
                 };
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { }

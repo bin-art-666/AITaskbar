@@ -63,8 +63,30 @@ internal static class RunningWindows
     }
 
     public static bool IsCurrent(RunningWindow window) =>
-        GetWindowThreadProcessId(window.Handle, out var processId) != 0
-        && processId == window.ProcessId && IsWindowVisible(window.Handle);
+        OwnsHandle(window) && IsWindowVisible(window.Handle);
+
+    internal static bool OwnsHandle(RunningWindow window) =>
+        GetWindowThreadProcessId(window.Handle, out var processId) != 0 && processId == window.ProcessId;
+
+    internal static bool IsMinimized(RunningWindow window) => IsIconic(window.Handle);
+
+    internal static bool Minimize(RunningWindow window) =>
+        IsCurrent(window) && ShowWindowAsync(window.Handle, 6); // SW_MINIMIZE
+
+    internal static bool RequestRestore(RunningWindow window) =>
+        IsCurrent(window) && (!IsMinimized(window) || ShowWindowAsync(window.Handle, 9)); // SW_RESTORE
+
+    internal static bool HideForTransition(RunningWindow window, bool wasMinimized) =>
+        IsCurrent(window) && IsMinimized(window) == wasMinimized && ShowWindowAsync(window.Handle, 0); // SW_HIDE
+
+    internal static bool ShowAfterHide(RunningWindow window, bool minimized) =>
+        OwnsHandle(window) && ShowWindowAsync(window.Handle, minimized ? 7 : 9); // SW_SHOWMINNOACTIVE / SW_RESTORE
+
+    internal static void ReshowAfterInterruptedTransition(RunningWindow window)
+    {
+        if (OwnsHandle(window))
+            ShowWindowAsync(window.Handle, IsMinimized(window) ? 7 : 8); // SW_SHOWMINNOACTIVE / SW_SHOWNA
+    }
 
     public static nint Foreground()
     {
