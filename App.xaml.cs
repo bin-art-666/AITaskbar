@@ -2,7 +2,6 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using System.Security.Cryptography;
 using System.Text;
-using Windows.UI;
 
 namespace AITaskbar;
 
@@ -19,7 +18,8 @@ public partial class App : Application
     private bool shuttingDown, comparisonStarting;
     private string root = "";
     private int iconSize;
-    private Color? indicatorColor;
+    internal TaskbarAppFeedbackStyle AppFeedback { get; private set; } = TaskbarAppFeedbackStyle.Default;
+    internal PreviewIconLayout IconLayout { get; private set; } = PreviewIconLayout.Default;
     internal PreviewIconPreferences IconPreferences { get; private set; } = null!;
     internal AppCenterAppearance SavedAppCenterAppearance { get; private set; } = new();
     internal AppCenterAppearance CurrentAppCenterAppearance { get; private set; } = new();
@@ -39,7 +39,8 @@ public partial class App : Application
             ? arguments[customRoot + 1]
             : defaultRoot));
         iconSize = PreviewIconSize.Read(root);
-        indicatorColor = PreviewIndicatorColor.Read(root);
+        AppFeedback = TaskbarAppFeedbackStyle.Read(root);
+        IconLayout = PreviewIconLayout.Read(root);
         IconPreferences = new(Path.Combine(root, "preview-original-icons.json"));
         CurrentAppCenterAppearance = SavedAppCenterAppearance = AppCenterAppearance.Read(root);
         var verifying = arguments.Any(arg => arg.StartsWith("--verify-", StringComparison.Ordinal));
@@ -208,7 +209,6 @@ public partial class App : Application
     internal int IconSize => iconSize;
     internal IReadOnlyList<PinnedApp> PreviewPins => preview?.PinnedItems ?? new PinnedApps(Path.Combine(root, "preview-pins.json")).Items;
     internal PreviewModuleIcons? ModuleIcons => preview?.ModuleIcons;
-    internal Color? IndicatorColor => indicatorColor;
     internal void FocusPreview() => preview?.Activate();
     internal LumaBar.BarAppearance? BarAppearance => appearance.CurrentBarAppearance;
     internal event Action? BarAppearanceChanged
@@ -238,22 +238,39 @@ public partial class App : Application
         return true;
     }
 
-    internal bool TrySetIndicatorColor(Color? color)
+    internal bool TrySetAppFeedback(TaskbarAppFeedbackStyle style)
     {
-        try { PreviewIndicatorColor.Save(root, color); }
+        if (AppFeedback == style) return true;
+        try { style.Save(root); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             Log(error);
-            settingsWindow?.SetStatus("无法保存运行标记颜色。");
+            settingsWindow?.SetStatus("无法保存窗口圆点和悬停底框设置。");
             return false;
         }
-        indicatorColor = color;
-        PreviewIndicator(color);
+        AppFeedback = style;
+        PreviewAppFeedback(style);
         settingsWindow?.SetStatus("");
         return true;
     }
 
-    internal void PreviewIndicator(Color? color) => preview?.SetIndicatorColor(color);
+    internal void PreviewAppFeedback(TaskbarAppFeedbackStyle style) => preview?.SetAppFeedback(style);
+
+    internal bool TrySetIconLayout(PreviewIconLayout layout)
+    {
+        if (IconLayout == layout) return true;
+        try { layout.Save(root); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Log(error);
+            settingsWindow?.SetStatus("无法保存图标间距和滚动动画设置。");
+            return false;
+        }
+        IconLayout = layout;
+        preview?.SetIconLayout(layout);
+        settingsWindow?.SetStatus("");
+        return true;
+    }
 
     internal bool TrySetOriginalIcon(string executable, bool useOriginal)
     {
@@ -305,7 +322,7 @@ public partial class App : Application
         try
         {
             ShowAppearance(hidden: true);
-            var bar = new PreviewTaskbar(this, root, appearance, iconSize, indicatorColor, ReportPreviewFailure);
+            var bar = new PreviewTaskbar(this, root, appearance, iconSize, ReportPreviewFailure);
             preview = bar;
             bar.Closed += (_, _) =>
             {

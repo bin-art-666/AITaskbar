@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -7,6 +8,72 @@ namespace AITaskbar;
 
 internal sealed partial class TaskbarSettingsWindow
 {
+    private void BuildIconSettings(StackPanel page, IconSettingsPreview preview)
+    {
+        preview.ApplyLayout(app.IconSize, app.IconLayout);
+        preview.ApplyFeedback(app.AppFeedback);
+
+        var size = FeedbackSlider("应用图标大小", PreviewIconSize.Minimum, PreviewIconSize.Maximum);
+        size.StepFrequency = 2;
+        var sizeValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+        var gap = FeedbackSlider("图标间距", PreviewIconLayout.MinGap, PreviewIconLayout.MaxGap);
+        var gapValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+        var animation = new ComboBox { MinWidth = 118 };
+        AutomationProperties.SetName(animation, "滚动动画");
+        (IconScrollAnimation Value, string Label)[] modes =
+        [
+            (IconScrollAnimation.Off, "关闭"),
+            (IconScrollAnimation.Fast, "快速"),
+            (IconScrollAnimation.Standard, "标准"),
+            (IconScrollAnimation.Relaxed, "舒缓")
+        ];
+        foreach (var mode in modes) animation.Items.Add(mode.Label);
+
+        bool syncing = false;
+        void Sync()
+        {
+            syncing = true;
+            size.Value = app.IconSize;
+            sizeValue.Text = $"{app.IconSize} DIP";
+            gap.Value = app.IconLayout.Gap;
+            gapValue.Text = $"{app.IconLayout.Gap} DIP";
+            animation.SelectedIndex = Array.FindIndex(modes, mode => mode.Value == app.IconLayout.Animation);
+            syncing = false;
+            preview.ApplyLayout(app.IconSize, app.IconLayout);
+        }
+
+        size.ValueChanged += (_, args) =>
+        {
+            if (syncing) return;
+            app.TrySetIconSize((int)Math.Round(args.NewValue));
+            Sync();
+        };
+        gap.ValueChanged += (_, args) =>
+        {
+            if (syncing) return;
+            app.TrySetIconLayout(app.IconLayout with { Gap = (int)Math.Round(args.NewValue) });
+            Sync();
+        };
+        animation.SelectionChanged += (_, _) =>
+        {
+            if (syncing || animation.SelectedIndex < 0) return;
+            app.TrySetIconLayout(app.IconLayout with { Animation = modes[animation.SelectedIndex].Value });
+            Sync();
+        };
+
+        page.Children.Add(IconSettingsHeading("图标布局"));
+        page.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
+        page.Children.Add(SettingRow("图标间距", "分别调整固定区和运行区内相邻图标的间隔。", Actions(gap, gapValue)));
+        page.Children.Add(SettingRow("滚动动画", "运行区图标溢出时生效。关闭后仍可用滚轮切换。", animation));
+        BuildAppFeedbackSettings(page, preview.ApplyFeedback);
+        page.Children.Add(IconSettingsHeading("单个应用的图标"));
+        BuildSoftwareIconSettings(page);
+        Sync();
+    }
+
+    private static TextBlock IconSettingsHeading(string text) =>
+        new() { Text = text, FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 0) };
+
     private void BuildSoftwareIconSettings(StackPanel page)
     {
         var entries = new StackPanel { Spacing = 4 };

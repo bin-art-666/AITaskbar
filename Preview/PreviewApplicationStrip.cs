@@ -15,13 +15,12 @@ namespace AITaskbar;
 
 internal sealed class PreviewApplicationStrip
 {
-    private const double Gap = 4, SeparatorWidth = 1, IndicatorSpace = 7;
+    private const double SectionGap = 4, SeparatorWidth = 1, IndicatorSpace = 7;
     private const double PinDragThreshold = 5;
     private const int WheelNotch = 120;
-    private const double ScrollDurationMs = 170, EdgeFade = .4;
     private readonly StackPanel items = new()
     {
-        Orientation = Orientation.Horizontal, Spacing = Gap,
+        Orientation = Orientation.Horizontal, Spacing = SectionGap,
         HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
     };
     private readonly PinnedApps pins;
@@ -32,7 +31,8 @@ internal sealed class PreviewApplicationStrip
     private readonly Dictionary<string, AppIconArtwork?> icons = new(StringComparer.OrdinalIgnoreCase);
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
-    private readonly AppRange pinnedApps = new(new StackPanel { Orientation = Orientation.Horizontal, Spacing = Gap });
+    private readonly StackPanel pinnedPanel = new() { Orientation = Orientation.Horizontal };
+    private readonly AppRange pinnedApps;
     private readonly AppRange runningApps = new(new Canvas());
     private readonly Dictionary<int, RunningTile> runningTiles = [];
     private double scrollPosition, scrollFrom, scrollTo;
@@ -46,7 +46,9 @@ internal sealed class PreviewApplicationStrip
     private nint foreground;
     private int iconSize;
     private int wheelRemainder;
-    private Color? indicatorColor;
+    private TaskbarAppFeedbackStyle feedbackStyle;
+    private PreviewIconLayout iconLayout;
+    private bool feedbackLight;
     private double available = double.PositiveInfinity;
     private FlyoutBase? openFlyout;
     private readonly DispatcherQueueTimer hoverTimer;
@@ -64,7 +66,7 @@ internal sealed class PreviewApplicationStrip
     private IEnumerable<AppButton> Shown => pinnedApps.Buttons.Concat(runningApps.Buttons);
     private IEnumerable<AppButton> Rendered => pinnedApps.Buttons.Concat(runningTiles.Values.Select(tile => tile.View));
 
-    private sealed record AppButton(AppGroup Group, Button Button, Border Indicator, Border IconPlate, AppIconArtwork? Icon,
+    private sealed record AppButton(AppGroup Group, Button Button, TaskbarAppFeedback Feedback, Border IconPlate, AppIconArtwork? Icon,
         Border? PinDropMarker);
     private sealed record PinPress(PinnedApp Pin, uint PointerId, Point Start);
     private sealed record RunningTile(string Key, AppButton View, TranslateTransform Transform);
@@ -78,13 +80,16 @@ internal sealed class PreviewApplicationStrip
         internal int LastStart { get; set; }
     }
 
-    public PreviewApplicationStrip(PinnedApps pins, PreviewIconPreferences iconPreferences, int iconSize, Color? indicatorColor,
-        AppCenterIconStyle appCenterStyle, Action openAppCenter, nint owner, Action<string> report)
+    public PreviewApplicationStrip(PinnedApps pins, PreviewIconPreferences iconPreferences, int iconSize, TaskbarAppFeedbackStyle feedbackStyle,
+        PreviewIconLayout iconLayout, AppCenterIconStyle appCenterStyle, Action openAppCenter, nint owner, Action<string> report)
     {
         this.pins = pins;
         this.iconPreferences = iconPreferences;
         this.iconSize = iconSize;
-        this.indicatorColor = indicatorColor;
+        this.feedbackStyle = feedbackStyle;
+        this.iconLayout = iconLayout;
+        pinnedPanel.Spacing = iconLayout.Gap;
+        pinnedApps = new(pinnedPanel);
         this.owner = owner;
         this.report = report;
         appCenterIcon = new AppCenterIcon(iconSize);
@@ -149,11 +154,32 @@ internal sealed class PreviewApplicationStrip
         if (pinPress is null) Render();
     }
 
-    public void SetIndicatorColor(Color? color)
+    internal void SetAppFeedback(TaskbarAppFeedbackStyle style)
     {
-        indicatorColor = color;
+        feedbackStyle = style;
+        foreach (var view in Rendered) ApplyFeedbackStyle(view.Feedback);
         UpdateIndicators();
     }
+
+    internal void SetIconLayout(PreviewIconLayout layout)
+    {
+        bool gapChanged = iconLayout.Gap != layout.Gap;
+        iconLayout = layout;
+        if (!gapChanged && scrollStarted is null) return;
+        pinnedPanel.Spacing = layout.Gap;
+        runningApps.Layout = null;
+        Render();
+    }
+
+    internal void SetFeedbackLight(bool light)
+    {
+        if (feedbackLight == light) return;
+        feedbackLight = light;
+        SetAppFeedback(feedbackStyle);
+    }
+
+    private void ApplyFeedbackStyle(TaskbarAppFeedback feedback) =>
+        feedback.ApplyStyle(feedbackStyle, feedbackLight, system, accessibility.HighContrast);
 
     internal void RefreshIconStyle(string executable)
     {
@@ -205,7 +231,7 @@ internal sealed class PreviewApplicationStrip
             (running && mountedStart != range.Start))
         {
             DismissThumbnails();
-            bool slide = animate && range.Layout is { } previous && previous.Length == visible &&
+            bool slide = animate && iconLayout.DurationMs > 0 && range.Layout is { } previous && previous.Length == visible &&
                 Surface.IsLoaded && system.AnimationsEnabled && !accessibility.HighContrast;
             range.Layout = order;
             range.Buttons.Clear();
@@ -252,10 +278,10 @@ internal sealed class PreviewApplicationStrip
     private void MountRunningTiles(int first, int count, int visible, bool slide)
     {
         var viewport = runningApps.Panel;
-        double step = iconSize + Gap;
+        double step = iconSize + iconLayout.Gap;
         mountedStart = runningApps.Start;
-        viewport.Width = Math.Max(0, visible * step - Gap);
-        viewport.Height = iconSize + IndicatorSpace;
+        viewport.Width = Math.Max(0, visible * step - iconLayout.Gap);
+        viewport.Height = iconSize + TaskbarAppFeedback.ExtraHeight;
         scrollTo = mountedStart * step;
         if (!slide)
         {
@@ -303,9 +329,8 @@ internal sealed class PreviewApplicationStrip
     private void AnimateScroll(object? sender, object args)
     {
         if (scrollStarted is not { } started) return;
-        double progress = Math.Min(1, Stopwatch.GetElapsedTime(started).TotalMilliseconds / ScrollDurationMs);
-        double remaining = 1 - progress;
-        scrollPosition = scrollTo + (scrollFrom - scrollTo) * remaining * remaining * remaining;
+        double progress = Math.Min(1, Stopwatch.GetElapsedTime(started).TotalMilliseconds / iconLayout.DurationMs);
+        scrollPosition = PreviewIconLayout.ScrollOffset(scrollFrom, scrollTo, progress);
         if (progress == 1)
         {
             StopScrollAnimation();
@@ -321,10 +346,9 @@ internal sealed class PreviewApplicationStrip
         double width = runningApps.Panel.Width;
         foreach (var (index, tile) in runningTiles)
         {
-            double left = index * (iconSize + Gap) - scrollPosition;
+            double left = index * (iconSize + iconLayout.Gap) - scrollPosition;
             tile.Transform.X = left;
-            double visible = Math.Clamp(Math.Min(left + iconSize, width) - Math.Max(0, left), 0, iconSize);
-            tile.View.Button.Opacity = 1 - EdgeFade * (1 - visible / iconSize);
+            tile.View.Button.Opacity = PreviewIconLayout.EdgeOpacity(left, iconSize, width);
         }
     }
 
@@ -343,9 +367,12 @@ internal sealed class PreviewApplicationStrip
 
     private double RequiredWidth(int pinned, int running)
     {
-        int buttons = pinned + running + (AppCenterButton.Visibility == Visibility.Visible ? 1 : 0);
+        int appCenter = AppCenterButton.Visibility == Visibility.Visible ? 1 : 0;
         int divider = pinned > 0 && running > 0 ? 1 : 0;
-        return buttons * iconSize + Math.Max(0, buttons + divider - 1) * Gap + divider * SeparatorWidth;
+        int sections = appCenter + divider + (pinned > 0 ? 1 : 0) + (running > 0 ? 1 : 0);
+        int gaps = Math.Max(0, pinned - 1) + Math.Max(0, running - 1);
+        return (pinned + running + appCenter) * iconSize + gaps * iconLayout.Gap +
+            Math.Max(0, sections - 1) * SectionGap + divider * SeparatorWidth;
     }
 
     private void ScrollRunningApps(object sender, PointerRoutedEventArgs args)
@@ -392,6 +419,11 @@ internal sealed class PreviewApplicationStrip
     private AppButton BuildButton(AppGroup group)
     {
         var button = IconButton(group.Name, "\uE7C5", glyph: true);
+        button.Height = iconSize + TaskbarAppFeedback.ExtraHeight;
+        button.Resources["ButtonBackgroundPointerOver"] = button.Background;
+        button.Resources["ButtonBackgroundPressed"] = button.Background;
+        button.Resources["ButtonBorderBrushPointerOver"] = button.Background;
+        button.Resources["ButtonBorderBrushPressed"] = button.Background;
         if (group.Windows.Count > 0) ToolTipService.SetToolTip(button, null);
         button.PointerEntered += (_, args) =>
         {
@@ -414,9 +446,6 @@ internal sealed class PreviewApplicationStrip
             hoverAnchor = null;
             ScheduleHover(260);
         };
-        var mark = new Border { Height = 3, CornerRadius = new CornerRadius(2), HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Bottom };
-        var contents = new Grid { Width = iconSize, Height = iconSize + IndicatorSpace };
         var icon = ProgramIcon(group.IconExecutable, group.IconAppId);
         var plate = new Border
         {
@@ -427,10 +456,10 @@ internal sealed class PreviewApplicationStrip
             plate.Child = new Image { Stretch = Stretch.Uniform };
         else
             plate.Child = new FontIcon { Glyph = "\uE7C5", FontSize = Math.Round(iconSize * .7) };
-        contents.Children.Add(plate);
-        contents.Children.Add(mark);
-        var pinMarker = group.Pin is { } pin ? EnablePinReordering(button, contents, pin) : null;
-        button.Content = contents;
+        var feedback = new TaskbarAppFeedback(plate, iconSize, system.AnimationsEnabled && !accessibility.HighContrast);
+        ApplyFeedbackStyle(feedback);
+        var pinMarker = group.Pin is { } pin ? EnablePinReordering(button, feedback.Surface, pin) : null;
+        button.Content = feedback.Surface;
         button.Click += (_, _) =>
         {
             if (ReferenceEquals(suppressedClick, button)) return;
@@ -438,18 +467,19 @@ internal sealed class PreviewApplicationStrip
             if (groups.FirstOrDefault(value => StringComparer.OrdinalIgnoreCase.Equals(value.Key, group.Key)) is { } current)
                 Open(current, button);
         };
-        var view = new AppButton(group, button, mark, plate, icon, pinMarker);
+        var view = new AppButton(group, button, feedback, plate, icon, pinMarker);
         SetAppMenu(view, group);
         return view;
     }
 
-    private Border EnablePinReordering(Button button, Grid contents, PinnedApp pin)
+    private Border EnablePinReordering(Button button, Canvas contents, PinnedApp pin)
     {
         var marker = new Border
         {
-            Width = 2, Height = iconSize, CornerRadius = new CornerRadius(1), VerticalAlignment = VerticalAlignment.Top,
+            Width = 2, Height = iconSize, CornerRadius = new CornerRadius(1),
             Visibility = Visibility.Collapsed, IsHitTestVisible = false
         };
+        Canvas.SetTop(marker, TaskbarAppFeedback.TopSpace);
         contents.Children.Add(marker);
         button.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
         {
@@ -503,7 +533,8 @@ internal sealed class PreviewApplicationStrip
         {
             if (view.Group.Pin is not { } pin) continue;
             double left = view.Button.TransformToVisual(items).TransformPoint(new()).X;
-            if (point.X < left - Gap / 2 || point.X > left + view.Button.ActualWidth + Gap / 2) continue;
+            double halfGap = iconLayout.Gap / 2d;
+            if (point.X < left - halfGap || point.X > left + view.Button.ActualWidth + halfGap) continue;
             return PinnedApps.SameProgram(pin.Key, source.Key)
                 ? null : (view, point.X >= left + view.Button.ActualWidth / 2);
         }
@@ -520,7 +551,7 @@ internal sealed class PreviewApplicationStrip
                 ? system.GetColorValue(UIColorType.Foreground) : system.GetColorValue(UIColorType.Accent));
             marker.Visibility = Visibility.Visible;
         }
-        marker.HorizontalAlignment = after ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+        Canvas.SetLeft(marker, after ? iconSize - marker.Width : 0);
     }
 
     private void EndPinPress(PinPress press)
@@ -563,7 +594,11 @@ internal sealed class PreviewApplicationStrip
         var edge = highContrast ? system.GetColorValue(UIColorType.Foreground)
             : useDark ? Color.FromArgb(48, 255, 255, 255) : Color.FromArgb(70, 35, 58, 84);
         separator.Background = new SolidColorBrush(edge);
-        foreach (var view in Rendered) UpdateIcon(view);
+        foreach (var view in Rendered)
+        {
+            UpdateIcon(view);
+            ApplyFeedbackStyle(view.Feedback);
+        }
     }
 
     private void UpdateIcon(AppButton view)
@@ -582,7 +617,7 @@ internal sealed class PreviewApplicationStrip
         }
         if (original || view.Icon?.HasPlate == true)
         {
-            view.IconPlate.Background = null;
+            view.IconPlate.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             return;
         }
 
@@ -593,16 +628,13 @@ internal sealed class PreviewApplicationStrip
 
     private void UpdateIndicators()
     {
-        var color = accessibility.HighContrast ? system.GetColorValue(UIColorType.Foreground)
-            : indicatorColor ?? system.GetColorValue(UIColorType.Accent);
+        var (activeColor, backgroundColor) = TaskbarAppFeedback.DotColors(feedbackStyle, system, accessibility.HighContrast);
         foreach (var view in Rendered)
         {
             bool running = view.Group.Windows.Count > 0;
             bool active = view.Group.Windows.Any(window => window.Handle == foreground);
-            view.Indicator.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
-            view.Indicator.Width = active ? 16 : 4;
-            if (view.Indicator.Background is not SolidColorBrush brush || brush.Color != color)
-                view.Indicator.Background = new SolidColorBrush(color);
+            var state = active ? AppWindowState.Foreground : running ? AppWindowState.Background : AppWindowState.Closed;
+            view.Feedback.ShowState(state, activeColor, backgroundColor, feedbackLight);
             AutomationProperties.SetItemStatus(view.Button, active ? "当前前台应用" : running
                 ? $"正在运行，{view.Group.Windows.Count} 个窗口" : "已固定，未运行");
         }

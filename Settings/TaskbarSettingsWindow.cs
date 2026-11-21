@@ -63,7 +63,8 @@ internal sealed partial class TaskbarSettingsWindow : Window
         var widths = new SettingsPaneWidths(profileDirectory, SetStatus);
         var taskbarNav = SettingsNavigation.Sidebar(144);
         var appearanceItem = AddSubpage("任务栏外观设置", BuildPreview);
-        AddSubpage("软件图标设置", BuildSoftwareIconSettings);
+        var iconPreview = new IconSettingsPreview(colors, accessibility);
+        AddSubpage("图标设置", page => BuildIconSettings(page, iconPreview), iconPreview.Surface);
         var compactSubpages = SettingsNavigation.ConnectSubpages(taskbarNav, item => item.Tag);
         var taskbarPages = new SettingsSplitView(taskbarNav, widths, SettingsSection.TaskbarSubpages,
             (length, condensed) =>
@@ -72,11 +73,15 @@ internal sealed partial class TaskbarSettingsWindow : Window
                 taskbarNav.IsPaneVisible = !condensed;
                 taskbarNav.IsPaneOpen = !condensed;
             }, compactSubpages);
-        NavigationViewItem AddSubpage(string title, Action<StackPanel> build)
+        NavigationViewItem AddSubpage(string title, Action<StackPanel> build, FrameworkElement? preview = null)
         {
             var body = new StackPanel();
             build(body);
-            var item = new NavigationViewItem { Content = title, Tag = SettingsNavigation.Subpage(title, body) };
+            var item = new NavigationViewItem
+            {
+                Content = title,
+                Tag = preview is null ? SettingsNavigation.Subpage(title, body) : SettingsNavigation.Subpage(title, body, preview)
+            };
             taskbarNav.MenuItems.Add(item);
             return item;
         }
@@ -251,65 +256,7 @@ internal sealed partial class TaskbarSettingsWindow : Window
         previewToggle.Click += (_, _) => app.TogglePreview();
         page.Children.Add(SettingRow("双栏对比", "让 AITaskbar 预览栏与 Windows 原生任务栏同时显示。", previewToggle));
 
-        var slider = new Slider
-        {
-            Minimum = PreviewIconSize.Minimum, Maximum = PreviewIconSize.Maximum, StepFrequency = 2,
-            Value = app.IconSize, MinWidth = 120
-        };
-        var size = new TextBlock { Text = $"{app.IconSize} DIP", Opacity = .72, VerticalAlignment = VerticalAlignment.Center };
-        AutomationProperties.SetName(slider, "应用图标大小");
-        slider.ValueChanged += (_, args) =>
-        {
-            int next = (int)Math.Round(args.NewValue);
-            if (!app.TrySetIconSize(next)) slider.Value = app.IconSize;
-            size.Text = $"{app.IconSize} DIP";
-        };
-        var controls = Actions(slider, size);
-        page.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。拖动时即时生效。", controls));
-
-        var colorChoice = new Button();
-        var sampleDot = new Border { Width = 5, Height = 5, CornerRadius = new CornerRadius(3),
-            VerticalAlignment = VerticalAlignment.Center };
-        var sampleBar = new Border { Width = 16, Height = 4, CornerRadius = new CornerRadius(2),
-            VerticalAlignment = VerticalAlignment.Center };
-        var sample = Actions(sampleDot, sampleBar);
-        var label = new TextBlock();
-        colorChoice.Content = Actions(sample, label);
-        void UpdateColor()
-        {
-            label.Text = app.IndicatorColor is { } value ? PreviewIndicatorColor.Format(value) : "跟随系统";
-            AutomationProperties.SetName(colorChoice, "运行标记颜色 · " + label.Text);
-            sampleDot.Background = sampleBar.Background = new SolidColorBrush(
-                app.IndicatorColor ?? colors.GetColorValue(UIColorType.Accent));
-        }
-        UpdateColor();
-        colorChoice.Click += (_, _) => PickIndicatorColor(colorChoice, UpdateColor);
-        colorChoice.CornerRadius = new CornerRadius(18);
-        page.Children.Add(SettingRow("运行标记颜色", "运行中的圆点与前台窗口的短条共用此颜色。", colorChoice));
         BuildLumaPreferences(page);
-    }
-
-    private void PickIndicatorColor(Button anchor, Action update)
-    {
-        var picker = new ColorPicker
-        {
-            Color = app.IndicatorColor ?? colors.GetColorValue(UIColorType.Accent),
-            IsAlphaEnabled = false, IsHexInputVisible = true, IsColorChannelTextInputVisible = false, MaxWidth = 258
-        };
-        var content = new StackPanel { Spacing = 8, MaxWidth = 258 };
-        var flyout = new Flyout { Content = content };
-        picker.ColorChanged += (_, args) => app.PreviewIndicator(args.NewColor);
-        flyout.Closed += (_, _) => app.PreviewIndicator(app.IndicatorColor);
-        void Save(Color? color)
-        {
-            if (!app.TrySetIndicatorColor(color)) return;
-            update();
-            flyout.Hide();
-        }
-        content.Children.Add(picker);
-        content.Children.Add(Actions(ActionButton("应用颜色", () => Save(picker.Color)),
-            ActionButton("跟随系统", () => Save(null))));
-        flyout.ShowAt(anchor);
     }
 
     private void AddNavigation(SettingsSection section, string title, IconElement icon)

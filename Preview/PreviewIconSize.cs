@@ -4,7 +4,7 @@ namespace AITaskbar;
 
 internal static class PreviewIconSize
 {
-    public const int Minimum = 24, Maximum = 36, Default = 32;
+    public const int Minimum = 24, Maximum = 36, Default = 34;
 
     private static string FilePath(string root) => Path.Combine(root, "preview-icon-size.txt");
 

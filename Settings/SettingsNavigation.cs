@@ -25,8 +25,31 @@ internal static class SettingsNavigation
 
     internal static ScrollViewer Subpage(string title, StackPanel content)
     {
-        content.Children.Insert(0, new TextBlock { Text = title, FontSize = 20, FontWeight = FontWeights.SemiBold });
-        content.Padding = new Thickness(16);
+        content.Children.Insert(0, PageTitle(title));
+        return ScrollContent(content, new Thickness(16));
+    }
+
+    internal static Grid Subpage(string title, StackPanel content, FrameworkElement preview)
+    {
+        var header = new StackPanel { Padding = new Thickness(16, 16, 16, 8), Spacing = 12 };
+        header.Children.Add(PageTitle(title));
+        header.Children.Add(preview);
+        var scroll = ScrollContent(content, new Thickness(16, 0, 16, 16));
+        var page = new Grid();
+        page.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        page.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        page.Children.Add(header);
+        Grid.SetRow(scroll, 1);
+        page.Children.Add(scroll);
+        return page;
+    }
+
+    private static TextBlock PageTitle(string title) =>
+        new() { Text = title, FontSize = 20, FontWeight = FontWeights.SemiBold };
+
+    private static ScrollViewer ScrollContent(StackPanel content, Thickness padding)
+    {
+        content.Padding = padding;
         content.Spacing = 12;
         return new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollMode = ScrollMode.Disabled };

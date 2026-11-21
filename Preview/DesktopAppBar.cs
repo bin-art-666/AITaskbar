@@ -15,13 +15,15 @@ internal sealed class DesktopAppBar : IDisposable
     private readonly uint notification = RegisterWindowMessage("AITaskbar.Preview.AppBar");
     private readonly uint taskbarCreated = RegisterWindowMessage("TaskbarCreated");
     private Native.Rect? proposed, reserved;
+    private int heightDip;
     private bool registered, disposed, queued, shellRestarted, fullscreen;
 
-    public DesktopAppBar(nint handle, DispatcherQueue dispatcher, Action<Exception> reportFailure)
+    public DesktopAppBar(nint handle, DispatcherQueue dispatcher, int iconSize, Action<Exception> reportFailure)
     {
         this.handle = handle;
         this.dispatcher = dispatcher;
         this.reportFailure = reportFailure;
+        heightDip = HeightFor(iconSize);
         callback = WndProc;
         if (notification == 0 || taskbarCreated == 0 || !SetWindowSubclass(handle, callback, 1, 0))
             throw new InvalidOperationException("无法初始化预览栏窗口。");
@@ -50,7 +52,7 @@ internal sealed class DesktopAppBar : IDisposable
     private void Position()
     {
         var monitor = Native.Monitors().First(monitor => monitor.Primary);
-        var height = (int)Math.Round(50 * monitor.Dpi / 96d);
+        var height = (int)Math.Round(heightDip * monitor.Dpi / 96d);
         var data = Data();
         data.Rectangle = monitor.Bounds;
         data.Rectangle.Top = data.Rectangle.Bottom - height;
@@ -71,6 +73,16 @@ internal sealed class DesktopAppBar : IDisposable
     }
 
     internal void Reposition() => QueuePosition();
+
+    internal void SetIconSize(int size)
+    {
+        int height = HeightFor(size);
+        if (heightDip == height) return;
+        heightDip = height;
+        Reposition();
+    }
+
+    private static int HeightFor(int iconSize) => Math.Max(50, iconSize + TaskbarAppFeedback.ExtraHeight + 1);
 
     private void QueuePosition(bool newShell = false)
     {

@@ -20,7 +20,7 @@ internal sealed class PreviewTaskbar : Window
     internal PreviewModuleIcons ModuleIcons { get; }
     internal IReadOnlyList<PinnedApp> PinnedItems => pins.Items;
 
-    public PreviewTaskbar(App app, string root, AppearanceHost appearance, int iconSize, Windows.UI.Color? indicatorColor,
+    public PreviewTaskbar(App app, string root, AppearanceHost appearance, int iconSize,
         Action<Exception> reportFailure)
     {
         Title = "AITaskbar 预览栏";
@@ -31,7 +31,7 @@ internal sealed class PreviewTaskbar : Window
         presenter.IsResizable = presenter.IsMinimizable = presenter.IsMaximizable = false;
         handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         tasks = new(pins, app.IconPreferences,
-            iconSize, indicatorColor, app.CurrentAppCenterAppearance.Icon, app.ShowAppCenterSettings, handle, Report);
+            iconSize, app.AppFeedback, app.IconLayout, app.CurrentAppCenterAppearance.Icon, app.ShowAppCenterSettings, handle, Report);
         AIEnter.Native.RemoveWindowFrame(handle);
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
@@ -70,7 +70,11 @@ internal sealed class PreviewTaskbar : Window
         left.SizeChanged += FitApps;
         right.SizeChanged += FitApps;
         var surface = new Border();
-        var visual = new PreviewBarAppearance(this, surface, strip, appearance, light => icons.RefreshSystem(light));
+        var visual = new PreviewBarAppearance(this, surface, strip, appearance, light =>
+        {
+            icons.RefreshSystem(light);
+            tasks.SetFeedbackLight(light);
+        });
 
         refresh = DispatcherQueue.CreateTimer();
         refresh.Interval = TimeSpan.FromMilliseconds(1100);
@@ -93,7 +97,7 @@ internal sealed class PreviewTaskbar : Window
         {
             Content = surface;
             visual.Refresh();
-            bar = new(handle, DispatcherQueue, error => { Close(); reportFailure(error); });
+            bar = new(handle, DispatcherQueue, iconSize, error => { Close(); reportFailure(error); });
             tasks.Refresh();
             refresh.Start();
         }
@@ -113,10 +117,15 @@ internal sealed class PreviewTaskbar : Window
         bar.Reposition();
     }
 
-    internal void SetIconSize(int size) => tasks.SetIconSize(size);
+    internal void SetIconSize(int size)
+    {
+        tasks.SetIconSize(size);
+        bar.SetIconSize(size);
+    }
     internal void RefreshIconStyle(string executable) => tasks.RefreshIconStyle(executable);
     internal void SetAppCenterIcon(AppCenterIconStyle style) => tasks.SetAppCenterIcon(style);
-    internal void SetIndicatorColor(Windows.UI.Color? color) => tasks.SetIndicatorColor(color);
+    internal void SetAppFeedback(TaskbarAppFeedbackStyle style) => tasks.SetAppFeedback(style);
+    internal void SetIconLayout(PreviewIconLayout layout) => tasks.SetIconLayout(layout);
 
     private async Task PickPinAsync()
     {
