@@ -28,10 +28,9 @@ internal sealed partial class TaskbarSettingsWindow
             (IconScrollAnimation.Relaxed, "舒缓")
         ];
         foreach (var mode in modes) animation.Items.Add(mode.Label);
-        var windowSpeed = new ComboBox { MinWidth = 118 };
-        AutomationProperties.SetName(windowSpeed, "窗口开合速度");
-        windowSpeed.Items.Add("标准（240 毫秒）");
-        windowSpeed.Items.Add("慢速（1 秒）");
+        var windowSpeed = FeedbackSlider("窗口开合速度", PreviewIconLayout.MinWindowDurationMs, PreviewIconLayout.MaxWindowDurationMs);
+        windowSpeed.LargeChange = 50;
+        var windowSpeedValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center, MinWidth = 72 };
 
         bool syncing = false;
         void Sync()
@@ -42,7 +41,8 @@ internal sealed partial class TaskbarSettingsWindow
             gap.Value = app.IconLayout.Gap;
             gapValue.Text = $"{app.IconLayout.Gap} DIP";
             animation.SelectedIndex = Array.FindIndex(modes, mode => mode.Value == app.IconLayout.Animation);
-            windowSpeed.SelectedIndex = app.IconLayout.WindowSpeed == WindowMotionSpeed.Slow ? 1 : 0;
+            windowSpeed.Value = app.IconLayout.WindowDurationMs;
+            windowSpeedValue.Text = $"{app.IconLayout.WindowDurationMs} 毫秒";
             syncing = false;
             preview.ApplyLayout(app.IconSize, app.IconLayout);
         }
@@ -65,11 +65,10 @@ internal sealed partial class TaskbarSettingsWindow
             app.TrySetIconLayout(app.IconLayout with { Animation = modes[animation.SelectedIndex].Value });
             Sync();
         };
-        windowSpeed.SelectionChanged += (_, _) =>
+        windowSpeed.ValueChanged += (_, args) =>
         {
-            if (syncing || windowSpeed.SelectedIndex < 0) return;
-            var selected = windowSpeed.SelectedIndex == 1 ? WindowMotionSpeed.Slow : WindowMotionSpeed.Standard;
-            app.TrySetIconLayout(app.IconLayout with { WindowSpeed = selected });
+            if (syncing) return;
+            app.TrySetIconLayout(app.IconLayout with { WindowDurationMs = (int)Math.Round(args.NewValue) });
             Sync();
         };
 
@@ -77,7 +76,7 @@ internal sealed partial class TaskbarSettingsWindow
         page.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
         page.Children.Add(SettingRow("图标间距", "分别调整固定区和运行区内相邻图标的间隔。", Actions(gap, gapValue)));
         page.Children.Add(SettingRow("滚动动画", "运行区图标溢出时生效。关闭后仍可用滚轮切换。", animation));
-        page.Children.Add(SettingRow("窗口开合速度", "适用于点击任务栏图标时的窗口展开和收起。", windowSpeed));
+        page.Children.Add(SettingRow("窗口开合速度", "设置窗口展开和收起的时长，范围为 200–1000 毫秒。", Actions(windowSpeed, windowSpeedValue)));
         BuildAppFeedbackSettings(page, preview.ApplyFeedback);
         page.Children.Add(IconSettingsHeading("单个应用的图标"));
         BuildSoftwareIconSettings(page);

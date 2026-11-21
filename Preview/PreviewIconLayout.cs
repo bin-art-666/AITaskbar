@@ -4,20 +4,17 @@ using System.Text.Json.Serialization;
 namespace AITaskbar;
 
 internal enum IconScrollAnimation { Off, Fast, Standard, Relaxed }
-internal enum WindowMotionSpeed { Standard, Slow }
 
 internal sealed record PreviewIconLayout
 {
     internal const int MinGap = 2, MaxGap = 12, DefaultGap = 7;
+    internal const int MinWindowDurationMs = 200, MaxWindowDurationMs = 1000, DefaultWindowDurationMs = 240;
     internal static PreviewIconLayout Default { get; } = new();
 
     public int Gap { get; init; } = DefaultGap;
     [JsonConverter(typeof(JsonStringEnumConverter<IconScrollAnimation>))]
     public IconScrollAnimation Animation { get; init; } = IconScrollAnimation.Standard;
-    [JsonConverter(typeof(JsonStringEnumConverter<WindowMotionSpeed>))]
-    public WindowMotionSpeed WindowSpeed { get; init; } = WindowMotionSpeed.Standard;
-
-    internal int WindowDurationMs => WindowSpeed == WindowMotionSpeed.Slow ? 1000 : 240;
+    public int WindowDurationMs { get; init; } = DefaultWindowDurationMs;
 
     internal int DurationMs => Animation switch
     {
@@ -31,17 +28,32 @@ internal sealed record PreviewIconLayout
     {
         try
         {
-            if (JsonSerializer.Deserialize<PreviewIconLayout>(File.ReadAllBytes(FilePath(root))) is { } value)
+            using var json = JsonDocument.Parse(File.ReadAllBytes(FilePath(root)));
+            if (json.RootElement.Deserialize<PreviewIconLayout>() is { } value)
+            {
+                int duration = value.WindowDurationMs;
+                if (!json.RootElement.TryGetProperty(nameof(WindowDurationMs), out _) &&
+                    json.RootElement.TryGetProperty("WindowSpeed", out var speed) && IsLegacySlow(speed))
+                    duration = MaxWindowDurationMs;
                 return value with
                 {
                     Gap = Math.Clamp(value.Gap, MinGap, MaxGap),
                     Animation = Enum.IsDefined(value.Animation) ? value.Animation : Default.Animation,
-                    WindowSpeed = Enum.IsDefined(value.WindowSpeed) ? value.WindowSpeed : Default.WindowSpeed
+                    WindowDurationMs = Math.Clamp(duration, MinWindowDurationMs, MaxWindowDurationMs)
                 };
+            }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { }
         return Default;
     }
+
+    private static bool IsLegacySlow(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString()?.Trim() is { } name &&
+            (name.Equals("Slow", StringComparison.OrdinalIgnoreCase) || name == "1"),
+        JsonValueKind.Number => value.TryGetInt32(out int speed) && speed == 1,
+        _ => false
+    };
 
     internal void Save(string root)
     {
