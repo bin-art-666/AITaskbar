@@ -167,7 +167,7 @@ internal sealed class PreviewBarAppearance : IDisposable
         cursorLight.Visibility = Visibility.Visible;
     }
 
-    private static Color FromAbgr(uint value) => Color.FromArgb((byte)(value >> 24), (byte)value, (byte)(value >> 8), (byte)(value >> 16));
+    internal static Color FromAbgr(uint value) => Color.FromArgb((byte)(value >> 24), (byte)value, (byte)(value >> 8), (byte)(value >> 16));
 
     private static Color SolidTint(Color tint, Color normal)
     {

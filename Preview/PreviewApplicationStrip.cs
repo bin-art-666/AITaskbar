@@ -23,6 +23,7 @@ internal sealed class PreviewApplicationStrip
         HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
     };
     private readonly PinnedApps pins;
+    private readonly AppCenterIcon appCenterIcon;
     private readonly PreviewIconPreferences iconPreferences;
     private readonly nint owner;
     private readonly Action<string> report;
@@ -50,13 +51,14 @@ internal sealed class PreviewApplicationStrip
     private Border? separator;
     private bool? dark, contrast;
     public StackPanel Surface => items;
+    internal Button AppCenterButton { get; }
 
     private sealed record AppButton(AppGroup Group, Button Button, Border Indicator, Border IconPlate, AppIconArtwork? Icon,
         Border? PinDropMarker);
     private sealed record PinPress(PinnedApp Pin, uint PointerId, Point Start);
 
     public PreviewApplicationStrip(PinnedApps pins, PreviewIconPreferences iconPreferences, int iconSize, Color? indicatorColor,
-        nint owner, Action<string> report)
+        AppCenterIconStyle appCenterStyle, Action openAppCenter, nint owner, Action<string> report)
     {
         this.pins = pins;
         this.iconPreferences = iconPreferences;
@@ -64,6 +66,17 @@ internal sealed class PreviewApplicationStrip
         this.indicatorColor = indicatorColor;
         this.owner = owner;
         this.report = report;
+        appCenterIcon = new AppCenterIcon(iconSize);
+        appCenterIcon.Apply(appCenterStyle);
+        AppCenterButton = IconButton("应用中心", appCenterIcon);
+        AppCenterButton.Visibility = appCenterStyle.ShowInTaskbar ? Visibility.Visible : Visibility.Collapsed;
+        AppCenterButton.VerticalContentAlignment = VerticalAlignment.Top;
+        AppCenterButton.Click += (_, _) =>
+        {
+            DismissThumbnails();
+            openAppCenter();
+        };
+        items.Children.Add(AppCenterButton);
         hoverTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
         hoverTimer.IsRepeating = false;
         hoverTimer.Tick += (_, _) => UpdateThumbnails();
@@ -97,6 +110,9 @@ internal sealed class PreviewApplicationStrip
         if (iconSize == size) return;
         openFlyout?.Hide();
         iconSize = size;
+        appCenterIcon.SetSize(size);
+        AppCenterButton.Width = size;
+        AppCenterButton.Height = size + IndicatorSpace;
         layout = null;
         if (pinPress is null) Render();
     }
@@ -105,6 +121,15 @@ internal sealed class PreviewApplicationStrip
     {
         indicatorColor = color;
         UpdateIndicators();
+    }
+
+    internal void SetAppCenterIcon(AppCenterIconStyle style)
+    {
+        appCenterIcon.Apply(style);
+        var visibility = style.ShowInTaskbar ? Visibility.Visible : Visibility.Collapsed;
+        if (AppCenterButton.Visibility == visibility) return;
+        AppCenterButton.Visibility = visibility;
+        if (openFlyout is null && pinPress is null) Render();
     }
 
     private void Render()
@@ -120,7 +145,8 @@ internal sealed class PreviewApplicationStrip
         {
             DismissThumbnails();
             layout = next;
-            items.Children.Clear();
+            // The leading launcher is independent of the pinned and running app groups.
+            while (items.Children.Count > 1) items.Children.RemoveAt(items.Children.Count - 1);
             shown.Clear();
             separator = null;
             more = null;
@@ -141,7 +167,6 @@ internal sealed class PreviewApplicationStrip
                 more.Click += (_, _) => ShowOverflow();
                 items.Children.Add(more);
             }
-            Surface.Visibility = items.Children.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
             dark = null;
         }
 
@@ -164,7 +189,7 @@ internal sealed class PreviewApplicationStrip
 
     private double RequiredWidth(int count, int pinned, bool overflow)
     {
-        int buttons = count + (overflow ? 1 : 0);
+        int buttons = count + (AppCenterButton.Visibility == Visibility.Visible ? 1 : 0) + (overflow ? 1 : 0);
         int divider = pinned > 0 && count > pinned ? 1 : 0;
         return buttons * iconSize + Math.Max(0, buttons + divider - 1) * Gap + divider * SeparatorWidth;
     }
@@ -322,7 +347,7 @@ internal sealed class PreviewApplicationStrip
         dropMarker = null;
     }
 
-    private Button IconButton(string name, string content, bool glyph = false)
+    private Button IconButton(string name, object content, bool glyph = false)
     {
         var button = new Button { Content = content, Width = iconSize, Height = iconSize + IndicatorSpace, Padding = new Thickness(0),
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0),

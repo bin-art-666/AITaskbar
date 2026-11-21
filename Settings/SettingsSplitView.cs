@@ -31,6 +31,7 @@ internal sealed class SettingsSplitView : Grid
         this.section = section;
         this.updatePane = updatePane;
         this.compactMenu = compactMenu;
+        string sectionLabel = section == SettingsSection.AppCenter ? "应用中心" : section.ToString();
         (minimum, maximum, defaultWidth, contentMinimum) = section switch
         {
             SettingsSection.Taskbar => (128, 224, 144, 440),
@@ -45,14 +46,14 @@ internal sealed class SettingsSplitView : Grid
             compactMenu.Visibility = Visibility.Collapsed;
             compactMenu.Margin = new Thickness(12, 8, 12, 4);
             compactMenu.HorizontalAlignment = HorizontalAlignment.Stretch;
-            AutomationProperties.SetName(compactMenu, $"{section} 二级菜单");
+            AutomationProperties.SetName(compactMenu, $"{sectionLabel} 二级菜单");
             Children.Add(compactMenu);
         }
         SetRow(body, 1);
         body.Children.Add(content);
         body.Children.Add(divider);
         Children.Add(body);
-        AutomationProperties.SetName(divider, section == SettingsSection.Taskbar ? "一级导航分隔线" : $"{section} 二级菜单分隔线");
+        AutomationProperties.SetName(divider, section == SettingsSection.Taskbar ? "一级导航分隔线" : $"{sectionLabel} 二级菜单分隔线");
         AutomationProperties.SetHelpText(divider, "拖动调整宽度，双击恢复默认宽度。");
         divider.PointerPressed += BeginDrag;
         divider.PointerMoved += Drag;

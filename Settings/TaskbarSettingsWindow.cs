@@ -11,7 +11,7 @@ using Windows.UI.ViewManagement;
 
 namespace AITaskbar;
 
-internal enum SettingsSection { Taskbar, Halo, AIEnter }
+internal enum SettingsSection { Taskbar, Halo, AIEnter, AppCenter }
 
 internal sealed partial class TaskbarSettingsWindow : Window
 {
@@ -30,6 +30,7 @@ internal sealed partial class TaskbarSettingsWindow : Window
     private (Halo.UiAppearance Appearance, bool Light, Color? Foreground)? navigationRingStyle;
     private Halo.SettingsPage? haloSettings;
     private AIEnter.SettingsPage? aiSettings;
+    private AppCenterSettingsPage? appCenterSettings;
     internal Task PendingSettings => Task.WhenAll(haloSettings?.PendingOperation ?? Task.CompletedTask, glassCommit);
 
     public TaskbarSettingsWindow(App app, string profileDirectory)
@@ -71,6 +72,10 @@ internal sealed partial class TaskbarSettingsWindow : Window
         AddNavigation(SettingsSection.Taskbar, "任务栏外观", new FontIcon { Glyph = "\uE713" });
         AddNavigation(SettingsSection.Halo, "Halo", haloIcon);
         AddNavigation(SettingsSection.AIEnter, "AIEnter", aiIcon);
+        AddNavigation(SettingsSection.AppCenter, "应用中心", new IconSourceElement
+        {
+            IconSource = new FontIconSource { Glyph = "\uE8A9" }
+        });
         nav.SelectionChanged += (_, args) =>
         {
             if (args.SelectedItem is not NavigationViewItem { Tag: SettingsSection section }) return;
@@ -79,6 +84,7 @@ internal sealed partial class TaskbarSettingsWindow : Window
             {
                 SettingsSection.Halo => haloSettings ??= app.HaloModule.CreateSettingsPage(this, widths),
                 SettingsSection.AIEnter => aiSettings ??= app.AiModule.CreateSettingsPage(this, widths),
+                SettingsSection.AppCenter => appCenterSettings ??= new AppCenterSettingsPage(app, widths),
                 _ => preview
             };
         };
@@ -216,6 +222,7 @@ internal sealed partial class TaskbarSettingsWindow : Window
     }
     internal void Select(SettingsSection section) => nav.SelectedItem = navigation[section];
     internal void ShowHaloStorage() => haloSettings?.ShowStorageSettings();
+    internal void ShowAppCenterIconSettings() => appCenterSettings?.SelectIcon();
 
     public void SetStatus(string text)
     {

@@ -20,6 +20,8 @@ public partial class App : Application
     private string root = "";
     private int iconSize;
     private Color? indicatorColor;
+    internal AppCenterAppearance SavedAppCenterAppearance { get; private set; } = new();
+    internal AppCenterAppearance CurrentAppCenterAppearance { get; private set; } = new();
 
     public App()
     {
@@ -37,6 +39,7 @@ public partial class App : Application
             : defaultRoot));
         iconSize = PreviewIconSize.Read(root);
         indicatorColor = PreviewIndicatorColor.Read(root);
+        CurrentAppCenterAppearance = SavedAppCenterAppearance = AppCenterAppearance.Read(root);
         var verifying = arguments.Any(arg => arg.StartsWith("--verify-", StringComparison.Ordinal));
         if (verifying && string.Equals(root, defaultRoot, StringComparison.OrdinalIgnoreCase))
         {
@@ -169,6 +172,31 @@ public partial class App : Application
     }
 
     internal void HideSettings() => settingsWindow?.HideSettings();
+    internal void ShowAppCenterSettings()
+    {
+        ShowSettings(SettingsSection.AppCenter);
+        settingsWindow?.ShowAppCenterIconSettings();
+    }
+
+    internal void PreviewAppCenterAppearance(AppCenterAppearance next)
+    {
+        CurrentAppCenterAppearance = next;
+        preview?.SetAppCenterIcon(next.Icon);
+    }
+
+    internal bool TrySaveAppCenterAppearance(AppCenterAppearance next)
+    {
+        try { next.Save(root); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Log(error);
+            return false;
+        }
+        SavedAppCenterAppearance = next;
+        PreviewAppCenterAppearance(next);
+        return true;
+    }
+
     internal void ShowHaloStorageSettings()
     {
         ShowSettings(SettingsSection.Halo);

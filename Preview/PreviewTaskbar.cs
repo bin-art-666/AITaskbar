@@ -30,7 +30,7 @@ internal sealed class PreviewTaskbar : Window
         presenter.IsResizable = presenter.IsMinimizable = presenter.IsMaximizable = false;
         handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         tasks = new(pins, new PreviewIconPreferences(Path.Combine(root, "preview-original-icons.json")),
-            iconSize, indicatorColor, handle, Report);
+            iconSize, indicatorColor, app.CurrentAppCenterAppearance.Icon, app.ShowAppCenterSettings, handle, Report);
         AIEnter.Native.RemoveWindowFrame(handle);
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
@@ -38,6 +38,7 @@ internal sealed class PreviewTaskbar : Window
         var ai = Button("AIEnter", "AIEnter 对话", () => _ = app.AiModule.ToggleAiWindow(false));
         SetMenu(halo, "Halo 设置", Halo.App.OpenSettings);
         SetMenu(ai, "AIEnter 设置", app.AiModule.OpenSettings);
+        SetMenu(tasks.AppCenterButton, "应用中心设置", app.ShowAppCenterSettings);
         AcceptDrop(halo, Halo.StationWindow.Supports, async view =>
         {
             app.HaloModule.Handle("Open");
@@ -112,6 +113,7 @@ internal sealed class PreviewTaskbar : Window
     }
 
     internal void SetIconSize(int size) => tasks.SetIconSize(size);
+    internal void SetAppCenterIcon(AppCenterIconStyle style) => tasks.SetAppCenterIcon(style);
     internal void SetIndicatorColor(Windows.UI.Color? color) => tasks.SetIndicatorColor(color);
 
     private async Task PickPinAsync()

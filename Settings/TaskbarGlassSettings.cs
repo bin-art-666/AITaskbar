@@ -159,6 +159,7 @@ internal sealed partial class TaskbarSettingsWindow
         if (glassDirty) _ = ResetGlassAsync();
         haloSettings?.Reset();
         aiSettings?.ResetPreview();
+        appCenterSettings?.Reset();
         AppWindow.Hide();
     }
 
