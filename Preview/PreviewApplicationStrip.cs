@@ -123,6 +123,12 @@ internal sealed class PreviewApplicationStrip
         UpdateIndicators();
     }
 
+    internal void RefreshIconStyle(string executable)
+    {
+        foreach (var view in shown)
+            if (StringComparer.OrdinalIgnoreCase.Equals(view.Group.IconExecutable, executable)) UpdateIcon(view);
+    }
+
     internal void SetAppCenterIcon(AppCenterIconStyle style)
     {
         appCenterIcon.Apply(style);
@@ -138,7 +144,8 @@ internal sealed class PreviewApplicationStrip
         int count = groups.Length;
         while (count > 0 && RequiredWidth(count, pinned, count < groups.Length) > available) count--;
         bool overflow = count < groups.Length && RequiredWidth(count, pinned, true) <= available;
-        var order = groups.Take(count).Select(group => (group.Pin is null ? "running:" : "pinned:") + group.Key).ToArray();
+        var order = groups.Take(count).Select(group => (group.Pin is null ? "running:" : "pinned:") + group.Key + "|" +
+            IconCacheKey(group.IconExecutable, group.IconAppId)).ToArray();
         bool divided = pinned > 0 && count > pinned;
         string[] next = [divided ? "divider:" + pinned : "", overflow ? "overflow" : "", .. order];
         if (layout is null || !layout.SequenceEqual(next, StringComparer.OrdinalIgnoreCase))
@@ -222,7 +229,7 @@ internal sealed class PreviewApplicationStrip
         var mark = new Border { Height = 3, CornerRadius = new CornerRadius(2), HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Bottom };
         var contents = new Grid { Width = iconSize, Height = iconSize + IndicatorSpace };
-        var icon = ProgramIcon(group.Executable);
+        var icon = ProgramIcon(group.IconExecutable, group.IconAppId);
         var plate = new Border
         {
             Width = iconSize, Height = iconSize, CornerRadius = new CornerRadius(iconSize * (6d / 26)),
@@ -283,7 +290,7 @@ internal sealed class PreviewApplicationStrip
             {
                 if (draggingPin && PinDropTarget(args.GetCurrentPoint(items).Position, press.Pin) is { } drop)
                 {
-                    pins.Move(press.Pin.Executable, drop.View.Group.Pin!.Executable, drop.After);
+                    pins.Move(press.Pin, drop.View.Group.Pin!, drop.After);
                     report("");
                 }
             }
@@ -309,7 +316,7 @@ internal sealed class PreviewApplicationStrip
             if (view.Group.Pin is not { } pin) break;
             double left = view.Button.TransformToVisual(items).TransformPoint(new()).X;
             if (point.X < left - Gap / 2 || point.X > left + view.Button.ActualWidth + Gap / 2) continue;
-            return PinnedApps.SameProgram(pin.Executable, source.Executable)
+            return PinnedApps.SameProgram(pin.Key, source.Key)
                 ? null : (view, point.X >= left + view.Button.ActualWidth / 2);
         }
         return null;
@@ -377,11 +384,16 @@ internal sealed class PreviewApplicationStrip
     private void UpdateIcon(AppButton view)
     {
         bool highContrast = contrast == true;
-        bool original = highContrast || (view.Group.Executable is { } path && iconPreferences.UsesOriginal(path));
+        bool original = highContrast || (view.Group.IconExecutable is { } path && iconPreferences.UsesOriginal(path));
         if (view.Icon is { } icon && view.IconPlate.Child is Image image)
         {
             image.Source = original ? icon.Original : icon.Graphic;
             image.Width = image.Height = original || icon.HasPlate ? iconSize : Math.Round(iconSize * (20d / 26));
+        }
+        if (view.IconPlate.Child is FontIcon fallback)
+        {
+            if (original) fallback.ClearValue(IconElement.ForegroundProperty);
+            else fallback.Foreground = new SolidColorBrush(Color.FromArgb(255, 39, 46, 56));
         }
         if (original || view.Icon?.HasPlate == true)
         {
@@ -389,11 +401,8 @@ internal sealed class PreviewApplicationStrip
             return;
         }
 
-        double luminance = view.Icon?.Luminance ?? (dark == true ? .9 : .1);
-        // A dark mark needs a lighter plate even on a dark taskbar.
-        var color = dark == true
-            ? luminance < .34 ? Color.FromArgb(255, 196, 210, 230) : Color.FromArgb(255, 23, 38, 58)
-            : luminance > .67 ? Color.FromArgb(255, 71, 89, 113) : Color.FromArgb(255, 224, 234, 249);
+        // Very light artwork needs a dark plate to stay legible against its background.
+        var color = view.Icon?.Luminance >= .8 ? Color.FromArgb(255, 52, 58, 68) : Microsoft.UI.Colors.White;
         view.IconPlate.Background = new SolidColorBrush(color);
     }
 
@@ -416,7 +425,7 @@ internal sealed class PreviewApplicationStrip
 
     private void Open(AppGroup group, FrameworkElement anchor)
     {
-        if (group.Windows.Count == 0) Launch(group.Executable);
+        if (group.Windows.Count == 0) Launch(group);
         else if (group.Windows.Count == 1) Activate(group.Windows[0]);
         else
         {
@@ -437,7 +446,7 @@ internal sealed class PreviewApplicationStrip
             if (group.Windows.Count == 0)
             {
                 var launch = new MenuFlyoutItem { Text = "打开应用" };
-                launch.Click += (_, _) => Launch(group.Executable);
+                launch.Click += (_, _) => Launch(group);
                 entry.Items.Add(launch);
             }
             else foreach (var window in group.Windows) entry.Items.Add(WindowItem(window));
@@ -516,37 +525,25 @@ internal sealed class PreviewApplicationStrip
     private void SetAppMenu(AppButton view, AppGroup group)
     {
         var pin = PinItem(group);
-        var menu = NewMenu();
-        if (pin is not null) menu.Items.Add(pin);
-        if (group.Executable is { } path && view.Icon is not null)
+        if (pin is null)
         {
-            string Label() => iconPreferences.UsesOriginal(path) ? "使用圆角图标" : "使用原始图标";
-            var style = new MenuFlyoutItem { Text = Label() };
-            menu.Opening += (_, _) => style.IsEnabled = contrast != true;
-            style.Click += (_, _) =>
-            {
-                try
-                {
-                    iconPreferences.SetOriginal(path, !iconPreferences.UsesOriginal(path));
-                    style.Text = Label();
-                    UpdateIcon(view);
-                    report("");
-                }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { report(error.Message); }
-            };
-            menu.Items.Add(style);
+            view.Button.ContextFlyout = null;
+            return;
         }
-        view.Button.ContextFlyout = menu.Items.Count == 0 ? null : menu;
+        var menu = NewMenu();
+        menu.Items.Add(pin);
+        view.Button.ContextFlyout = menu;
     }
 
     private MenuFlyoutItem? PinItem(AppGroup group)
     {
-        if (group.Pin is null && !RunningWindows.CanPin(group.Executable)) return null;
+        if (group.Pin is null && group.PinAppId is null && !RunningWindows.CanPin(group.Executable)) return null;
         var item = new MenuFlyoutItem { Text = group.Pin is null ? "固定到预览栏" : "取消固定" };
         item.Click += (_, _) =>
         {
-            if (group.Pin is null) ChangePins(() => pins.Add(group.Executable!));
-            else ChangePins(() => pins.Remove(group.Pin.Executable));
+            if (group.Pin is { } pin) ChangePins(() => pins.Remove(pin));
+            else if (group.PinAppId is { } appId) ChangePins(() => pins.Add(appId, group.IconExecutable));
+            else ChangePins(() => pins.Add(group.Executable!));
         };
         return item;
     }
@@ -565,28 +562,36 @@ internal sealed class PreviewApplicationStrip
         report("");
     }
 
-    private void Launch(string? executable)
+    private void Launch(AppGroup group)
     {
         try
         {
-            if (!RunningWindows.CanPin(executable)) throw new FileNotFoundException("应用已移动或无法启动。");
-            using var process = Process.Start(new ProcessStartInfo(executable!)
+            if (group.PinAppId is { } appId) PackagedAppPin.Launch(appId);
+            else
             {
-                UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(executable)
-            });
+                var executable = group.Executable;
+                if (!RunningWindows.CanPin(executable)) throw new FileNotFoundException("应用已移动或无法启动。");
+                using var process = Process.Start(new ProcessStartInfo(executable!)
+                {
+                    UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(executable)
+                });
+            }
             report("");
         }
         catch (Exception error) { report(error.Message); }
     }
 
-    private AppIconArtwork? ProgramIcon(string? executable)
+    private AppIconArtwork? ProgramIcon(string? executable, string? appId)
     {
-        if (string.IsNullOrEmpty(executable)) return null;
-        if (icons.TryGetValue(executable, out var loaded)) return loaded;
+        var key = IconCacheKey(executable, appId);
+        if (string.IsNullOrEmpty(key)) return null;
+        if (icons.TryGetValue(key, out var loaded)) return loaded;
         AppIconArtwork? image = null;
-        try { image = AppIconArtwork.Load(executable); }
+        try { image = AppIconArtwork.Load(executable, appId); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or System.Runtime.InteropServices.ExternalException) { }
         if (icons.Count >= 128) icons.Clear();
-        return icons[executable] = image;
+        return icons[key] = image;
     }
+
+    private static string? IconCacheKey(string? executable, string? appId) => appId is null ? executable : appId + "|" + executable;
 }

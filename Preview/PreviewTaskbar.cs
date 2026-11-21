@@ -18,6 +18,7 @@ internal sealed class PreviewTaskbar : Window
     private readonly TextBlock feedback = new() { MaxWidth = 200, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
     private bool closed, menuOpen;
     internal PreviewModuleIcons ModuleIcons { get; }
+    internal IReadOnlyList<PinnedApp> PinnedItems => pins.Items;
 
     public PreviewTaskbar(App app, string root, AppearanceHost appearance, int iconSize, Windows.UI.Color? indicatorColor,
         Action<Exception> reportFailure)
@@ -29,7 +30,7 @@ internal sealed class PreviewTaskbar : Window
         presenter.SetBorderAndTitleBar(false, false);
         presenter.IsResizable = presenter.IsMinimizable = presenter.IsMaximizable = false;
         handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        tasks = new(pins, new PreviewIconPreferences(Path.Combine(root, "preview-original-icons.json")),
+        tasks = new(pins, app.IconPreferences,
             iconSize, indicatorColor, app.CurrentAppCenterAppearance.Icon, app.ShowAppCenterSettings, handle, Report);
         AIEnter.Native.RemoveWindowFrame(handle);
 
@@ -113,6 +114,7 @@ internal sealed class PreviewTaskbar : Window
     }
 
     internal void SetIconSize(int size) => tasks.SetIconSize(size);
+    internal void RefreshIconStyle(string executable) => tasks.RefreshIconStyle(executable);
     internal void SetAppCenterIcon(AppCenterIconStyle style) => tasks.SetAppCenterIcon(style);
     internal void SetIndicatorColor(Windows.UI.Color? color) => tasks.SetIndicatorColor(color);
 

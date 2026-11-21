@@ -1,44 +1,55 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AITaskbar;
 
-internal sealed record PinnedApp(string Name, string Executable);
+internal sealed record PinnedApp(string Name, string Executable,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AppId = null)
+{
+    internal string Key => AppId is null ? "exe:" + Executable : "app:" + AppId;
+}
 
 internal sealed class PinnedApps(string file)
 {
     internal IReadOnlyList<PinnedApp> Items { get; private set; } = File.Exists(file)
         ? (JsonSerializer.Deserialize<PinnedApp[]>(File.ReadAllBytes(file)) ?? [])
-            .Where(pin => pin is not null && Path.IsPathFullyQualified(pin.Executable ?? "") && !string.IsNullOrWhiteSpace(pin.Name))
-            .DistinctBy(pin => pin.Executable, StringComparer.OrdinalIgnoreCase).ToArray()
+            .Where(pin => pin is not null && !string.IsNullOrWhiteSpace(pin.Name) && (pin.AppId is null
+                ? Path.IsPathFullyQualified(pin.Executable ?? "") : PackagedAppPin.Name(pin.AppId) is not null))
+            .DistinctBy(pin => pin.Key, StringComparer.OrdinalIgnoreCase).ToArray()
         : [];
-
-    public bool Contains(string executable) => Items.Any(pin => SameProgram(pin.Executable, executable));
 
     public void Add(string executable)
     {
         if (!RunningWindows.CanPin(executable))
             throw new InvalidOperationException("请选择可启动的桌面应用程序（.exe）。");
-        if (Contains(executable)) return;
+        if (Items.Any(pin => SameProgram(pin.Key, "exe:" + executable))) return;
         var name = FileVersionInfo.GetVersionInfo(executable).FileDescription;
         Save([.. Items, new(string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(executable) : name.Trim(), executable)]);
     }
 
-    public void Remove(string executable) => Save(Items.Where(pin => !SameProgram(pin.Executable, executable)).ToArray());
-
-    public bool Move(string executable, string target, bool after)
+    public void Add(string appId, string? executable)
     {
-        if (SameProgram(executable, target)) return false;
+        if (PackagedAppPin.Name(appId) is not { } name) throw new InvalidOperationException("应用无法固定。");
+        var pin = new PinnedApp(name, executable ?? "", appId);
+        if (!Items.Any(item => SameProgram(item.Key, pin.Key))) Save([.. Items, pin]);
+    }
+
+    public void Remove(PinnedApp pin) => Save(Items.Where(item => !SameProgram(item.Key, pin.Key)).ToArray());
+
+    public bool Move(PinnedApp source, PinnedApp target, bool after)
+    {
+        if (SameProgram(source.Key, target.Key)) return false;
         var next = Items.ToList();
-        int sourceIndex = next.FindIndex(pin => SameProgram(pin.Executable, executable));
+        int sourceIndex = next.FindIndex(pin => SameProgram(pin.Key, source.Key));
         if (sourceIndex < 0) return false;
-        var source = next[sourceIndex];
+        var moved = next[sourceIndex];
         next.RemoveAt(sourceIndex);
-        int targetIndex = next.FindIndex(pin => SameProgram(pin.Executable, target));
+        int targetIndex = next.FindIndex(pin => SameProgram(pin.Key, target.Key));
         if (targetIndex < 0) return false;
         int insertion = targetIndex + (after ? 1 : 0);
         if (insertion == sourceIndex) return false;
-        next.Insert(insertion, source);
+        next.Insert(insertion, moved);
         Save(next.ToArray());
         return true;
     }

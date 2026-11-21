@@ -20,6 +20,7 @@ public partial class App : Application
     private string root = "";
     private int iconSize;
     private Color? indicatorColor;
+    internal PreviewIconPreferences IconPreferences { get; private set; } = null!;
     internal AppCenterAppearance SavedAppCenterAppearance { get; private set; } = new();
     internal AppCenterAppearance CurrentAppCenterAppearance { get; private set; } = new();
 
@@ -39,6 +40,7 @@ public partial class App : Application
             : defaultRoot));
         iconSize = PreviewIconSize.Read(root);
         indicatorColor = PreviewIndicatorColor.Read(root);
+        IconPreferences = new(Path.Combine(root, "preview-original-icons.json"));
         CurrentAppCenterAppearance = SavedAppCenterAppearance = AppCenterAppearance.Read(root);
         var verifying = arguments.Any(arg => arg.StartsWith("--verify-", StringComparison.Ordinal));
         if (verifying && string.Equals(root, defaultRoot, StringComparison.OrdinalIgnoreCase))
@@ -204,6 +206,7 @@ public partial class App : Application
     }
 
     internal int IconSize => iconSize;
+    internal IReadOnlyList<PinnedApp> PreviewPins => preview?.PinnedItems ?? new PinnedApps(Path.Combine(root, "preview-pins.json")).Items;
     internal PreviewModuleIcons? ModuleIcons => preview?.ModuleIcons;
     internal Color? IndicatorColor => indicatorColor;
     internal void FocusPreview() => preview?.Activate();
@@ -251,6 +254,20 @@ public partial class App : Application
     }
 
     internal void PreviewIndicator(Color? color) => preview?.SetIndicatorColor(color);
+
+    internal bool TrySetOriginalIcon(string executable, bool useOriginal)
+    {
+        try { IconPreferences.SetOriginal(executable, useOriginal); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Log(error);
+            settingsWindow?.SetStatus("无法保存软件图标设置。");
+            return false;
+        }
+        preview?.RefreshIconStyle(executable);
+        settingsWindow?.SetStatus("");
+        return true;
+    }
 
     internal void TogglePreview()
     {

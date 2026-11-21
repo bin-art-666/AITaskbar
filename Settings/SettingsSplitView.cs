@@ -31,10 +31,16 @@ internal sealed class SettingsSplitView : Grid
         this.section = section;
         this.updatePane = updatePane;
         this.compactMenu = compactMenu;
-        string sectionLabel = section == SettingsSection.AppCenter ? "应用中心" : section.ToString();
+        string sectionLabel = section switch
+        {
+            SettingsSection.AppCenter => "应用中心",
+            SettingsSection.TaskbarSubpages => "任务栏设置",
+            _ => section.ToString()
+        };
         (minimum, maximum, defaultWidth, contentMinimum) = section switch
         {
             SettingsSection.Taskbar => (128, 224, 144, 440),
+            SettingsSection.TaskbarSubpages => (132, 208, 144, 300),
             SettingsSection.Halo => (108, 208, 108, 414),
             _ => (108, 208, 132, 414)
         };

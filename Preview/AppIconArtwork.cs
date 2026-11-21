@@ -7,18 +7,62 @@ namespace AITaskbar;
 
 internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage Graphic, bool HasPlate, double Luminance)
 {
-    public static AppIconArtwork? Load(string executable)
+    public static AppIconArtwork? Load(string? executable, string? appId = null)
     {
-        using var icon = Icon.ExtractAssociatedIcon(executable);
-        if (icon is null) return null;
-        using var bitmap = icon.ToBitmap();
+        using var bitmap = LoadArtwork(executable, appId);
+        if (bitmap is null) return null;
         var (bounds, hasPlate, luminance) = Measure(bitmap);
         var original = ToImage(bitmap);
         if (bounds.IsEmpty) return null;
+        if (hasPlate && executable is not null) bounds = RemoveTtCloudFrame(executable, bitmap, bounds);
         using var foreground = bitmap.Clone(bounds, PixelFormat.Format32bppArgb);
         if (!hasPlate) return new(original, ToImage(foreground), false, luminance);
         using var plate = RoundedPlate(foreground);
         return new(original, ToImage(plate), true, luminance);
+    }
+
+    private static Bitmap? LoadArtwork(string? executable, string? appId)
+    {
+        if (StringComparer.OrdinalIgnoreCase.Equals(appId, PackagedAppPin.ChatGptId) && File.Exists(executable))
+            return LoadBitmap(executable!) ?? PackagedAppIcon.Load(appId!);
+
+        return (appId is not null ? PackagedAppIcon.Load(appId) : null) ??
+            (string.IsNullOrEmpty(executable) ? null : LoadBitmap(executable));
+    }
+
+    private static Bitmap? LoadBitmap(string executable)
+    {
+        if (StringComparer.OrdinalIgnoreCase.Equals(executable, RunningWindows.SystemSettingsExecutable))
+        {
+            string images = Path.Combine(Path.GetDirectoryName(executable)!, "images");
+            foreach (string file in new[] { "logo.targetsize-96_altform-unplated.png", "logo.targetsize-48_altform-unplated.png", "logo.png" })
+            {
+                string path = Path.Combine(images, file);
+                if (File.Exists(path)) return new Bitmap(path);
+            }
+        }
+
+        using var icon = Icon.ExtractAssociatedIcon(executable);
+        return icon?.ToBitmap();
+    }
+
+    private static Rectangle RemoveTtCloudFrame(string executable, Bitmap bitmap, Rectangle bounds)
+    {
+        if (!Path.GetFileName(executable).Equals("ttcloudv2.exe", StringComparison.OrdinalIgnoreCase)
+            || bitmap.Width != 32 || bitmap.Height != 32 || bounds != new Rectangle(0, 0, 32, 32))
+            return bounds;
+
+        // The current TTCLOUD artwork has a three-pixel white frame around the colored tile.
+        // Check both sides of the frame before applying the crop to a replacement icon.
+        int white = Color.White.ToArgb();
+        if (bitmap.GetPixel(2, 16).ToArgb() != white || bitmap.GetPixel(29, 16).ToArgb() != white
+            || bitmap.GetPixel(16, 2).ToArgb() != white || bitmap.GetPixel(16, 29).ToArgb() != white
+            || bitmap.GetPixel(3, 16).ToArgb() == white || bitmap.GetPixel(28, 16).ToArgb() == white
+            || bitmap.GetPixel(16, 3).ToArgb() == white || bitmap.GetPixel(16, 28).ToArgb() == white)
+            return bounds;
+
+        bounds.Inflate(-3, -3);
+        return bounds;
     }
 
     internal static (Rectangle Bounds, bool HasPlate, double Luminance) Measure(Bitmap bitmap)
@@ -42,8 +86,8 @@ internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage Graphic,
         if (right < 0) return (Rectangle.Empty, false, .5);
 
         var bounds = Rectangle.FromLTRB(left, top, right + 1, bottom + 1);
-        int inset = (int)Math.Round(Math.Min(bounds.Width, bounds.Height) * .14);
-        // A rounded tile fills the inset corners. A bare logo or a circle typically leaves them open.
+        int inset = (int)Math.Floor(Math.Min(bounds.Width, bounds.Height) * .1);
+        // Sample close enough to the corners to distinguish a rounded square from a filled circle.
         bool hasPlate = Math.Min(bounds.Width, bounds.Height) >= .88 * Math.Max(bounds.Width, bounds.Height)
             && solid >= .75 * bounds.Width * bounds.Height
             && bitmap.GetPixel(left + inset, top + inset).A >= 224
@@ -66,7 +110,11 @@ internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage Graphic,
             scale.FillRectangle(backing, area);
             scale.InterpolationMode = InterpolationMode.HighQualityBicubic;
             scale.PixelOffsetMode = PixelOffsetMode.Half;
-            scale.DrawImage(foreground, area, 0, 0, foreground.Width, foreground.Height, GraphicsUnit.Pixel);
+            double factor = (double)size / Math.Max(foreground.Width, foreground.Height);
+            int width = (int)Math.Round(foreground.Width * factor);
+            int height = (int)Math.Round(foreground.Height * factor);
+            var imageArea = new Rectangle((size - width) / 2, (size - height) / 2, width, height);
+            scale.DrawImage(foreground, imageArea, 0, 0, foreground.Width, foreground.Height, GraphicsUnit.Pixel);
         }
 
         var plate = new Bitmap(size, size, PixelFormat.Format32bppPArgb);

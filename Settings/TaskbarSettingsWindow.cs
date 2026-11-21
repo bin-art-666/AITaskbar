@@ -11,7 +11,7 @@ using Windows.UI.ViewManagement;
 
 namespace AITaskbar;
 
-internal enum SettingsSection { Taskbar, Halo, AIEnter, AppCenter }
+internal enum SettingsSection { Taskbar, Halo, AIEnter, AppCenter, TaskbarSubpages }
 
 internal sealed partial class TaskbarSettingsWindow : Window
 {
@@ -20,7 +20,6 @@ internal sealed partial class TaskbarSettingsWindow : Window
     private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly UISettings colors = new();
     private readonly AccessibilitySettings accessibility = new();
-    private readonly List<Border> panes = [];
     private readonly NavigationView nav;
     private readonly Dictionary<SettingsSection, NavigationViewItem> navigation = [];
     private readonly ImageIcon haloIcon = new() { Width = 18, Height = 18 };
@@ -61,15 +60,38 @@ internal sealed partial class TaskbarSettingsWindow : Window
         nav = SettingsNavigation.Sidebar(144);
         var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
 
-        var preview = BuildPage("任务栏外观", BuildPreview);
         var widths = new SettingsPaneWidths(profileDirectory, SetStatus);
+        var taskbarNav = SettingsNavigation.Sidebar(144);
+        var appearanceItem = AddSubpage("任务栏外观设置", BuildPreview);
+        AddSubpage("软件图标设置", BuildSoftwareIconSettings);
+        var compactSubpages = SettingsNavigation.ConnectSubpages(taskbarNav, item => item.Tag);
+        var taskbarPages = new SettingsSplitView(taskbarNav, widths, SettingsSection.TaskbarSubpages,
+            (length, condensed) =>
+            {
+                taskbarNav.OpenPaneLength = length;
+                taskbarNav.IsPaneVisible = !condensed;
+                taskbarNav.IsPaneOpen = !condensed;
+            }, compactSubpages);
+        NavigationViewItem AddSubpage(string title, Action<StackPanel> build)
+        {
+            var body = new StackPanel();
+            build(body);
+            var item = new NavigationViewItem { Content = title, Tag = SettingsNavigation.Subpage(title, body) };
+            taskbarNav.MenuItems.Add(item);
+            return item;
+        }
+        void UpdateGlassActions() => glassActions.Visibility =
+            ReferenceEquals(nav.SelectedItem, navigation.GetValueOrDefault(SettingsSection.Taskbar)) &&
+            ReferenceEquals(taskbarNav.SelectedItem, appearanceItem)
+                ? Visibility.Visible : Visibility.Collapsed;
+        taskbarNav.SelectionChanged += (_, _) => UpdateGlassActions();
         var navigationLayout = new SettingsSplitView(nav, widths, SettingsSection.Taskbar, (length, compact) =>
         {
             nav.OpenPaneLength = length;
             nav.PaneDisplayMode = compact ? NavigationViewPaneDisplayMode.LeftCompact : NavigationViewPaneDisplayMode.Left;
             nav.IsPaneOpen = !compact;
         });
-        AddNavigation(SettingsSection.Taskbar, "任务栏外观", new FontIcon { Glyph = "\uE713" });
+        AddNavigation(SettingsSection.Taskbar, "任务栏设置", new FontIcon { Glyph = "\uE713" });
         AddNavigation(SettingsSection.Halo, "Halo", haloIcon);
         AddNavigation(SettingsSection.AIEnter, "AIEnter", aiIcon);
         AddNavigation(SettingsSection.AppCenter, "应用中心", new IconSourceElement
@@ -79,17 +101,18 @@ internal sealed partial class TaskbarSettingsWindow : Window
         nav.SelectionChanged += (_, args) =>
         {
             if (args.SelectedItem is not NavigationViewItem { Tag: SettingsSection section }) return;
-            glassActions.Visibility = section == SettingsSection.Taskbar ? Visibility.Visible : Visibility.Collapsed;
+            UpdateGlassActions();
             nav.Content = section switch
             {
                 SettingsSection.Halo => haloSettings ??= app.HaloModule.CreateSettingsPage(this, widths),
                 SettingsSection.AIEnter => aiSettings ??= app.AiModule.CreateSettingsPage(this, widths),
                 SettingsSection.AppCenter => appCenterSettings ??= new AppCenterSettingsPage(app, widths),
-                _ => preview
+                _ => taskbarPages
             };
         };
         Select(SettingsSection.Taskbar);
-        nav.Content = preview;
+        nav.Content = taskbarPages;
+        UpdateGlassActions();
 
         var footer = new Grid { Padding = new Thickness(20, 8, 20, 12), ColumnSpacing = 12 };
         footer.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -146,14 +169,6 @@ internal sealed partial class TaskbarSettingsWindow : Window
                 ? Color.FromArgb(glass ? (byte)158 : (byte)255, 27, 31, 39)
                 : Color.FromArgb(glass ? (byte)137 : (byte)255, 244, 248, 250);
             layout.Background = new SolidColorBrush(baseColor);
-            var edge = contrast ? colors.GetColorValue(UIColorType.Foreground)
-                : dark ? Color.FromArgb(48, 255, 255, 255) : Color.FromArgb(32, 19, 40, 57);
-            var fill = dark ? Color.FromArgb(30, 17, 20, 26) : Color.FromArgb(22, 255, 255, 255);
-            foreach (var pane in panes)
-            {
-                pane.Background = new SolidColorBrush(contrast ? baseColor : fill);
-                pane.BorderBrush = new SolidColorBrush(edge);
-            }
         }
         layout.ActualThemeChanged += (_, _) => RefreshMaterial();
         nav.ActualThemeChanged += (_, _) => RefreshNavigationIcons();
@@ -302,22 +317,6 @@ internal sealed partial class TaskbarSettingsWindow : Window
         var item = new NavigationViewItem { Content = title, Icon = icon, Tag = section };
         nav.MenuItems.Add(item);
         navigation.Add(section, item);
-    }
-
-    private Border BuildPage(string title, Action<StackPanel> build)
-    {
-        var page = new StackPanel { Padding = new Thickness(24, 16, 24, 16), Spacing = 10, MaxWidth = 880 };
-        page.Children.Add(new TextBlock { Text = title, FontSize = 26, FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 8) });
-        build(page);
-        var pane = new Border
-        {
-            Margin = new Thickness(0, 0, 8, 0), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1),
-            Child = new ScrollViewer { Content = page, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollMode = ScrollMode.Disabled }
-        };
-        panes.Add(pane);
-        return pane;
     }
 
     private static Grid SettingRow(string title, string help, FrameworkElement control)

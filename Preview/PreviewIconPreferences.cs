@@ -6,13 +6,13 @@ internal sealed class PreviewIconPreferences(string file)
 {
     private HashSet<string> original = Read(file);
 
+    public IReadOnlyCollection<string> OriginalExecutables => original;
     public bool UsesOriginal(string executable) => original.Contains(executable);
 
     public void SetOriginal(string executable, bool useOriginal)
     {
         var next = new HashSet<string>(original, StringComparer.OrdinalIgnoreCase);
-        if (useOriginal) next.Add(executable);
-        else next.Remove(executable);
+        if (!(useOriginal ? next.Add(executable) : next.Remove(executable))) return;
 
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         string temporary = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
