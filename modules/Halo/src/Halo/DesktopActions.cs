@@ -42,11 +42,13 @@ internal sealed partial class StationWindow
     }
     async Task NewDesktopFolder() { var name = await AskText("新建文件夹", "新建文件夹"); if (name != null) await App.Station.NewFolder(name); }
     Task NewDesktopNote() => EditNote(null);
-    internal async Task ShowTrash() {
+    internal Task ShowTrash() => ShowTrash(root.XamlRoot, this);
+
+    internal async Task ShowTrash(XamlRoot xamlRoot, Window host) {
         var list = new ListView { SelectionMode = ListViewSelectionMode.Multiple, MaxHeight = 360, MinWidth = 300 };
         var records = App.Station.Trash.ToArray();
         foreach (var item in records) list.Items.Add(new ListViewItem { Content = DesktopName(item) + (!item.Owned && item.Kind is StationKind.File or StationKind.Folder ? " · 原文件引用" : ""), Tag = item });
-        var dialog = new ContentDialog { XamlRoot = root.XamlRoot, Title = $"Halo 回收站 · {records.Length} 项", Content = list, PrimaryButtonText = "恢复选中", SecondaryButtonText = "永久删除选中", CloseButtonText = "关闭", IsPrimaryButtonEnabled = false, IsSecondaryButtonEnabled = false };
+        var dialog = new ContentDialog { XamlRoot = xamlRoot, Title = $"Halo 回收站 · {records.Length} 项", Content = list, PrimaryButtonText = "恢复选中", SecondaryButtonText = "永久删除选中", CloseButtonText = "关闭", IsPrimaryButtonEnabled = false, IsSecondaryButtonEnabled = false };
         list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = dialog.IsSecondaryButtonEnabled = list.SelectedItems.Count > 0 && !App.Station.ReadOnly;
         var result = await ShowTrashDialog(dialog); var selected = list.SelectedItems.Cast<ListViewItem>().Select(i => (StationItem)i.Tag).ToArray();
         if (result == ContentDialogResult.Primary) {
@@ -56,20 +58,20 @@ internal sealed partial class StationWindow
             foreach (var item in selected.Where(item => item.Origin != null)) {
                 if (App.Station.OriginalTrashLocation(item) is { } location)
                     await App.Station.RestoreInFolder(item, location.Root, location.Directory);
-                else if (!await RestoreToChosenLocation(item)) continue;
+                else if (!await RestoreToChosenLocation(item, xamlRoot, host)) continue;
                 restored++;
             }
             if (restored > 0) Notify($"已恢复 {restored} 项");
         }
-        else if (result == ContentDialogResult.Secondary && selected.Length > 0 && await ConfirmTrashDeletion(selected) is { } deleted)
+        else if (result == ContentDialogResult.Secondary && selected.Length > 0 && await ConfirmTrashDeletion(selected, xamlRoot) is { } deleted)
             Notify(TrashDeletionMessage(deleted), deleted.Failed > 0);
     }
 
-    internal async Task<TrashDeleteResult?> ConfirmTrashDeletion(StationItem[] selected)
+    internal async Task<TrashDeleteResult?> ConfirmTrashDeletion(StationItem[] selected, XamlRoot? xamlRoot = null)
     {
         if (selected.Length == 0 || App.Station.ReadOnly) return null;
         var dialog = new ContentDialog {
-            XamlRoot = root.XamlRoot, Title = $"永久删除回收站中的 {selected.Length} 项？",
+            XamlRoot = xamlRoot ?? root.XamlRoot, Title = $"永久删除回收站中的 {selected.Length} 项？",
             Content = "删除后无法从 Halo 回收站恢复。原文件引用只会移除记录。",
             PrimaryButtonText = "永久删除", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close,
         };
@@ -85,9 +87,9 @@ internal sealed partial class StationWindow
 
     internal static string TrashDeletionMessage(TrashDeleteResult result) =>
         $"已永久删除 {result.Deleted} 项。" + (result.Failed > 0 ? $" {result.Failed} 项删除失败，已保留。" : "");
-    async Task<bool> RestoreToChosenLocation(StationItem item)
+    async Task<bool> RestoreToChosenLocation(StationItem item, XamlRoot xamlRoot, Window host)
     {
-        var dialog = new ContentDialog { XamlRoot = root.XamlRoot, Title = $"恢复「{DesktopName(item)}」",
+        var dialog = new ContentDialog { XamlRoot = xamlRoot, Title = $"恢复「{DesktopName(item)}」",
             Content = "原父目录已不存在。请选择恢复到中转站，或选择另一个 Halo 文件夹。",
             PrimaryButtonText = "选择文件夹…", SecondaryButtonText = "恢复到中转站", CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close };
@@ -96,7 +98,7 @@ internal sealed partial class StationWindow
         if (choice != ContentDialogResult.Primary) return false;
         var picker = new FolderPicker();
         picker.FileTypeFilter.Add("*");
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(host));
         var target = await picker.PickSingleFolderAsync();
         if (target == null) return false;
         var folder = App.Station.ManagedFolderContaining(target.Path) ?? throw new IOException("请选择 Halo 管理的文件夹。");

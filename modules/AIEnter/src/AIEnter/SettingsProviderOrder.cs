@@ -4,7 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace AIEnter;
 
-internal sealed partial class SettingsWindow
+internal sealed partial class SettingsPage
 {
     readonly StackPanel providerOrderRows = new() { Spacing = 6 };
     readonly TextBox providerSearch = new() { PlaceholderText = "查找 AI 名称或网址", MaxLength = 200 };
@@ -82,12 +82,11 @@ internal sealed partial class SettingsWindow
     }
     async Task EditProvider(AiProvider? original)
     {
-        using var lease = KeepOpen();
         var name = new TextBox { Header = "AI 名称", PlaceholderText = "例如：我的 AI", MaxLength = 40, Text = original?.Name ?? "" };
         var url = new TextBox { Header = "AI 网页地址", PlaceholderText = "https://…", MaxLength = 2048, Text = original?.Url ?? "" };
         var error = PanelTheme.Hint("");
         var form = new StackPanel { Spacing = 12 }; form.Children.Add(name); form.Children.Add(url); form.Children.Add(error);
-        var dialog = new ContentDialog { XamlRoot = Content.XamlRoot, Title = original == null ? "添加 AI" : "编辑 AI", Content = form,
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = original == null ? "添加 AI" : "编辑 AI", Content = form,
             PrimaryButtonText = original == null ? "添加" : "应用修改", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Primary };
         AiProvider? edited = null;
         url.TextChanged += (_, _) =>
@@ -112,8 +111,7 @@ internal sealed partial class SettingsWindow
     }
     async Task RemoveProvider(AiProvider item)
     {
-        using var lease = KeepOpen();
-        var dialog = new ContentDialog { XamlRoot = Content.XamlRoot, Title = $"移除 {item.Name}？", Content = "仅移除入口，保留网页登录资料。保存设置后生效。",
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = $"移除 {item.Name}？", Content = "仅移除入口，保留网页登录资料。保存设置后生效。",
             PrimaryButtonText = "移除", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         string preferred = provider.SelectedItem is ComboBoxItem chosen ? (string)chosen.Tag : UiDefaults.Provider;

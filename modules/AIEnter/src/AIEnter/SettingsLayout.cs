@@ -5,12 +5,11 @@ using Microsoft.UI.Xaml.Media;
 
 namespace AIEnter;
 
-internal sealed partial class SettingsWindow
+internal sealed partial class SettingsPage
 {
     TextBlock? dirtyStatus;
     Button? saveButton, discardButton;
     string savedSnapshot = "";
-    bool allowHideOnce;
     BackplateSurface? previewPlate;
     Border? previewSelectedButton, previewNormalButton, previewStatusButton;
     static bool HighContrast => new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast;
@@ -216,21 +215,4 @@ internal sealed partial class SettingsWindow
         syncing = false; RefreshFields(); Preview(); savedSnapshot = Snapshot(); RefreshDirty(); status.Text = "已放弃未保存的修改。";
     }
 
-    async Task ConfirmDiscardOrSave()
-    {
-        var dialog = new ContentDialog { XamlRoot = Content.XamlRoot, Title = "设置尚未保存", Content = "要保存当前修改后关闭设置吗？", PrimaryButtonText = "保存并关闭", SecondaryButtonText = "放弃更改", CloseButtonText = "继续编辑", DefaultButton = ContentDialogButton.Primary };
-        ContentDialogResult result;
-        using (KeepOpen()) result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary) { Save(); if (!IsDirty) { allowHideOnce = true; Hide(); } }
-        else if (result == ContentDialogResult.Secondary) { DiscardDraft(); allowHideOnce = true; Hide(); }
-    }
-
-    async Task ConfirmQuit(Action quit)
-    {
-        var dialog = new ContentDialog { XamlRoot = Content.XamlRoot, Title = "设置尚未保存", Content = "退出 AIEnter 前，是否保存当前设置？", PrimaryButtonText = "保存并退出", SecondaryButtonText = "放弃并退出", CloseButtonText = "继续编辑", DefaultButton = ContentDialogButton.Primary };
-        ContentDialogResult result;
-        using (KeepOpen()) result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary) { Save(); if (!IsDirty) quit(); }
-        else if (result == ContentDialogResult.Secondary) { DiscardDraft(); quit(); }
-    }
 }

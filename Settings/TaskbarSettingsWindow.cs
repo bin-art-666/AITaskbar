@@ -10,7 +10,9 @@ using Windows.UI.ViewManagement;
 
 namespace AITaskbar;
 
-internal sealed class TaskbarSettingsWindow : Window
+internal enum SettingsSection { Taskbar, Halo, AIEnter }
+
+internal sealed partial class TaskbarSettingsWindow : Window
 {
     private readonly App app;
     private readonly Button previewToggle = new();
@@ -18,6 +20,11 @@ internal sealed class TaskbarSettingsWindow : Window
     private readonly UISettings colors = new();
     private readonly AccessibilitySettings accessibility = new();
     private readonly List<Border> panes = [];
+    private readonly NavigationView nav;
+    private readonly Dictionary<SettingsSection, NavigationViewItem> navigation = [];
+    private Halo.SettingsPage? haloSettings;
+    private AIEnter.SettingsPage? aiSettings;
+    internal Task PendingSettings => Task.WhenAll(haloSettings?.PendingOperation ?? Task.CompletedTask, glassCommit);
 
     public TaskbarSettingsWindow(App app)
     {
@@ -41,9 +48,9 @@ internal sealed class TaskbarSettingsWindow : Window
         int width = Math.Min((int)Math.Round(760 * scale), work.Width);
         int height = Math.Min((int)Math.Round(540 * scale), work.Height);
         AppWindow.MoveAndResize(new(work.X + (work.Width - width) / 2, work.Y + (work.Height - height) / 2, width, height));
-        AppWindow.Closing += (_, args) => { args.Cancel = true; AppWindow.Hide(); };
+        AppWindow.Closing += (_, args) => { args.Cancel = true; HideSettings(); };
 
-        var nav = new NavigationView
+        nav = new NavigationView
         {
             IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed, IsSettingsVisible = false,
             IsPaneToggleButtonVisible = false, IsPaneOpen = true, OpenPaneLength = 144,
@@ -54,24 +61,33 @@ internal sealed class TaskbarSettingsWindow : Window
         nav.Resources["NavigationViewExpandedPaneBackground"] = transparent;
         nav.Resources["NavigationViewContentBackground"] = transparent;
 
-        var preview = BuildPage("预览栏", BuildPreview);
-        var modules = BuildPage("集成模块", BuildModules);
-        var previewItem = NavigationItem("预览栏", "\uE713", preview);
-        nav.MenuItems.Add(previewItem);
-        nav.MenuItems.Add(NavigationItem("集成模块", "\uE8A5", modules));
+        var preview = BuildPage("任务栏外观", BuildPreview);
+        AddNavigation(SettingsSection.Taskbar, "任务栏外观", "\uE713");
+        AddNavigation(SettingsSection.Halo, "Halo", "\uEA3A");
+        AddNavigation(SettingsSection.AIEnter, "AIEnter", "\uE8BD");
         nav.SelectionChanged += (_, args) =>
         {
-            if (args.SelectedItem is NavigationViewItem { Tag: Border page }) nav.Content = page;
+            if (args.SelectedItem is not NavigationViewItem { Tag: SettingsSection section }) return;
+            glassActions.Visibility = section == SettingsSection.Taskbar ? Visibility.Visible : Visibility.Collapsed;
+            nav.Content = section switch
+            {
+                SettingsSection.Halo => haloSettings ??= app.HaloModule.CreateSettingsPage(this),
+                SettingsSection.AIEnter => aiSettings ??= app.AiModule.CreateSettingsPage(this),
+                _ => preview
+            };
         };
-        nav.SelectedItem = previewItem;
+        Select(SettingsSection.Taskbar);
         nav.Content = preview;
 
         var footer = new Grid { Padding = new Thickness(20, 8, 20, 12), ColumnSpacing = 12 };
         footer.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var exit = ActionButton("退出 AITaskbar", app.RequestExit);
-        Grid.SetColumn(exit, 1);
+        footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var exit = ActionButton("退出 AITaskbar", () => { if (PendingSettings.IsCompleted) app.RequestExit(); });
+        Grid.SetColumn(glassActions, 1);
+        Grid.SetColumn(exit, 2);
         footer.Children.Add(status);
+        footer.Children.Add(glassActions);
         footer.Children.Add(exit);
         var caption = new Grid { Margin = new Thickness(8, 6, 8, 0), Background = transparent };
         caption.Children.Add(new TextBlock { Text = "AITaskbar · 设置", FontWeight = FontWeights.SemiBold,
@@ -79,7 +95,7 @@ internal sealed class TaskbarSettingsWindow : Window
         var back = Halo.WindowControls.IconButton("\uE72B", "返回任务栏");
         back.Click += (_, _) =>
         {
-            AppWindow.Hide();
+            HideSettings();
             app.FocusPreview();
         };
         var pin = new ToggleButton();
@@ -94,7 +110,7 @@ internal sealed class TaskbarSettingsWindow : Window
             AutomationProperties.SetName(pin, label);
         };
         var close = Halo.WindowControls.IconButton("\uE8BB", "关闭设置窗口");
-        close.Click += (_, _) => AppWindow.Hide();
+        close.Click += (_, _) => HideSettings();
         var windowActions = Halo.PanelTheme.Actions();
         windowActions.HorizontalAlignment = HorizontalAlignment.Right;
         windowActions.Children.Add(back);
@@ -136,7 +152,7 @@ internal sealed class TaskbarSettingsWindow : Window
             () => layout.CornerRadius);
         void ApplyFrame()
         {
-            var radius = new CornerRadius(Halo.App.Settings.Data.Radius);
+            var radius = new CornerRadius(Halo.App.Settings?.Data.Radius ?? 24);
             if (layout.CornerRadius != radius) layout.CornerRadius = radius;
             Halo.PanelTheme.ClipDesktopBackdrop(layout);
             frame?.UpdateRegion();
@@ -146,10 +162,13 @@ internal sealed class TaskbarSettingsWindow : Window
         layout.Loaded += (_, _) => ApplyFrame();
         layout.SizeChanged += (_, _) => ApplyFrame();
         Activated += (_, _) => ApplyFrame();
-        Closed += (_, _) => { dragRegion.Dispose(); frame.Dispose(); };
+        app.BarAppearanceChanged += PreviewAppearanceChanged;
+        Closed += (_, _) => { app.BarAppearanceChanged -= PreviewAppearanceChanged; dragRegion.Dispose(); frame.Dispose(); };
     }
 
     public void UpdatePreviewState(bool enabled) => previewToggle.Content = enabled ? "关闭预览栏" : "开启预览栏";
+    internal void Select(SettingsSection section) => nav.SelectedItem = navigation[section];
+    internal void ShowHaloStorage() => haloSettings?.ShowStorageSettings();
 
     public void SetStatus(string text)
     {
@@ -159,6 +178,7 @@ internal sealed class TaskbarSettingsWindow : Window
 
     private void BuildPreview(StackPanel page)
     {
+        BuildGlassSettings(page);
         previewToggle.Click += (_, _) => app.TogglePreview();
         page.Children.Add(SettingRow("双栏对比", "让 AITaskbar 预览栏与 Windows 原生任务栏同时显示。", previewToggle));
 
@@ -197,6 +217,7 @@ internal sealed class TaskbarSettingsWindow : Window
         colorChoice.Click += (_, _) => PickIndicatorColor(colorChoice, UpdateColor);
         colorChoice.CornerRadius = new CornerRadius(18);
         page.Children.Add(SettingRow("运行标记颜色", "运行中的圆点与前台窗口的短条共用此颜色。", colorChoice));
+        BuildLumaPreferences(page);
     }
 
     private void PickIndicatorColor(Button anchor, Action update)
@@ -222,20 +243,12 @@ internal sealed class TaskbarSettingsWindow : Window
         flyout.ShowAt(anchor);
     }
 
-    private void BuildModules(StackPanel page)
+    private void AddNavigation(SettingsSection section, string title, string glyph)
     {
-        page.Children.Add(SettingRow("Halo", "文件、图片与文字中转站。", Actions(
-            ActionButton("打开／收起", () => app.HaloModule.Handle("Toggle"), "Halo 打开或收起"),
-            ActionButton("设置", Halo.App.OpenSettings, "Halo 设置"))));
-        page.Children.Add(SettingRow("AIEnter", "AI 对话面板与附件入口。", Actions(
-            ActionButton("打开／收起", () => _ = app.AiModule.ToggleAiWindow(false), "AIEnter 打开或收起"),
-            ActionButton("设置", app.AiModule.OpenSettings, "AIEnter 设置"))));
-        page.Children.Add(SettingRow("LumaBar", "调整任务栏材质、明暗和鼠标光效。",
-            ActionButton("启用／打开", app.OpenAppearance, "LumaBar 启用或打开")));
+        var item = new NavigationViewItem { Content = title, Icon = new FontIcon { Glyph = glyph }, Tag = section };
+        nav.MenuItems.Add(item);
+        navigation.Add(section, item);
     }
-
-    private static NavigationViewItem NavigationItem(string title, string glyph, Border page) =>
-        new() { Content = title, Icon = new FontIcon { Glyph = glyph }, Tag = page };
 
     private Border BuildPage(string title, Action<StackPanel> build)
     {

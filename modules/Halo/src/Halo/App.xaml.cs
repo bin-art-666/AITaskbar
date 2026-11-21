@@ -81,7 +81,15 @@ public partial class App
     internal static void Preview(UiAppearance? appearance)
     { appearancePreview = appearance; PanelTheme.ApplyAppearance(Appearance); Panel?.ApplyAppearance(); RingBridge?.Publish(Appearance); }
     internal static void OpenSettings()
-    { Panel ??= new StationWindow(); Panel.OpenSettings(); }
+        => ((AITaskbar.App)Application.Current).ShowSettings(AITaskbar.SettingsSection.Halo);
+
+    internal SettingsPage CreateSettingsPage(Window host)
+    {
+        Panel ??= new StationWindow();
+        var page = new SettingsPage(Panel, host) { Visibility = Visibility.Visible };
+        page.Reset();
+        return page;
+    }
     internal static void Log(Exception e)
     { try { Directory.CreateDirectory(DataDirectory); File.AppendAllText(Path.Combine(DataDirectory, "error.log"), $"{DateTimeOffset.Now:o} {e}\n"); } catch { } }
     internal Task Quit() => ((AITaskbar.App)Application.Current).ShutdownAsync();

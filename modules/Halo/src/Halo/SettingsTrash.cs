@@ -36,13 +36,13 @@ internal sealed partial class SettingsPage
         }
         AutomationProperties.SetName(trashPath, "回收站存储路径");
         AutomationProperties.SetLiveSetting(trashResult, AutomationLiveSetting.Polite);
-        openTrash.Click += (_, _) => StartTrashAction(owner.ShowTrash);
+        openTrash.Click += (_, _) => StartTrashAction(() => owner.ShowTrash(XamlRoot, settingsHost));
         openTrashStorage.Click += (_, _) => StartTrashAction(async () => {
             if (!await Launcher.LaunchFolderPathAsync(App.Station.RequireTrashDirectory()))
                 throw new IOException("无法打开回收站存储目录。");
         });
         clearTrash.Click += (_, _) => StartTrashAction(async () => {
-            if (await owner.ConfirmTrashDeletion(App.Station.Trash.ToArray()) is { } result)
+            if (await owner.ConfirmTrashDeletion(App.Station.Trash.ToArray(), XamlRoot) is { } result)
                 ShowTrashResult(StationWindow.TrashDeletionMessage(result));
         });
     }

@@ -80,7 +80,7 @@ internal sealed partial class SettingsPage
         try {
             var picker = new FolderPicker();
             picker.FileTypeFilter.Add("*");
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(owner));
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(settingsHost));
             var parent = await picker.PickSingleFolderAsync();
             if (parent == null) return;
             var plan = App.Station.PreviewStorageMigration(StationStore.ProposeStorageDirectory(parent.Path));

@@ -21,10 +21,7 @@ internal sealed partial class StationWindow
         var instructions = new TextBlock { Text = "重新连接磁盘或确认目录可访问后重试。原来的文件库位置和布局会保留。", TextWrapping = TextWrapping.Wrap };
         var openSettings = new Button { Content = "打开存储设置" };
         retryLibrary.Click += async (_, _) => await Run(() => RefreshLibraryStatus(userInitiated: true));
-        openSettings.Click += (_, _) => {
-            OpenSettings();
-            if (ShowingSettings) settingsPage!.ShowStorageSettings();
-        };
+        openSettings.Click += (_, _) => ((AITaskbar.App)Application.Current).ShowHaloStorageSettings();
         PanelTheme.StyleTextAction(retryLibrary);
         PanelTheme.StyleTextAction(openSettings);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };

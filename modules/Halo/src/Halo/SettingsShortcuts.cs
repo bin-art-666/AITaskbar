@@ -11,7 +11,8 @@ internal sealed partial class SettingsPage
             || allButtons.Any(button => button.Flyout?.IsOpen == true)) return false;
         if (!PendingOperation.IsCompleted) return true;
         if (saveChanges) StartSave();
-        else owner.ReturnFromSettings();
+        else if (ReferenceEquals(settingsHost, owner)) owner.ReturnFromSettings();
+        else Reset();
         return true;
     }
 

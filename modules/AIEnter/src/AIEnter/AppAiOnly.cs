@@ -9,7 +9,6 @@ public partial class App
     EventWaitHandle? aiOpenEvent, aiQuitEvent, settingsEvent;
     RegisteredWaitHandle? aiOpenWait, aiQuitWait, settingsWait;
     Window? aiLifetimeWindow;
-    SettingsWindow? settingsWindow;
     bool aiOpening, aiQuitting;
     GlobalHotkey? globalHotkey;
     string? hotkeyWarning;
@@ -96,9 +95,10 @@ public partial class App
     internal void OpenSettings()
     {
         if (aiQuitting) return;
-        settingsWindow ??= new SettingsWindow(Ai.Options, QuitStandaloneAi, SaveOptions, hotkeyWarning);
-        settingsWindow.Open();
+        ((AITaskbar.App)Application.Current).ShowSettings(AITaskbar.SettingsSection.AIEnter);
     }
+
+    internal SettingsPage CreateSettingsPage(Window host) => new(Ai.Options, SaveOptions, hotkeyWarning, host);
 
     void SaveOptions(AiOptions value)
     {
@@ -144,7 +144,7 @@ public partial class App
         if (aiQuitting) return;
         aiQuitting = true;
         aiOpenWait?.Unregister(null); aiQuitWait?.Unregister(null); settingsWait?.Unregister(null);
-        DisposeScreenshotEntry(); DisposeToggleEntry(); globalHotkey?.Dispose(); globalHotkey = null; DisposeDropEntry(); settingsWindow?.Destroy(); StopAppearanceBridge(); StopAi(); aiLifetimeWindow?.Close();
+        DisposeScreenshotEntry(); DisposeToggleEntry(); globalHotkey?.Dispose(); globalHotkey = null; DisposeDropEntry(); StopAppearanceBridge(); StopAi(); aiLifetimeWindow?.Close();
         aiOpenEvent?.Dispose(); aiQuitEvent?.Dispose(); settingsEvent?.Dispose(); instance?.Dispose();
     }
 }

@@ -53,7 +53,7 @@ public partial class App
             PreviewAppearance(new UiAppearance(TaskbarIconSize: 36, GlowRange: 12, GlowIntensity: 100));
             await WaitFor(0, 36);
             await OpenAiWindow(); await WaitFor(1, 36);
-            settingsWindow!.Hide(); await WaitFor(1);
+            ((AITaskbar.App)Microsoft.UI.Xaml.Application.Current).HideSettings(); await WaitFor(1);
             PreviewAppearance(new UiAppearance(GlowEnabled: false)); await WaitFor(0);
             PreviewAppearance(new UiAppearance(GlowIntensity: 0)); await WaitFor(0);
             PreviewAppearance(new UiAppearance(GlowRange: 0)); await WaitFor(0);

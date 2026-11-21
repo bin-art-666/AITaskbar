@@ -15,6 +15,13 @@ internal sealed class AppearanceHost
     internal LumaBar.BarAppearance? CurrentBarAppearance => Volatile.Read(ref barAppearance);
     internal event Action? BarAppearanceChanged;
 
+    internal Task<T> EditAsync<T>(Func<LumaBar.TrayApp, T> edit)
+    {
+        lock (gate)
+            return context?.ReadOrEditFromHost(edit).WaitAsync(TimeSpan.FromSeconds(10))
+                ?? Task.FromException<T>(new InvalidOperationException("任务栏外观尚未启动。"));
+    }
+
     private void UpdateBarAppearance(LumaBar.BarAppearance? value)
     {
         var previous = Interlocked.Exchange(ref barAppearance, value);

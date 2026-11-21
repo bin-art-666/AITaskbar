@@ -5,7 +5,7 @@ using Windows.UI;
 
 namespace AIEnter;
 
-internal sealed partial class SettingsWindow
+internal sealed partial class SettingsPage
 {
     string normalButtonColor = UiDefaults.ButtonColor, selectedButtonColor = UiDefaults.SelectedButtonColor;
     readonly Button normalColorButton = new(), selectedColorButton = new();

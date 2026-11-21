@@ -25,6 +25,7 @@ namespace LumaBar
         private readonly bool previewOnly;
         private string visualKey;
         private GlassSettings previewGlass;
+        private MaterialScene? previewScene;
         private bool? previewGlowEnabled;
         private readonly Action<BarAppearance?>? publishBarAppearance;
         private MaterialPlan? lastBarPlan;
@@ -135,6 +136,35 @@ namespace LumaBar
                 Dispatch(delegate { WallpaperSampler.Invalidate(); WakeSampling(); });
         }
         internal void ShowFromHost() { Dispatch(ShowWindow); }
+        internal Task<T> ReadOrEditFromHost<T>(Func<TrayApp, T> edit)
+        {
+            var result = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                window.BeginInvoke(delegate
+                {
+                    try { result.TrySetResult(edit(this)); }
+                    catch (Exception error) { result.TrySetException(error); }
+                });
+            }
+            catch (InvalidOperationException error) { result.TrySetException(error); }
+            return result.Task;
+        }
+        internal Settings CopySettings() => Files.Json.Deserialize<Settings>(Files.Json.Serialize(settings));
+        internal MaterialScene CurrentScene => materialScene;
+        internal void PreviewFromHost(Settings? draft, MaterialScene? scene = null)
+        {
+            previewGlass = draft?.Glass;
+            previewScene = scene;
+            previewGlowEnabled = draft?.MouseGlow;
+            if (draft != null) { previewGlowRadius = draft.MouseGlowRadius; previewGlowStrength = draft.MouseGlowStrength; }
+            ApplyMaterials(true);
+        }
+        internal void SaveFromHost(Action<Settings> edit)
+        {
+            if (!SavePreferences(edit)) throw new IOException("无法保存任务栏外观设置。");
+            PreviewFromHost(null);
+        }
         internal void StopFromHost(Action<Exception> failed)
         {
             Dispatch(delegate
@@ -166,12 +196,16 @@ namespace LumaBar
             }
             catch (Exception error) { Report(error); return false; }
         }
-        private bool CanApplyAppearance
-        { get { return mode != "仅检测（不修改）" && !paused && !sessionLocked && !suspended && !restoring && !exiting && !SystemInformation.HighContrast && sceneCoordinator.Ready && !visualTransition.Waiting; } }
+        private bool CanApplyAppearance(bool force)
+        {
+            return mode != "仅检测（不修改）" && !paused && !sessionLocked && !suspended && !restoring &&
+                !exiting && !SystemInformation.HighContrast &&
+                (previewOnly && (force || previewScene.HasValue) || sceneCoordinator.Ready && !visualTransition.Waiting);
+        }
         private MaterialPlan PrepareAppearance(Tone tone)
         {
             GlassSettings glass = previewGlass ?? settings.Glass;
-            MaterialPlan plan = previewOnly ? ReadabilityPolicy.CapturePreview(glass, materialScene, tone)
+            MaterialPlan plan = previewOnly ? ReadabilityPolicy.CapturePreview(glass, previewScene ?? materialScene, tone)
                 : ReadabilityPolicy.Capture(glass, materialScene, tone);
             string key = plan.Key;
             if (!previewOnly && visualKey != null && visualKey != key) { glow?.Clear(); blend.Begin(settings.TransitionMilliseconds); }
@@ -180,7 +214,7 @@ namespace LumaBar
         }
         private void ApplyMaterials(bool force = false)
         {
-            if (!CanApplyAppearance) return;
+            if (!CanApplyAppearance(force)) return;
             GlassSettings glass = previewGlass ?? settings.Glass;
             MaterialPlan plan = PrepareAppearance(controller.Current.Tone);
             lastBarPlan = plan;
@@ -224,7 +258,7 @@ namespace LumaBar
                 previewGlowEnabled ?? settings.MouseGlow,
                 previewGlowEnabled.HasValue ? previewGlowRadius : settings.MouseGlowRadius,
                 previewGlowEnabled.HasValue ? previewGlowStrength : settings.MouseGlowStrength,
-                settings.TransitionMilliseconds));
+                previewScene.HasValue ? 0 : settings.TransitionMilliseconds));
         }
         private void ResetDecisions() { engine.Reset(); sceneCoordinator.ResetPending(); visualTransition.Reset(); }
         private void SetPaused(bool value)
@@ -310,7 +344,7 @@ namespace LumaBar
         {
             if (tone != controller.Current.Tone)
             {
-                if (CanApplyAppearance) PrepareAppearance(tone);
+                if (CanApplyAppearance(force: false)) PrepareAppearance(tone);
                 if (materials != null) materials.InvalidatePending();
             }
             controller.Apply(tone, delegate { ApplyMaterials(true); });

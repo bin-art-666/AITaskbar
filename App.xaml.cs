@@ -153,17 +153,42 @@ public partial class App : Application
         return null;
     }
 
-    internal void ShowSettings()
+    internal void ShowSettings() => ShowSettings(SettingsSection.Taskbar);
+
+    internal void ShowSettings(SettingsSection section)
     {
         if (shuttingDown) return;
-        settingsWindow ??= new TaskbarSettingsWindow(this);
+        if (settingsWindow is null)
+        {
+            settingsWindow = new TaskbarSettingsWindow(this);
+            _ = settingsWindow.ResetGlassAsync();
+        }
+        settingsWindow.Select(section);
         settingsWindow.UpdatePreviewState(preview is not null);
         settingsWindow.Activate();
+    }
+
+    internal void HideSettings() => settingsWindow?.HideSettings();
+    internal void ShowHaloStorageSettings()
+    {
+        ShowSettings(SettingsSection.Halo);
+        settingsWindow?.ShowHaloStorage();
     }
 
     internal int IconSize => iconSize;
     internal Color? IndicatorColor => indicatorColor;
     internal void FocusPreview() => preview?.Activate();
+    internal LumaBar.BarAppearance? BarAppearance => appearance.CurrentBarAppearance;
+    internal event Action? BarAppearanceChanged
+    {
+        add => appearance.BarAppearanceChanged += value;
+        remove => appearance.BarAppearanceChanged -= value;
+    }
+    internal async Task<T> EditAppearance<T>(Func<LumaBar.TrayApp, T> edit)
+    {
+        await appearance.ShowAsync(Path.Combine(root, "LumaBar"), hidden: true);
+        return await appearance.EditAsync(edit);
+    }
 
     internal bool TrySetIconSize(int size)
     {
@@ -233,6 +258,7 @@ public partial class App : Application
     {
         try
         {
+            ShowAppearance(hidden: true);
             var bar = new PreviewTaskbar(this, root, appearance, iconSize, indicatorColor, ReportPreviewFailure);
             preview = bar;
             bar.Closed += (_, _) =>
@@ -256,8 +282,6 @@ public partial class App : Application
         settingsWindow?.SetStatus("任务栏预览未能继续。" + error.Message);
     }
 
-    internal void OpenAppearance() => ShowAppearance(hidden: false);
-
     private async void ShowAppearance(bool hidden)
     {
         try
@@ -278,6 +302,7 @@ public partial class App : Application
     {
         if (shuttingDown) return;
         shuttingDown = true;
+        if (settingsWindow is not null) await settingsWindow.PendingSettings;
         preview?.Close();
         try { await appearance.StopAsync(); }
         catch (Exception error)

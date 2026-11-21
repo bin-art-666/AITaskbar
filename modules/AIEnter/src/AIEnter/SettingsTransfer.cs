@@ -5,7 +5,7 @@ using Windows.Storage.Pickers;
 
 namespace AIEnter;
 
-internal sealed partial class SettingsWindow
+internal sealed partial class SettingsPage
 {
     sealed record PortableSettings(int FormatVersion = 1, string[]? ProviderOrder = null, AiProvider[]? AddedProviders = null,
         string? DefaultProvider = null, bool FloatingPanel = true, bool Pinned = false,
@@ -23,12 +23,11 @@ internal sealed partial class SettingsWindow
         row.Children.Add(export); row.Children.Add(import); row.Children.Add(reset); fields.Children.Add(row);
     }
 
-    nint PickerWindow => WinRT.Interop.WindowNative.GetWindowHandle(this);
     async Task ExportSettings()
     {
         var picker = new FileSavePicker { SuggestedFileName = "AIEnter-settings", SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
         picker.FileTypeChoices.Add("AIEnter 设置", [".json"]);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, PickerWindow);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, pickerWindow);
         var file = await picker.PickSaveFileAsync(); if (file is null) return;
         var value = AiPolicy.WithProviderSettings(options.Data, providerDraft.AddedProviders ?? [], providerOrder.ToArray(),
             provider.SelectedItem is ComboBoxItem item ? (string)item.Tag : providerDraft.DefaultProvider ?? UiDefaults.Provider);
@@ -43,7 +42,7 @@ internal sealed partial class SettingsWindow
     async Task ImportSettings()
     {
         var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
-        picker.FileTypeFilter.Add(".json"); WinRT.Interop.InitializeWithWindow.Initialize(picker, PickerWindow);
+        picker.FileTypeFilter.Add(".json"); WinRT.Interop.InitializeWithWindow.Initialize(picker, pickerWindow);
         var file = await picker.PickSingleFileAsync(); if (file is null) return;
         try
         {

@@ -8,6 +8,7 @@ namespace Halo;
 internal sealed partial class SettingsPage : Grid
 {
     readonly StationWindow owner;
+    readonly Window settingsHost;
     readonly NavigationView nav = new() { IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed, IsSettingsVisible = false, IsPaneToggleButtonVisible = false, PaneDisplayMode = NavigationViewPaneDisplayMode.Left, OpenPaneLength = 128, IsPaneOpen = true };
     readonly Button save = new() { Content = "保存" };
     readonly Button cancel = new() { Content = "取消" };
@@ -35,9 +36,22 @@ internal sealed partial class SettingsPage : Grid
     readonly ComboBox sortMode = new();
     ScrollViewer storageSettingsPage = null!;
     internal Task PendingSave { get; private set; } = Task.CompletedTask;
-    internal SettingsPage(StationWindow owner)
+    internal SettingsPage(StationWindow owner, Window? settingsHost = null)
     {
         this.owner = owner;
+        this.settingsHost = settingsHost ?? owner;
+        if (settingsHost is not null)
+        {
+            nav.OpenPaneLength = 108;
+            var saveShortcut = new Microsoft.UI.Xaml.Input.KeyboardAccelerator
+                { Key = Windows.System.VirtualKey.S, Modifiers = Windows.System.VirtualKeyModifiers.Control, ScopeOwner = this };
+            var cancelShortcut = new Microsoft.UI.Xaml.Input.KeyboardAccelerator
+                { Key = Windows.System.VirtualKey.Escape, ScopeOwner = this };
+            saveShortcut.Invoked += (_, args) => args.Handled = HandleShortcut(true);
+            cancelShortcut.Invoked += (_, args) => args.Handled = HandleShortcut(false);
+            KeyboardAccelerators.Add(saveShortcut);
+            KeyboardAccelerators.Add(cancelShortcut);
+        }
         Visibility = Visibility.Collapsed;
         var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         nav.Background = transparent;
