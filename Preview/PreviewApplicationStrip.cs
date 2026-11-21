@@ -911,10 +911,19 @@ internal sealed class PreviewApplicationStrip
         {
             menu.Items.Clear();
             var theme = view.Button.ActualTheme;
-            if (group.Windows.Count == 0)
+            var app = RunningWindows.CanPin(group.Executable) ? Path.GetFileName(group.Executable)?.ToLowerInvariant() : null;
+            (string Text, string Arguments)? privateWindow = app switch
+            {
+                "chrome.exe" => ("新建无痕窗口", "--incognito"),
+                "msedge.exe" => ("新建 InPrivate 窗口", "--inprivate"),
+                _ => null
+            };
+            if (group.Windows.Count == 0 && privateWindow is null)
                 menu.Items.Add(AppMenuItem(theme, "打开", AppMenuIcon.Open, () => Open(group, view.Button, view.IconPlate)));
-            else if (NewWindowArguments(group.Executable) is { } arguments)
+            else if (NewWindowArguments(app) is { } arguments)
                 menu.Items.Add(AppMenuItem(theme, "新建窗口", AppMenuIcon.NewWindow, () => Launch(group, arguments)));
+            if (privateWindow is { } task)
+                menu.Items.Add(AppMenuItem(theme, task.Text, AppMenuIcon.PrivateWindow, () => Launch(group, task.Arguments)));
             if (PinItem(group, theme) is { } pin) menu.Items.Add(pin);
             if (group.Windows.Count == 0) return;
 
@@ -950,8 +959,7 @@ internal sealed class PreviewApplicationStrip
         return item;
     }
 
-    private static string? NewWindowArguments(string? executable) =>
-        !RunningWindows.CanPin(executable) ? null : Path.GetFileName(executable)?.ToLowerInvariant() switch
+    private static string? NewWindowArguments(string? app) => app switch
         {
             "explorer.exe" => "/n",
             "chrome.exe" or "msedge.exe" or "code.exe" or "code - insiders.exe" => "--new-window",
