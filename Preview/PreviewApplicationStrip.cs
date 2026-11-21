@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Foundation;
 using Windows.UI;
 using Windows.UI.ViewManagement;
@@ -25,6 +26,8 @@ internal sealed class PreviewApplicationStrip
     };
     private readonly PinnedApps pins;
     private readonly AppCenterIcon appCenterIcon;
+    private readonly Button taskViewButton;
+    private readonly Image taskViewImage;
     private readonly PreviewIconPreferences iconPreferences;
     private readonly nint owner;
     private readonly Action<string> report;
@@ -40,6 +43,7 @@ internal sealed class PreviewApplicationStrip
     private readonly Dictionary<int, RunningTile> runningTiles = [];
     private double scrollPosition, scrollFrom, scrollTo;
     private long? scrollStarted;
+    private long? lastTaskViewOpened;
     private int mountedStart;
     private readonly Border separator = new()
     {
@@ -107,6 +111,21 @@ internal sealed class PreviewApplicationStrip
             openAppCenter();
         };
         items.Children.Add(AppCenterButton);
+        taskViewImage = new Image
+        {
+            Width = iconSize,
+            Height = iconSize,
+            Source = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TaskView.png")))
+            {
+                DecodePixelWidth = 128
+            },
+            Stretch = Stretch.Uniform
+        };
+        taskViewButton = IconButton("任务视图", taskViewImage);
+        taskViewButton.VerticalContentAlignment = VerticalAlignment.Top;
+        ToolTipService.SetToolTip(taskViewButton, "任务视图（Win + Tab）");
+        taskViewButton.Click += (_, _) => OpenTaskView();
+        items.Children.Add(taskViewButton);
         items.Children.Add(pinnedApps.Panel);
         items.Children.Add(separator);
         items.Children.Add(runningApps.Panel);
@@ -160,6 +179,9 @@ internal sealed class PreviewApplicationStrip
         appCenterIcon.SetSize(size);
         AppCenterButton.Width = size;
         AppCenterButton.Height = size + IndicatorSpace;
+        taskViewButton.Width = size;
+        taskViewButton.Height = size + IndicatorSpace;
+        taskViewImage.Width = taskViewImage.Height = size;
         pinnedApps.Layout = runningApps.Layout = null;
         if (pinPress is null) Render();
     }
@@ -378,12 +400,20 @@ internal sealed class PreviewApplicationStrip
 
     private double RequiredWidth(int pinned, int running)
     {
-        int appCenter = AppCenterButton.Visibility == Visibility.Visible ? 1 : 0;
+        int fixedButtons = AppCenterButton.Visibility == Visibility.Visible ? 2 : 1;
         int divider = pinned > 0 && running > 0 ? 1 : 0;
-        int sections = appCenter + divider + (pinned > 0 ? 1 : 0) + (running > 0 ? 1 : 0);
+        int sections = fixedButtons + divider + (pinned > 0 ? 1 : 0) + (running > 0 ? 1 : 0);
         int gaps = Math.Max(0, pinned - 1) + Math.Max(0, running - 1);
-        return (pinned + running + appCenter) * iconSize + gaps * iconLayout.Gap +
-            Math.Max(0, sections - 1) * SectionGap + divider * SeparatorWidth;
+        return (pinned + running + fixedButtons) * iconSize + gaps * iconLayout.Gap +
+            (sections - 1) * SectionGap + divider * SeparatorWidth;
+    }
+
+    private void OpenTaskView()
+    {
+        if (lastTaskViewOpened is { } last && Stopwatch.GetElapsedTime(last).TotalMilliseconds < 300) return;
+        DismissThumbnails();
+        if (WindowsTaskView.TryOpen()) lastTaskViewOpened = Stopwatch.GetTimestamp();
+        else report("暂时无法打开任务视图，请按 Win + Tab。");
     }
 
     private void ScrollRunningApps(object sender, PointerRoutedEventArgs args)
