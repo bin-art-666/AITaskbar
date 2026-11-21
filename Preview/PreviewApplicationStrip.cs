@@ -5,7 +5,9 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 using Windows.UI;
 using Windows.UI.ViewManagement;
 
@@ -14,6 +16,7 @@ namespace AITaskbar;
 internal sealed class PreviewApplicationStrip
 {
     private const double Gap = 4, SeparatorWidth = 1, IndicatorSpace = 7;
+    private const double PinDragThreshold = 5;
     private readonly StackPanel items = new()
     {
         Orientation = Orientation.Horizontal, Spacing = Gap,
@@ -39,12 +42,18 @@ internal sealed class PreviewApplicationStrip
     private Button? hoverAnchor;
     private string? thumbnailGroup;
     private IReadOnlyList<RunningWindow>? thumbnailWindows;
+    private PinPress? pinPress;
+    private Button? suppressedClick;
+    private bool draggingPin;
+    private Border? dropMarker;
     private Button? more;
     private Border? separator;
     private bool? dark, contrast;
     public StackPanel Surface => items;
 
-    private sealed record AppButton(AppGroup Group, Button Button, Border Indicator, Border IconPlate, AppIconArtwork? Icon);
+    private sealed record AppButton(AppGroup Group, Button Button, Border Indicator, Border IconPlate, AppIconArtwork? Icon,
+        Border? PinDropMarker);
+    private sealed record PinPress(PinnedApp Pin, uint PointerId, Point Start);
 
     public PreviewApplicationStrip(PinnedApps pins, PreviewIconPreferences iconPreferences, int iconSize, Color? indicatorColor,
         nint owner, Action<string> report)
@@ -63,7 +72,7 @@ internal sealed class PreviewApplicationStrip
 
     public void Refresh()
     {
-        if (openFlyout is not null) return;
+        if (openFlyout is not null || pinPress is not null) return;
         var foregroundWindow = RunningWindows.Foreground();
         groups = AppGroups.Build(pins.Items, RunningWindows.List());
         if (groups.Any(group => group.Windows.Any(window => window.Handle == foregroundWindow)))
@@ -80,7 +89,7 @@ internal sealed class PreviewApplicationStrip
     public void SetAvailableWidth(double width)
     {
         available = Math.Max(0, width);
-        if (openFlyout is null) Render();
+        if (openFlyout is null && pinPress is null) Render();
     }
 
     public void SetIconSize(int size)
@@ -89,7 +98,7 @@ internal sealed class PreviewApplicationStrip
         openFlyout?.Hide();
         iconSize = size;
         layout = null;
-        Render();
+        if (pinPress is null) Render();
     }
 
     public void SetIndicatorColor(Color? color)
@@ -104,7 +113,7 @@ internal sealed class PreviewApplicationStrip
         int count = groups.Length;
         while (count > 0 && RequiredWidth(count, pinned, count < groups.Length) > available) count--;
         bool overflow = count < groups.Length && RequiredWidth(count, pinned, true) <= available;
-        var order = groups.Take(count).Select(group => group.Key).ToArray();
+        var order = groups.Take(count).Select(group => (group.Pin is null ? "running:" : "pinned:") + group.Key).ToArray();
         bool divided = pinned > 0 && count > pinned;
         string[] next = [divided ? "divider:" + pinned : "", overflow ? "overflow" : "", .. order];
         if (layout is null || !layout.SequenceEqual(next, StringComparer.OrdinalIgnoreCase))
@@ -166,7 +175,7 @@ internal sealed class PreviewApplicationStrip
         if (group.Windows.Count > 0) ToolTipService.SetToolTip(button, null);
         button.PointerEntered += (_, args) =>
         {
-            if (args.Pointer.PointerDeviceType != PointerDeviceType.Mouse || openFlyout is not null) return;
+            if (args.Pointer.PointerDeviceType != PointerDeviceType.Mouse || openFlyout is not null || pinPress is not null) return;
             var current = shown.FirstOrDefault(item => ReferenceEquals(item.Button, button));
             if (current is null || current.Group.Windows.Count == 0) { DismissThumbnails(); return; }
             hoverAnchor = button;
@@ -200,16 +209,117 @@ internal sealed class PreviewApplicationStrip
             plate.Child = new FontIcon { Glyph = "\uE7C5", FontSize = Math.Round(iconSize * .7) };
         contents.Children.Add(plate);
         contents.Children.Add(mark);
+        var pinMarker = group.Pin is { } pin ? EnablePinReordering(button, contents, pin) : null;
         button.Content = contents;
         button.Click += (_, _) =>
         {
+            if (ReferenceEquals(suppressedClick, button)) return;
             DismissThumbnails();
             if (groups.FirstOrDefault(value => StringComparer.OrdinalIgnoreCase.Equals(value.Key, group.Key)) is { } current)
                 Open(current, button);
         };
-        var view = new AppButton(group, button, mark, plate, icon);
+        var view = new AppButton(group, button, mark, plate, icon, pinMarker);
         SetAppMenu(view, group);
         return view;
+    }
+
+    private Border EnablePinReordering(Button button, Grid contents, PinnedApp pin)
+    {
+        var marker = new Border
+        {
+            Width = 2, Height = iconSize, CornerRadius = new CornerRadius(1), VerticalAlignment = VerticalAlignment.Top,
+            Visibility = Visibility.Collapsed, IsHitTestVisible = false
+        };
+        contents.Children.Add(marker);
+        button.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
+        {
+            var point = args.GetCurrentPoint(items);
+            if (point.PointerDeviceType != PointerDeviceType.Mouse || !point.Properties.IsLeftButtonPressed) return;
+            suppressedClick = null;
+            if (!button.CapturePointer(args.Pointer)) return;
+            DismissThumbnails();
+            pinPress = new(pin, args.Pointer.PointerId, point.Position);
+        }), handledEventsToo: true);
+        button.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, args) =>
+        {
+            if (pinPress is not { } press || press.PointerId != args.Pointer.PointerId) return;
+            var point = args.GetCurrentPoint(items).Position;
+            if (!draggingPin && Math.Abs(point.X - press.Start.X) < PinDragThreshold) return;
+            draggingPin = true;
+            suppressedClick = button;
+            var target = PinDropTarget(point, press.Pin);
+            if (target is { } drop) ShowPinDropMarker(drop.View.PinDropMarker!, drop.After);
+            else ClearPinDropMarker();
+        }), handledEventsToo: true);
+        button.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, args) =>
+        {
+            if (pinPress is not { } press || press.PointerId != args.Pointer.PointerId) return;
+            try
+            {
+                if (draggingPin && PinDropTarget(args.GetCurrentPoint(items).Position, press.Pin) is { } drop)
+                {
+                    pins.Move(press.Pin.Executable, drop.View.Group.Pin!.Executable, drop.After);
+                    report("");
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                report("无法保存固定应用顺序。");
+            }
+            finally { EndPinPress(press); }
+        }), handledEventsToo: true);
+        button.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler((_, args) =>
+        {
+            if (pinPress is { } press && press.PointerId == args.Pointer.PointerId)
+                Surface.DispatcherQueue.TryEnqueue(() => EndPinPress(press));
+        }), handledEventsToo: true);
+        return marker;
+    }
+
+    private (AppButton View, bool After)? PinDropTarget(Point point, PinnedApp source)
+    {
+        if (point.Y < 0 || point.Y >= items.ActualHeight) return null;
+        foreach (var view in shown)
+        {
+            if (view.Group.Pin is not { } pin) break;
+            double left = view.Button.TransformToVisual(items).TransformPoint(new()).X;
+            if (point.X < left - Gap / 2 || point.X > left + view.Button.ActualWidth + Gap / 2) continue;
+            return PinnedApps.SameProgram(pin.Executable, source.Executable)
+                ? null : (view, point.X >= left + view.Button.ActualWidth / 2);
+        }
+        return null;
+    }
+
+    private void ShowPinDropMarker(Border marker, bool after)
+    {
+        if (!ReferenceEquals(dropMarker, marker))
+        {
+            ClearPinDropMarker();
+            dropMarker = marker;
+            marker.Background = new SolidColorBrush(accessibility.HighContrast
+                ? system.GetColorValue(UIColorType.Foreground) : system.GetColorValue(UIColorType.Accent));
+            marker.Visibility = Visibility.Visible;
+        }
+        marker.HorizontalAlignment = after ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+    }
+
+    private void EndPinPress(PinPress press)
+    {
+        if (!ReferenceEquals(pinPress, press)) return;
+        pinPress = null;
+        draggingPin = false;
+        ClearPinDropMarker();
+        Surface.DispatcherQueue.TryEnqueue(() =>
+        {
+            suppressedClick = null;
+            Refresh();
+        });
+    }
+
+    private void ClearPinDropMarker()
+    {
+        if (dropMarker is not null) dropMarker.Visibility = Visibility.Collapsed;
+        dropMarker = null;
     }
 
     private Button IconButton(string name, string content, bool glyph = false)

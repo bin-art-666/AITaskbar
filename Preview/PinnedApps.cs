@@ -26,6 +26,23 @@ internal sealed class PinnedApps(string file)
 
     public void Remove(string executable) => Save(Items.Where(pin => !SameProgram(pin.Executable, executable)).ToArray());
 
+    public bool Move(string executable, string target, bool after)
+    {
+        if (SameProgram(executable, target)) return false;
+        var next = Items.ToList();
+        int sourceIndex = next.FindIndex(pin => SameProgram(pin.Executable, executable));
+        if (sourceIndex < 0) return false;
+        var source = next[sourceIndex];
+        next.RemoveAt(sourceIndex);
+        int targetIndex = next.FindIndex(pin => SameProgram(pin.Executable, target));
+        if (targetIndex < 0) return false;
+        int insertion = targetIndex + (after ? 1 : 0);
+        if (insertion == sourceIndex) return false;
+        next.Insert(insertion, source);
+        Save(next.ToArray());
+        return true;
+    }
+
     private void Save(PinnedApp[] next)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
