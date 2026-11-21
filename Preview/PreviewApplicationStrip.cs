@@ -18,6 +18,7 @@ internal sealed class PreviewApplicationStrip
     private const double Gap = 4, SeparatorWidth = 1, IndicatorSpace = 7;
     private const double PinDragThreshold = 5;
     private const int WheelNotch = 120;
+    private const double ScrollDurationMs = 170, EdgeFade = .4;
     private readonly StackPanel items = new()
     {
         Orientation = Orientation.Horizontal, Spacing = Gap,
@@ -31,8 +32,12 @@ internal sealed class PreviewApplicationStrip
     private readonly Dictionary<string, AppIconArtwork?> icons = new(StringComparer.OrdinalIgnoreCase);
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
-    private readonly AppRange pinnedApps = new();
-    private readonly AppRange runningApps = new();
+    private readonly AppRange pinnedApps = new(new StackPanel { Orientation = Orientation.Horizontal, Spacing = Gap });
+    private readonly AppRange runningApps = new(new Canvas());
+    private readonly Dictionary<int, RunningTile> runningTiles = [];
+    private double scrollPosition, scrollFrom, scrollTo;
+    private long? scrollStarted;
+    private int mountedStart;
     private readonly Border separator = new()
     {
         Width = SeparatorWidth, Height = 20, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed
@@ -57,18 +62,16 @@ internal sealed class PreviewApplicationStrip
     public StackPanel Surface => items;
     internal Button AppCenterButton { get; }
     private IEnumerable<AppButton> Shown => pinnedApps.Buttons.Concat(runningApps.Buttons);
+    private IEnumerable<AppButton> Rendered => pinnedApps.Buttons.Concat(runningTiles.Values.Select(tile => tile.View));
 
     private sealed record AppButton(AppGroup Group, Button Button, Border Indicator, Border IconPlate, AppIconArtwork? Icon,
         Border? PinDropMarker);
     private sealed record PinPress(PinnedApp Pin, uint PointerId, Point Start);
+    private sealed record RunningTile(string Key, AppButton View, TranslateTransform Transform);
 
-    private sealed class AppRange
+    private sealed class AppRange(Panel panel)
     {
-        internal StackPanel Panel { get; } = new()
-        {
-            Orientation = Orientation.Horizontal, Spacing = Gap, Visibility = Visibility.Collapsed,
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent)
-        };
+        internal Panel Panel { get; } = panel;
         internal List<AppButton> Buttons { get; } = [];
         internal string[]? Layout { get; set; }
         internal int Start { get; set; }
@@ -98,6 +101,11 @@ internal sealed class PreviewApplicationStrip
         items.Children.Add(pinnedApps.Panel);
         items.Children.Add(separator);
         items.Children.Add(runningApps.Panel);
+        foreach (var range in new[] { pinnedApps, runningApps })
+        {
+            range.Panel.Visibility = Visibility.Collapsed;
+            range.Panel.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        }
         runningApps.Panel.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(ScrollRunningApps), handledEventsToo: true);
         pinnedApps.Panel.KeyDown += (_, args) => NavigateApps(pinnedApps, args);
         runningApps.Panel.KeyDown += (_, args) => NavigateApps(runningApps, args);
@@ -149,7 +157,7 @@ internal sealed class PreviewApplicationStrip
 
     internal void RefreshIconStyle(string executable)
     {
-        foreach (var view in Shown)
+        foreach (var view in Rendered)
             if (StringComparer.OrdinalIgnoreCase.Equals(view.Group.IconExecutable, executable)) UpdateIcon(view);
     }
 
@@ -162,7 +170,7 @@ internal sealed class PreviewApplicationStrip
         if (openFlyout is null && pinPress is null) Render();
     }
 
-    private void Render(AppRange? scrolled = null)
+    private void Render(AppRange? scrolled = null, bool animateRunning = false)
     {
         int pinned = groups.TakeWhile(group => group.Pin is not null).Count();
         int running = groups.Length - pinned;
@@ -173,14 +181,14 @@ internal sealed class PreviewApplicationStrip
         while (visibleRunning > 0 && RequiredWidth(visiblePins, visibleRunning) > available) visibleRunning--;
 
         RenderRange(pinnedApps, 0, pinned, visiblePins, keepAnchor: scrolled != pinnedApps);
-        RenderRange(runningApps, pinned, running, visibleRunning, keepAnchor: scrolled != runningApps);
+        RenderRange(runningApps, pinned, running, visibleRunning, keepAnchor: scrolled != runningApps, animateRunning);
         separator.Visibility = visiblePins > 0 && visibleRunning > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (runningApps.LastStart == 0 || visibleRunning == 0) wheelRemainder = 0;
         RefreshTheme();
         UpdateIndicators();
     }
 
-    private void RenderRange(AppRange range, int first, int count, int visible, bool keepAnchor)
+    private void RenderRange(AppRange range, int first, int count, int visible, bool keepAnchor, bool animate = false)
     {
         if (keepAnchor && range.Buttons.Count > 0)
         {
@@ -191,22 +199,30 @@ internal sealed class PreviewApplicationStrip
         range.LastStart = visible > 0 ? count - visible : 0;
         range.Start = Math.Clamp(range.Start, 0, range.LastStart);
         int start = first + range.Start;
-        var order = groups.Skip(start).Take(visible)
-            .Select(group => group.Key + "|" + IconCacheKey(group.IconExecutable, group.IconAppId)).ToArray();
-        if (range.Layout is null || !range.Layout.SequenceEqual(order, StringComparer.OrdinalIgnoreCase))
+        var order = groups.Skip(start).Take(visible).Select(LayoutKey).ToArray();
+        bool running = range == runningApps;
+        if (range.Layout is null || !range.Layout.SequenceEqual(order, StringComparer.OrdinalIgnoreCase) ||
+            (running && mountedStart != range.Start))
         {
             DismissThumbnails();
+            bool slide = animate && range.Layout is { } previous && previous.Length == visible &&
+                Surface.IsLoaded && system.AnimationsEnabled && !accessibility.HighContrast;
             range.Layout = order;
-            range.Panel.Children.Clear();
             range.Buttons.Clear();
-            for (int index = 0; index < visible; index++)
+            if (running)
+                MountRunningTiles(first, count, visible, slide);
+            else
             {
-                var view = BuildButton(groups[start + index]);
-                range.Buttons.Add(view);
-                range.Panel.Children.Add(view.Button);
+                range.Panel.Children.Clear();
+                for (int index = 0; index < visible; index++)
+                {
+                    var view = BuildButton(groups[start + index]);
+                    range.Buttons.Add(view);
+                    range.Panel.Children.Add(view.Button);
+                }
+                dark = null;
             }
             range.Panel.Visibility = visible > 0 ? Visibility.Visible : Visibility.Collapsed;
-            dark = null;
         }
 
         for (int index = 0; index < range.Buttons.Count; index++)
@@ -220,8 +236,109 @@ internal sealed class PreviewApplicationStrip
             if (view.Group.Name != group.Name || (view.Group.Windows.Count == 0) != (group.Windows.Count == 0))
                 ToolTipService.SetToolTip(view.Button, group.Windows.Count == 0 ? group.Name : null);
             if (view.Group.Pin != group.Pin) SetAppMenu(view, group);
-            range.Buttons[index] = view with { Group = group };
+            var updated = view with { Group = group };
+            range.Buttons[index] = updated;
+            if (running)
+            {
+                int tileIndex = range.Start + index;
+                runningTiles[tileIndex] = runningTiles[tileIndex] with { View = updated };
+            }
         }
+    }
+
+    private static string LayoutKey(AppGroup group) =>
+        group.Key + "|" + IconCacheKey(group.IconExecutable, group.IconAppId);
+
+    private void MountRunningTiles(int first, int count, int visible, bool slide)
+    {
+        var viewport = runningApps.Panel;
+        double step = iconSize + Gap;
+        mountedStart = runningApps.Start;
+        viewport.Width = Math.Max(0, visible * step - Gap);
+        viewport.Height = iconSize + IndicatorSpace;
+        scrollTo = mountedStart * step;
+        if (!slide)
+        {
+            StopScrollAnimation();
+            scrollPosition = scrollTo;
+        }
+
+        int firstTile = Math.Max(0, (int)Math.Floor(Math.Min(scrollPosition, scrollTo) / step));
+        int endTile = Math.Min(count, (int)Math.Ceiling(Math.Max(scrollPosition, scrollTo) / step) + visible);
+        foreach (int index in runningTiles.Keys.ToArray())
+        {
+            var tile = runningTiles[index];
+            if (index >= firstTile && index < endTile && tile.View.Button.Width == iconSize &&
+                StringComparer.OrdinalIgnoreCase.Equals(tile.Key, LayoutKey(groups[first + index]))) continue;
+            RemoveRunningTile(index);
+        }
+        for (int index = firstTile; index < endTile; index++)
+        {
+            if (!runningTiles.TryGetValue(index, out var tile))
+            {
+                var group = groups[first + index];
+                var view = BuildButton(group);
+                UpdateIcon(view);
+                var transform = new TranslateTransform();
+                view.Button.RenderTransform = transform;
+                tile = new(LayoutKey(group), view, transform);
+                runningTiles.Add(index, tile);
+                viewport.Children.Add(view.Button);
+            }
+            bool settledSlot = index >= mountedStart && index < mountedStart + visible;
+            tile.View.Button.IsTabStop = settledSlot;
+            tile.View.Button.IsHitTestVisible = settledSlot;
+            if (settledSlot) runningApps.Buttons.Add(tile.View);
+        }
+        if (slide)
+        {
+            viewport.Clip = new RectangleGeometry { Rect = new Rect(0, 0, viewport.Width, viewport.Height) };
+            scrollFrom = scrollPosition;
+            if (scrollStarted is null) CompositionTarget.Rendering += AnimateScroll;
+            scrollStarted = Stopwatch.GetTimestamp();
+        }
+        PositionRunningTiles();
+    }
+
+    private void AnimateScroll(object? sender, object args)
+    {
+        if (scrollStarted is not { } started) return;
+        double progress = Math.Min(1, Stopwatch.GetElapsedTime(started).TotalMilliseconds / ScrollDurationMs);
+        double remaining = 1 - progress;
+        scrollPosition = scrollTo + (scrollFrom - scrollTo) * remaining * remaining * remaining;
+        if (progress == 1)
+        {
+            StopScrollAnimation();
+            int end = mountedStart + runningApps.Buttons.Count;
+            foreach (int index in runningTiles.Keys.ToArray())
+                if (index < mountedStart || index >= end) RemoveRunningTile(index);
+        }
+        PositionRunningTiles();
+    }
+
+    private void PositionRunningTiles()
+    {
+        double width = runningApps.Panel.Width;
+        foreach (var (index, tile) in runningTiles)
+        {
+            double left = index * (iconSize + Gap) - scrollPosition;
+            tile.Transform.X = left;
+            double visible = Math.Clamp(Math.Min(left + iconSize, width) - Math.Max(0, left), 0, iconSize);
+            tile.View.Button.Opacity = 1 - EdgeFade * (1 - visible / iconSize);
+        }
+    }
+
+    private void StopScrollAnimation()
+    {
+        if (scrollStarted is not null) CompositionTarget.Rendering -= AnimateScroll;
+        scrollStarted = null;
+        runningApps.Panel.Clip = null;
+    }
+
+    private void RemoveRunningTile(int index)
+    {
+        runningApps.Panel.Children.Remove(runningTiles[index].View.Button);
+        runningTiles.Remove(index);
     }
 
     private double RequiredWidth(int pinned, int running)
@@ -246,7 +363,7 @@ internal sealed class PreviewApplicationStrip
         if (next == runningApps.Start) return;
         runningApps.Start = next;
         DismissThumbnails();
-        Render(scrolled: runningApps);
+        Render(scrolled: runningApps, animateRunning: true);
     }
 
     private void NavigateApps(AppRange range, KeyRoutedEventArgs args)
@@ -446,7 +563,7 @@ internal sealed class PreviewApplicationStrip
         var edge = highContrast ? system.GetColorValue(UIColorType.Foreground)
             : useDark ? Color.FromArgb(48, 255, 255, 255) : Color.FromArgb(70, 35, 58, 84);
         separator.Background = new SolidColorBrush(edge);
-        foreach (var view in Shown) UpdateIcon(view);
+        foreach (var view in Rendered) UpdateIcon(view);
     }
 
     private void UpdateIcon(AppButton view)
@@ -478,7 +595,7 @@ internal sealed class PreviewApplicationStrip
     {
         var color = accessibility.HighContrast ? system.GetColorValue(UIColorType.Foreground)
             : indicatorColor ?? system.GetColorValue(UIColorType.Accent);
-        foreach (var view in Shown)
+        foreach (var view in Rendered)
         {
             bool running = view.Group.Windows.Count > 0;
             bool active = view.Group.Windows.Any(window => window.Handle == foreground);
@@ -564,6 +681,7 @@ internal sealed class PreviewApplicationStrip
 
     public void CloseThumbnails()
     {
+        StopScrollAnimation();
         DismissThumbnails();
         thumbnails?.Close();
         thumbnails = null;
