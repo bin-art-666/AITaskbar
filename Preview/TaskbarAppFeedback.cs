@@ -66,7 +66,7 @@ internal sealed class TaskbarAppFeedback
         var color = state == AppWindowState.Foreground ? active : background;
         if (dot.Background is not SolidColorBrush fill || fill.Color != color)
             dot.Background = new SolidColorBrush(color);
-        bool outline = !light && state == AppWindowState.Background &&
+        bool outline = !light && state == AppWindowState.Background && color != Microsoft.UI.Colors.Black &&
             color.R < 96 && color.G < 96 && color.B < 96;
         dot.BorderThickness = outline ? new Thickness(.5) : new Thickness(0);
         if (outline && dot.BorderBrush is null)
