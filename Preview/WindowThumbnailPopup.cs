@@ -13,9 +13,9 @@ namespace AITaskbar;
 
 internal sealed class WindowThumbnailPopup : Window
 {
-    private const int Padding = 8, Gap = 6, CardHeight = 124, ImageHeight = 86, PagingHeight = 34;
+    private const int Padding = 8, Gap = 6, HeaderHeight = 26, CardHeight = 146, ImageHeight = 86, PagingHeight = 34;
     private readonly Canvas panel = new();
-    private readonly Action<RunningWindow> activate;
+    private Action<RunningWindow>? activate, close;
     private readonly List<nint> thumbnails = [];
     private readonly nint handle;
     private RunningWindow[] windows = [];
@@ -24,9 +24,8 @@ internal sealed class WindowThumbnailPopup : Window
     private int columns, cardWidth, pageSize, page;
     private bool visible;
 
-    public WindowThumbnailPopup(Action<RunningWindow> activate, Action enter, Action leave)
+    public WindowThumbnailPopup(Action enter, Action leave)
     {
-        this.activate = activate;
         Title = "AITaskbar 窗口缩略图";
         AppWindow.IsShownInSwitchers = false;
         var presenter = (OverlappedPresenter)AppWindow.Presenter;
@@ -41,7 +40,8 @@ internal sealed class WindowThumbnailPopup : Window
         Closed += (_, _) => ClearThumbnails();
     }
 
-    public void Open(nint owner, FrameworkElement button, IEnumerable<RunningWindow> sources)
+    public void Open(nint owner, FrameworkElement button, IEnumerable<RunningWindow> sources,
+        Action<RunningWindow> activate, Action<RunningWindow> close)
     {
         windows = sources.Where(RunningWindows.IsCurrent).ToArray();
         if (windows.Length == 0 || button.XamlRoot is not { } root) { Dismiss(); return; }
@@ -54,6 +54,8 @@ internal sealed class WindowThumbnailPopup : Window
             DisplayAreaFallback.Nearest).WorkArea;
         int available = (int)(workArea.Width / scale) - 2 * Padding;
         if (available < 80) { Dismiss(); return; }
+        this.activate = activate;
+        this.close = close;
         cardWidth = Math.Min(168, available);
         columns = Math.Min(windows.Length, Math.Clamp((available + Gap) / (cardWidth + Gap), 1, 5));
         pageSize = columns;
@@ -70,6 +72,7 @@ internal sealed class WindowThumbnailPopup : Window
     public void Dismiss()
     {
         ClearThumbnails();
+        activate = close = null;
         if (!visible) return;
         visible = false;
         AppWindow.Hide();
@@ -91,7 +94,7 @@ internal sealed class WindowThumbnailPopup : Window
         {
             var source = windows[page * pageSize + index];
             int left = Padding + index * (cardWidth + Gap);
-            var at = new RectInt32(left + 6, Padding + 6, cardWidth - 12, ImageHeight);
+            var at = new RectInt32(left + 6, Padding + HeaderHeight, cardWidth - 12, ImageHeight);
             AddCard(source, left, at);
         }
         if (paging)
@@ -120,7 +123,7 @@ internal sealed class WindowThumbnailPopup : Window
             Margin = new Thickness(6, 0, 6, 5), VerticalAlignment = VerticalAlignment.Bottom };
         var content = new Grid { Width = cardWidth, Height = CardHeight };
         var image = new Grid { Width = at.Width, Height = at.Height, VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 6, 0, 0) };
+            Margin = new Thickness(0, HeaderHeight, 0, 0) };
         image.Children.Add(placeholder);
         content.Children.Add(image);
         content.Children.Add(title);
@@ -129,10 +132,17 @@ internal sealed class WindowThumbnailPopup : Window
             VerticalContentAlignment = VerticalAlignment.Stretch };
         AutomationProperties.SetName(button, "切换到 " + source.Title);
         ToolTipService.SetToolTip(button, source.Title);
-        button.Click += (_, _) => activate(source);
+        button.Click += (_, _) => activate?.Invoke(source);
         Canvas.SetLeft(button, left);
         Canvas.SetTop(button, Padding);
         panel.Children.Add(button);
+        var closeButton = new Button { Content = "×", Width = 24, Height = 24, Padding = new Thickness(0) };
+        AutomationProperties.SetName(closeButton, "关闭 " + source.Title);
+        ToolTipService.SetToolTip(closeButton, "关闭窗口");
+        closeButton.Click += (_, _) => close?.Invoke(source);
+        Canvas.SetLeft(closeButton, left + cardWidth - 26);
+        Canvas.SetTop(closeButton, Padding + 1);
+        panel.Children.Add(closeButton);
         if (Register(source, at)) placeholder.Visibility = Visibility.Collapsed;
     }
 

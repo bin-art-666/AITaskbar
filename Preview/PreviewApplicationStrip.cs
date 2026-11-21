@@ -34,6 +34,7 @@ internal sealed class PreviewApplicationStrip
     private readonly Dictionary<string, AppIconArtwork?> icons = new(StringComparer.OrdinalIgnoreCase);
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
+    private readonly AppMenuIcons appMenuIcons;
     private readonly WindowMotion windowMotion;
     private TitleBarMinimizeHook? titleBarMinimize;
     private CancellationTokenSource? windowAction;
@@ -100,6 +101,7 @@ internal sealed class PreviewApplicationStrip
         this.owner = owner;
         this.report = report;
         windowMotion = new(items, owner);
+        appMenuIcons = new(system, accessibility);
         appCenterIcon = new AppCenterIcon(iconSize);
         appCenterIcon.Apply(appCenterStyle);
         AppCenterButton = IconButton("应用中心", appCenterIcon);
@@ -294,7 +296,6 @@ internal sealed class PreviewApplicationStrip
             }
             if (view.Group.Name != group.Name || (view.Group.Windows.Count == 0) != (group.Windows.Count == 0))
                 ToolTipService.SetToolTip(view.Button, group.Windows.Count == 0 ? group.Name : null);
-            if (view.Group.Pin != group.Pin) SetAppMenu(view, group);
             var updated = view with { Group = group };
             range.Buttons[index] = updated;
             if (running)
@@ -509,7 +510,7 @@ internal sealed class PreviewApplicationStrip
                 Open(current, button, plate);
         };
         var view = new AppButton(group, button, feedback, plate, icon, pinMarker);
-        SetAppMenu(view, group);
+        SetAppMenu(view);
         return view;
     }
 
@@ -740,20 +741,7 @@ internal sealed class PreviewApplicationStrip
             }
         }
         else if (group.Windows.Count == 1) OpenWindow(group.Windows[0], plate, toggle: true);
-        else
-        {
-            var menu = NewMenu();
-            foreach (var window in group.Windows)
-                menu.Items.Add(WindowItem(window, plate));
-            menu.ShowAt(anchor);
-        }
-    }
-
-    private MenuFlyoutItem WindowItem(RunningWindow window, FrameworkElement plate)
-    {
-        var item = new MenuFlyoutItem { Text = window.Title };
-        item.Click += (_, _) => OpenWindow(window, plate, toggle: false);
-        return item;
+        else ShowThumbnails(anchor, plate, group);
     }
 
     private void OpenWindow(RunningWindow window, FrameworkElement plate, bool toggle)
@@ -873,13 +861,20 @@ internal sealed class PreviewApplicationStrip
             DismissThumbnails();
             return;
         }
+        ShowThumbnails(anchor, hovered.IconPlate, hovered.Group);
+    }
+
+    private void ShowThumbnails(FrameworkElement anchor, FrameworkElement plate, AppGroup group)
+    {
         try
         {
-            thumbnails ??= new WindowThumbnailPopup(window => { Activate(window); DismissThumbnails(); },
-                () => hoverTimer.Stop(), () => ScheduleHover(260));
-            thumbnails.Open(owner, anchor, hovered.Group.Windows);
-            thumbnailGroup = hovered.Group.Key;
-            thumbnailWindows = hovered.Group.Windows;
+            thumbnails ??= new WindowThumbnailPopup(() => hoverTimer.Stop(), () => ScheduleHover(260));
+            hoverAnchor = anchor as Button;
+            thumbnails.Open(owner, anchor, group.Windows,
+                window => { DismissThumbnails(); OpenWindow(window, plate, toggle: false); },
+                window => { DismissThumbnails(); CloseWindows([window]); });
+            thumbnailGroup = group.Key;
+            thumbnailWindows = group.Windows;
         }
         catch (Exception error)
         {
@@ -909,30 +904,107 @@ internal sealed class PreviewApplicationStrip
         thumbnails = null;
     }
 
-    private void SetAppMenu(AppButton view, AppGroup group)
+    private void SetAppMenu(AppButton view)
     {
-        var pin = PinItem(group);
-        if (pin is null)
-        {
-            view.Button.ContextFlyout = null;
-            return;
-        }
         var menu = NewMenu();
-        menu.Items.Add(pin);
+        void Populate(AppGroup group, IReadOnlyList<AppGroup> current)
+        {
+            menu.Items.Clear();
+            var theme = view.Button.ActualTheme;
+            if (group.Windows.Count == 0)
+                menu.Items.Add(AppMenuItem(theme, "打开", AppMenuIcon.Open, () => Open(group, view.Button, view.IconPlate)));
+            else if (NewWindowArguments(group.Executable) is { } arguments)
+                menu.Items.Add(AppMenuItem(theme, "新建窗口", AppMenuIcon.NewWindow, () => Launch(group, arguments)));
+            if (PinItem(group, theme) is { } pin) menu.Items.Add(pin);
+            if (group.Windows.Count == 0) return;
+
+            if (menu.Items.Count != 0) menu.Items.Add(new MenuFlyoutSeparator());
+            bool singleWindow = group.Windows.Count == 1;
+            menu.Items.Add(AppMenuItem(theme, singleWindow ? "关闭窗口" : "关闭所有窗口",
+                singleWindow ? AppMenuIcon.CloseWindow : AppMenuIcon.CloseAllWindows, () => CloseWindows(group.Windows)));
+            var reason = EndTaskUnavailable(group, current);
+            var end = AppMenuItem(theme, "结束任务", AppMenuIcon.EndTask, () => EndAppTask(group), enabled: reason is null);
+            menu.Items.Add(end);
+            if (reason is not null)
+            {
+                menu.Items.Add(new AppMenuFlyoutItem { Text = reason, Icon = appMenuIcons.Create(AppMenuIcon.Empty, theme), IsEnabled = false });
+                AutomationProperties.SetHelpText(end, reason);
+            }
+        }
+        Populate(view.Group, groups);
+        menu.Opening += (_, _) =>
+        {
+            var current = windowMotion.HasRectangularRequest ? groups : AppGroups.Build(pins.Items, RunningWindows.List());
+            Populate(FindApp(current, view.Group.Key) ?? view.Group, current);
+        };
         view.Button.ContextFlyout = menu;
     }
 
-    private MenuFlyoutItem? PinItem(AppGroup group)
+    private static AppGroup? FindApp(IEnumerable<AppGroup> apps, string key) =>
+        apps.FirstOrDefault(app => StringComparer.OrdinalIgnoreCase.Equals(app.Key, key));
+
+    private MenuFlyoutItem AppMenuItem(ElementTheme theme, string text, AppMenuIcon icon, Action action, bool enabled = true)
+    {
+        var item = new AppMenuFlyoutItem { Text = text, Icon = appMenuIcons.Create(icon, theme, enabled), IsEnabled = enabled };
+        item.Click += (_, _) => action();
+        return item;
+    }
+
+    private static string? NewWindowArguments(string? executable) =>
+        !RunningWindows.CanPin(executable) ? null : Path.GetFileName(executable)?.ToLowerInvariant() switch
+        {
+            "explorer.exe" => "/n",
+            "chrome.exe" or "msedge.exe" or "code.exe" or "code - insiders.exe" => "--new-window",
+            _ => null
+        };
+
+    private void CloseWindows(IEnumerable<RunningWindow> windows)
+    {
+        bool failed = false;
+        foreach (var window in windows)
+            failed |= !RunningWindows.RequestClose(window);
+        report(failed ? "部分窗口无法发送关闭请求。" : "");
+        Surface.DispatcherQueue.TryEnqueue(Refresh);
+    }
+
+    private static string? EndTaskUnavailable(AppGroup group, IReadOnlyList<AppGroup> apps)
+    {
+        foreach (var window in group.Windows)
+        {
+            if (RunningWindows.EndTaskUnavailable(window) is { } reason) return reason;
+            if (apps.Any(app => !StringComparer.OrdinalIgnoreCase.Equals(app.Key, group.Key) &&
+                app.Windows.Any(other => other.ProcessId == window.ProcessId)))
+                return "此进程由多个应用共用。";
+        }
+        return null;
+    }
+
+    private void EndAppTask(AppGroup selected)
+    {
+        if (!RunningWindows.ConfirmEndTask(owner, selected.Name)) return;
+        var current = AppGroups.Build(pins.Items, RunningWindows.List());
+        if (FindApp(current, selected.Key) is not { } group) return;
+        if (EndTaskUnavailable(group, current) is { } reason) { report(reason); return; }
+
+        var targets = group.Windows.Where(window => selected.Windows.Any(previous =>
+            previous.Handle == window.Handle && previous.ProcessId == window.ProcessId)).DistinctBy(window => window.ProcessId);
+        bool failed = false;
+        foreach (var window in targets)
+            failed |= !RunningWindows.EndTask(window);
+        report(failed ? "部分应用进程无法结束。" : "");
+        Surface.DispatcherQueue.TryEnqueue(Refresh);
+    }
+
+    private MenuFlyoutItem? PinItem(AppGroup group, ElementTheme theme)
     {
         if (group.Pin is null && group.PinAppId is null && !RunningWindows.CanPin(group.Executable)) return null;
-        var item = new MenuFlyoutItem { Text = group.Pin is null ? "固定到预览栏" : "取消固定" };
-        item.Click += (_, _) =>
+        bool pinned = group.Pin is not null;
+        return AppMenuItem(theme, pinned ? "取消固定" : "固定到预览栏", pinned ? AppMenuIcon.Unpin : AppMenuIcon.Pin, () =>
         {
             if (group.Pin is { } pin) ChangePins(() => pins.Remove(pin));
             else if (group.PinAppId is { } appId) ChangePins(() => pins.Add(appId, group.IconExecutable));
             else ChangePins(() => pins.Add(group.Executable!));
-        };
-        return item;
+        });
     }
 
     public void ChangePins(Action change)
@@ -962,18 +1034,18 @@ internal sealed class PreviewApplicationStrip
         report("");
     }
 
-    private bool Launch(AppGroup group)
+    private bool Launch(AppGroup group, string? arguments = null)
     {
         try
         {
-            if (group.PinAppId is { } appId) PackagedAppPin.Launch(appId);
+            if (arguments is null && group.PinAppId is { } appId) PackagedAppPin.Launch(appId);
             else
             {
                 var executable = group.Executable;
                 if (!RunningWindows.CanPin(executable)) throw new FileNotFoundException("应用已移动或无法启动。");
                 using var process = Process.Start(new ProcessStartInfo(executable!)
                 {
-                    UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(executable)
+                    UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(executable), Arguments = arguments ?? ""
                 });
             }
             report("");

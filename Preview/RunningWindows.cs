@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace AITaskbar;
 
@@ -9,6 +10,13 @@ internal sealed record RunningWindow(nint Handle, uint ProcessId, string Title, 
 internal static class RunningWindows
 {
     private const long AppWindow = 0x00040000, ToolWindow = 0x00000080, NoActivate = 0x08000000;
+    private const uint QueryProcess = 0x1000, TerminateProcessAccess = 0x0001;
+    private static readonly HashSet<string> sharedExecutables = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer.exe", "ApplicationFrameHost.exe", "RuntimeBroker.exe", "dllhost.exe", "svchost.exe",
+        "rundll32.exe", "conhost.exe", "OpenConsole.exe", "ShellExperienceHost.exe",
+        "StartMenuExperienceHost.exe", "SearchHost.exe", "TextInputHost.exe"
+    };
     private const ushort VariantWideString = 31;
     private const string PhotosAppId = "Microsoft.OneDrive.Photos_8wekyb3d8bbwe!OneDrive.App";
     private static readonly PropertyKey appUserModelId = new(new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5);
@@ -76,6 +84,34 @@ internal static class RunningWindows
     internal static bool RequestRestore(RunningWindow window) =>
         IsCurrent(window) && (!IsMinimized(window) || ShowWindowAsync(window.Handle, 9)); // SW_RESTORE
 
+    internal static bool RequestClose(RunningWindow window) =>
+        !OwnsHandle(window) || PostMessage(window.Handle, 0x0010, 0, 0); // WM_CLOSE
+
+    internal static string? EndTaskUnavailable(RunningWindow window)
+    {
+        if (window.ProcessId == Environment.ProcessId || IsShellProcess(window.ProcessId) ||
+            Path.GetFileName(window.Executable) is { } name && sharedExecutables.Contains(name))
+            return "此窗口由系统或共享进程承载。";
+        return window.Executable is null ? "无法确认应用进程。" : null;
+    }
+
+    internal static bool ConfirmEndTask(nint owner, string name) =>
+        MessageBox(owner, $"将强制结束「{name}」的应用进程。未保存的内容可能丢失。", "结束任务",
+            0x00000004 | 0x00000030 | 0x00000100) == 6; // Yes/No, warning, default No
+
+    internal static bool EndTask(RunningWindow window)
+    {
+        if (EndTaskUnavailable(window) is not null) return false;
+        using var process = OpenProcess(QueryProcess | TerminateProcessAccess, false, window.ProcessId);
+        if (process.IsInvalid || !IsCurrent(window) ||
+            !StringComparer.OrdinalIgnoreCase.Equals(ProcessImage(process), window.Executable) ||
+            !IsProcessCritical(process, out bool critical) || critical) return false;
+        return TerminateProcess(process, 1);
+    }
+
+    private static bool IsShellProcess(uint processId) =>
+        GetWindowThreadProcessId(GetShellWindow(), out uint shellProcess) != 0 && shellProcess == processId;
+
     internal static bool HideForTransition(RunningWindow window, bool wasMinimized) =>
         IsCurrent(window) && IsMinimized(window) == wasMinimized && ShowWindowAsync(window.Handle, 0); // SW_HIDE
 
@@ -120,23 +156,22 @@ internal static class RunningWindows
 
     private static (string? Executable, string? AppId) DescribeProcess(uint processId)
     {
-        nint process = OpenProcess(0x1000, false, processId); // PROCESS_QUERY_LIMITED_INFORMATION
-        if (process == 0) return default;
-        try
-        {
-            var path = new StringBuilder(32768);
-            int size = path.Capacity;
-            if (!QueryFullProcessImageName(process, 0, path, ref size)) return default;
-            string executable = path.ToString();
-            if (!IsPackagedExecutable(executable) &&
-                !string.Equals(Path.GetFileName(executable), "OneDrive.App.exe", StringComparison.OrdinalIgnoreCase))
-                return (executable, null);
+        using var process = OpenProcess(QueryProcess, false, processId);
+        if (process.IsInvalid || ProcessImage(process) is not { } executable) return default;
+        if (!IsPackagedExecutable(executable) &&
+            !string.Equals(Path.GetFileName(executable), "OneDrive.App.exe", StringComparison.OrdinalIgnoreCase))
+            return (executable, null);
 
-            var appId = new StringBuilder(130);
-            uint length = (uint)appId.Capacity;
-            return (executable, GetApplicationUserModelId(process, ref length, appId) == 0 ? appId.ToString() : null);
-        }
-        finally { CloseHandle(process); }
+        var appId = new StringBuilder(130);
+        uint length = (uint)appId.Capacity;
+        return (executable, GetApplicationUserModelId(process, ref length, appId) == 0 ? appId.ToString() : null);
+    }
+
+    private static string? ProcessImage(SafeProcessHandle process)
+    {
+        var path = new StringBuilder(32768);
+        int size = path.Capacity;
+        return QueryFullProcessImageName(process, 0, path, ref size) ? path.ToString() : null;
     }
 
     private delegate bool WindowEnumerator(nint hwnd, nint data);
@@ -152,11 +187,14 @@ internal static class RunningWindows
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(nint hwnd, StringBuilder text, int count);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint id);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint hwnd, uint attribute, out int result, int size);
-    [DllImport("kernel32.dll")] private static extern nint OpenProcess(uint access, bool inherit, uint processId);
-    [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageName(nint process, uint flags, StringBuilder path, ref int size);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool PostMessage(nint hwnd, uint message, nint wParam, nint lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int MessageBox(nint hwnd, string text, string caption, uint type);
+    [DllImport("kernel32.dll")] private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, uint processId);
+    [DllImport("kernel32.dll")] private static extern bool IsProcessCritical(SafeProcessHandle process, out bool critical);
+    [DllImport("kernel32.dll")] private static extern bool TerminateProcess(SafeProcessHandle process, uint exitCode);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageName(SafeProcessHandle process, uint flags, StringBuilder path, ref int size);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    private static extern int GetApplicationUserModelId(nint process, ref uint length, StringBuilder appId);
+    private static extern int GetApplicationUserModelId(SafeProcessHandle process, ref uint length, StringBuilder appId);
 
     [StructLayout(LayoutKind.Sequential)]
     private readonly struct PropertyKey(Guid format, uint id)
