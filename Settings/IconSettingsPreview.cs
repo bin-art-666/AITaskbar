@@ -15,6 +15,8 @@ internal sealed class IconSettingsPreview
     private readonly AccessibilitySettings accessibility;
     private readonly TaskbarIconHoverLayer iconHover;
     private readonly StackPanel icons = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
+    private readonly StackPanel fixedIcons = new() { Orientation = Orientation.Horizontal };
+    private readonly TaskViewIcon? taskViewIcon;
     private readonly Canvas running = new();
     private readonly List<(AppWindowState State, TaskbarAppFeedback Visual)> examples = [];
     private readonly List<Border> iconPlates = [];
@@ -32,6 +34,16 @@ internal sealed class IconSettingsPreview
         this.system = system;
         this.accessibility = accessibility;
         iconHover = new(system.AnimationsEnabled && !accessibility.HighContrast);
+        if (!scrollDemo)
+        {
+            taskViewIcon = new TaskViewIcon(PreviewIconSize.Default)
+            {
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, TaskbarAppFeedback.TopSpace, 0, 0)
+            };
+            ToolTipService.SetToolTip(taskViewIcon, "任务视图");
+            AutomationProperties.SetName(taskViewIcon, "任务视图");
+        }
         var row = new Grid { ColumnSpacing = 8 };
         row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -64,10 +76,17 @@ internal sealed class IconSettingsPreview
         if (newSize)
         {
             icons.Children.Clear();
+            fixedIcons.Children.Clear();
             running.Children.Clear();
             examples.Clear();
             iconPlates.Clear();
-            icons.Children.Add(AddExample("未打开", "\uE8A5", AppWindowState.Closed));
+            if (taskViewIcon is not null)
+            {
+                taskViewIcon.SetSize(iconSize);
+                fixedIcons.Children.Add(taskViewIcon);
+            }
+            fixedIcons.Children.Add(AddExample("未打开", "\uE8A5", AppWindowState.Closed));
+            icons.Children.Add(fixedIcons);
             icons.Children.Add(new Border { Width = 1, Height = 18, Opacity = .5,
                 Background = new SolidColorBrush(Microsoft.UI.Colors.Gray),
                 VerticalAlignment = VerticalAlignment.Center });
@@ -78,6 +97,7 @@ internal sealed class IconSettingsPreview
         }
         if (geometryChanged)
         {
+            fixedIcons.Spacing = layout.Gap;
             running.Width = 2 * iconSize + layout.Gap;
             running.Height = iconSize + TaskbarAppFeedback.ExtraHeight;
             FinishScroll();

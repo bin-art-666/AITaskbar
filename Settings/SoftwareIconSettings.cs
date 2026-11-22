@@ -170,8 +170,8 @@ internal sealed partial class TaskbarSettingsWindow
 
         appearance.Children.Add(appearancePreview.Surface);
         appearance.Children.Add(SettingRow("图标配色", "同时应用于任务栏图标背板和右键菜单圆环。", iconColors));
-        appearance.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
-        appearance.Children.Add(SettingRow("图标间距", "调整固定区与运行区内相邻图标的间隔。", Actions(gap, gapValue)));
+        appearance.Children.Add(SettingRow("应用图标大小", "统一调整任务视图和中间应用区图标的大小。", Actions(size, sizeValue)));
+        appearance.Children.Add(SettingRow("图标间距", "调整任务视图两侧以及固定区、运行区内的图标间隔。", Actions(gap, gapValue)));
         BuildAppFeedbackSettings(appearance, style =>
         {
             appearancePreview.ApplyFeedback(style);

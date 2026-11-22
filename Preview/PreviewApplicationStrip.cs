@@ -7,7 +7,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Foundation;
 using Windows.UI;
 using Windows.UI.ViewManagement;
@@ -20,14 +19,14 @@ internal sealed partial class PreviewApplicationStrip
     private const int WheelNotch = 120;
     private readonly StackPanel items = new()
     {
-        Orientation = Orientation.Horizontal, Spacing = SectionGap,
+        Orientation = Orientation.Horizontal,
         HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
     };
     private readonly PinnedApps pins;
     private readonly RunningAppOrder runningOrder = new();
     private readonly AppCenterIcon appCenterIcon;
     private readonly Button taskViewButton;
-    private readonly Image taskViewImage;
+    private readonly TaskViewIcon taskViewIcon;
     private readonly PreviewIconPreferences iconPreferences;
     private readonly nint owner;
     private readonly Action<string> report;
@@ -50,7 +49,8 @@ internal sealed partial class PreviewApplicationStrip
     private int mountedStart;
     private readonly Border separator = new()
     {
-        Width = SeparatorWidth, Height = 20, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed
+        Width = SeparatorWidth, Height = 20, Margin = new Thickness(SectionGap, 0, SectionGap, 0),
+        VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed
     };
     private AppGroup[] groups = [];
     private nint foreground;
@@ -109,6 +109,7 @@ internal sealed partial class PreviewApplicationStrip
         appCenterIcon = new AppCenterIcon(iconSize);
         appCenterIcon.Apply(appCenterStyle);
         AppCenterButton = IconButton("应用中心", appCenterIcon);
+        AppCenterButton.Margin = new Thickness(0, 0, iconLayout.Gap, 0);
         AppCenterButton.Visibility = appCenterStyle.ShowInTaskbar ? Visibility.Visible : Visibility.Collapsed;
         AppCenterButton.VerticalContentAlignment = VerticalAlignment.Top;
         AppCenterButton.Click += (_, _) =>
@@ -117,17 +118,8 @@ internal sealed partial class PreviewApplicationStrip
             openAppCenter();
         };
         items.Children.Add(AppCenterButton);
-        taskViewImage = new Image
-        {
-            Width = iconSize,
-            Height = iconSize,
-            Source = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TaskView.png")))
-            {
-                DecodePixelWidth = 128
-            },
-            Stretch = Stretch.Uniform
-        };
-        taskViewButton = IconButton("任务视图", taskViewImage);
+        taskViewIcon = new TaskViewIcon(iconSize);
+        taskViewButton = IconButton("任务视图", taskViewIcon);
         taskViewButton.VerticalContentAlignment = VerticalAlignment.Top;
         ToolTipService.SetToolTip(taskViewButton, "任务视图（Win + Tab）");
         taskViewButton.Click += (_, _) => OpenTaskView();
@@ -224,7 +216,7 @@ internal sealed partial class PreviewApplicationStrip
         AppCenterButton.Height = size + IndicatorSpace;
         taskViewButton.Width = size;
         taskViewButton.Height = size + IndicatorSpace;
-        taskViewImage.Width = taskViewImage.Height = size;
+        taskViewIcon.SetSize(size);
         pinnedApps.Layout = runningApps.Layout = null;
         if (!AppDragInteraction) Render();
     }
@@ -260,6 +252,7 @@ internal sealed partial class PreviewApplicationStrip
             foreach (var view in Rendered) SetAppMenu(view);
         }
         if (!gapChanged && (!scrollChanged || scrollStarted is null)) return;
+        AppCenterButton.Margin = new Thickness(0, 0, layout.Gap, 0);
         pinnedPanel.Spacing = layout.Gap;
         runningApps.Layout = null;
         Render();
@@ -317,6 +310,7 @@ internal sealed partial class PreviewApplicationStrip
         RenderRange(pinnedApps, 0, pinned, visiblePins, keepAnchor: scrolled != pinnedApps && !preserveRangeStart);
         RenderRange(runningApps, pinned, running, visibleRunning, keepAnchor: scrolled != runningApps && !preserveRangeStart,
             animateRunning, revealRunningKey);
+        taskViewButton.Margin = new Thickness(0, 0, visiblePins + visibleRunning > 0 ? iconLayout.Gap : 0, 0);
         separator.Visibility = visiblePins > 0 && visibleRunning > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (runningApps.LastStart == 0 || visibleRunning == 0) wheelRemainder = 0;
         RefreshTheme();
@@ -485,12 +479,10 @@ internal sealed partial class PreviewApplicationStrip
 
     private double RequiredWidth(int pinned, int running)
     {
-        int fixedButtons = AppCenterButton.Visibility == Visibility.Visible ? 2 : 1;
+        int icons = pinned + running + (AppCenterButton.Visibility == Visibility.Visible ? 2 : 1);
         int divider = pinned > 0 && running > 0 ? 1 : 0;
-        int sections = fixedButtons + divider + (pinned > 0 ? 1 : 0) + (running > 0 ? 1 : 0);
-        int gaps = Math.Max(0, pinned - 1) + Math.Max(0, running - 1);
-        return (pinned + running + fixedButtons) * iconSize + gaps * iconLayout.Gap +
-            (sections - 1) * SectionGap + divider * SeparatorWidth;
+        return icons * iconSize + (icons - 1 - divider) * iconLayout.Gap +
+            divider * (SeparatorWidth + 2 * SectionGap);
     }
 
     private void OpenTaskView()
