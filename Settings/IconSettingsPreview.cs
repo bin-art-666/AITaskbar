@@ -16,6 +16,7 @@ internal sealed class IconSettingsPreview
     private readonly TaskbarIconHoverLayer iconHover;
     private readonly StackPanel icons = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
     private readonly StackPanel fixedIcons = new() { Orientation = Orientation.Horizontal };
+    private readonly AppCenterIcon? appCenterIcon;
     private readonly TaskViewIcon? taskViewIcon;
     private readonly Canvas running = new();
     private readonly List<(AppWindowState State, TaskbarAppFeedback Visual)> examples = [];
@@ -36,6 +37,14 @@ internal sealed class IconSettingsPreview
         iconHover = new(system.AnimationsEnabled && !accessibility.HighContrast);
         if (!scrollDemo)
         {
+            appCenterIcon = new AppCenterIcon(PreviewIconSize.Default)
+            {
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, TaskbarAppFeedback.TopSpace, 0, 0)
+            };
+            ToolTipService.SetToolTip(appCenterIcon, "应用中心");
+            AutomationProperties.SetName(appCenterIcon, "应用中心");
+            iconHover.Track(appCenterIcon);
             taskViewIcon = new TaskViewIcon(PreviewIconSize.Default)
             {
                 VerticalAlignment = VerticalAlignment.Top,
@@ -80,6 +89,11 @@ internal sealed class IconSettingsPreview
             running.Children.Clear();
             examples.Clear();
             iconPlates.Clear();
+            if (appCenterIcon is not null)
+            {
+                appCenterIcon.SetSize(iconSize);
+                fixedIcons.Children.Add(appCenterIcon);
+            }
             if (taskViewIcon is not null)
             {
                 taskViewIcon.SetSize(iconSize);
@@ -104,6 +118,13 @@ internal sealed class IconSettingsPreview
         }
         if (newSize) ApplyFeedback(feedback);
         else if (recolor) ApplyIconColors();
+    }
+
+    internal void ApplyAppCenterStyle(AppCenterIconStyle style)
+    {
+        if (appCenterIcon is null) return;
+        appCenterIcon.Apply(style);
+        appCenterIcon.Visibility = style.ShowInTaskbar ? Visibility.Visible : Visibility.Collapsed;
     }
 
     internal void ApplyFeedback(TaskbarAppFeedbackStyle style)

@@ -108,6 +108,7 @@ internal sealed partial class PreviewApplicationStrip
         iconHover = new(system.AnimationsEnabled && !accessibility.HighContrast);
         appCenterIcon = new AppCenterIcon(iconSize);
         appCenterIcon.Apply(appCenterStyle);
+        iconHover.Track(appCenterIcon);
         AppCenterButton = IconButton("应用中心", appCenterIcon);
         AppCenterButton.Margin = new Thickness(0, 0, iconLayout.Gap, 0);
         AppCenterButton.Visibility = appCenterStyle.ShowInTaskbar ? Visibility.Visible : Visibility.Collapsed;

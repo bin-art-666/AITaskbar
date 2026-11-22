@@ -18,6 +18,8 @@ internal sealed partial class TaskbarSettingsWindow
         var menu = new StackPanel();
         var individual = new StackPanel();
         var appearancePreview = new IconSettingsPreview(colors, accessibility);
+        appearancePreview.ApplyAppCenterStyle(app.CurrentAppCenterAppearance.Icon);
+        appearancePreview.Surface.Loaded += (_, _) => appearancePreview.ApplyAppCenterStyle(app.CurrentAppCenterAppearance.Icon);
         var scrollPreview = new IconSettingsPreview(colors, accessibility, scrollDemo: true);
         var menuPreview = BuildMenuIconPreview();
 
@@ -170,8 +172,8 @@ internal sealed partial class TaskbarSettingsWindow
 
         appearance.Children.Add(appearancePreview.Surface);
         appearance.Children.Add(SettingRow("图标配色", "同时应用于任务栏图标背板和右键菜单圆环。", iconColors));
-        appearance.Children.Add(SettingRow("应用图标大小", "统一调整任务视图和中间应用区图标的大小。", Actions(size, sizeValue)));
-        appearance.Children.Add(SettingRow("图标间距", "调整任务视图两侧以及固定区、运行区内的图标间隔。", Actions(gap, gapValue)));
+        appearance.Children.Add(SettingRow("应用图标大小", "统一调整应用中心、任务视图和中间软件图标的大小。", Actions(size, sizeValue)));
+        appearance.Children.Add(SettingRow("图标间距", "统一调整应用中心、任务视图和中间软件图标之间的间隔。", Actions(gap, gapValue)));
         BuildAppFeedbackSettings(appearance, style =>
         {
             appearancePreview.ApplyFeedback(style);
