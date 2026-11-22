@@ -3,7 +3,9 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Windows.System;
 
@@ -24,13 +26,16 @@ internal sealed class TaskbarCalendar : IDisposable
     {
         style = appearance;
         var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        var scene = new Grid { Width = 326 };
+        var scene = new Grid { Width = 350 };
         var backplate = new Border { CornerRadius = new CornerRadius(TaskbarPanelFlyout.Radius) };
         heading = new TextBlock { Foreground = ink, FontSize = 16, FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(5, 0, 5, 0) };
         calendar = new CalendarView { Language = Chinese.Name, SelectionMode = CalendarViewSelectionMode.None,
-            IsGroupLabelVisible = false, Height = 310, BorderThickness = new Thickness(0), Background = clear,
-            CalendarItemBackground = clear, OutOfScopeBackground = clear, Foreground = ink, CalendarItemForeground = ink };
+            IsGroupLabelVisible = false, IsTodayHighlighted = true, Height = 360,
+            BorderThickness = new Thickness(0), Background = clear,
+            CalendarItemBackground = clear, OutOfScopeBackground = clear, Foreground = ink, CalendarItemForeground = ink,
+            VerticalDayItemAlignment = VerticalAlignment.Top, CalendarViewDayItemStyle = DayItemStyle() };
+        calendar.CalendarViewDayItemChanging += UpdateDayItem;
         AutomationProperties.SetName(calendar, "日历");
         var body = new StackPanel { Margin = new Thickness(13), Spacing = 5 };
         body.Children.Add(heading);
@@ -61,6 +66,43 @@ internal sealed class TaskbarCalendar : IDisposable
     }
 
     internal void Hide() => panel.Hide();
+
+    private static Style DayItemStyle() => (Style)XamlReader.Load("""
+        <Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="CalendarViewDayItem">
+            <Setter Property="MinHeight" Value="44" />
+            <Setter Property="Padding" Value="0,5,0,0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CalendarViewDayItem">
+                        <Grid Height="42" VerticalAlignment="Top">
+                            <ContentPresenter Content="{TemplateBinding Tag}" IsHitTestVisible="False"
+                                HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,23,0,0" />
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        """);
+
+    private void UpdateDayItem(CalendarView sender, CalendarViewDayItemChangingEventArgs args)
+    {
+        if (args.InRecycleQueue || args.Phase != 0) return;
+        var item = args.Item;
+        var day = item.Date.Date;
+        var note = TaskbarCalendarNotes.ForDate(day);
+        var label = item.Tag as TextBlock ?? new TextBlock { FontSize = 11, TextAlignment = TextAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis };
+        label.Text = note.Label;
+        label.FontWeight = note.Emphasized ? FontWeights.SemiBold : FontWeights.Normal;
+        bool today = day == DateTime.Today;
+        label.Opacity = today || note.Emphasized ? 1 : .8;
+        if (today)
+            label.SetBinding(TextBlock.ForegroundProperty, new Binding { Source = sender, Path = new PropertyPath(nameof(CalendarView.TodayForeground)) });
+        else label.Foreground = ink;
+        if (item.Tag is null) item.Tag = label;
+        ToolTipService.SetToolTip(item, note.Details.Length == 0 ? null : note.Details);
+        AutomationProperties.SetHelpText(item, note.Details);
+    }
 
     internal void SetAppearance(QuickControlAppearance appearance)
     {
