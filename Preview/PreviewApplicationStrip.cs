@@ -54,6 +54,7 @@ internal sealed partial class PreviewApplicationStrip
     };
     private AppGroup[] groups = [];
     private nint foreground;
+    private (nint Window, long Started) mouseActivation;
     private int iconSize;
     private int wheelRemainder;
     private TaskbarAppFeedbackStyle feedbackStyle;
@@ -66,6 +67,7 @@ internal sealed partial class PreviewApplicationStrip
     private readonly DispatcherQueueTimer hoverTimer;
     private WindowThumbnailPopup? thumbnails;
     private Button? hoverAnchor;
+    private Button? thumbnailSuppressedUntilExit;
     private string? thumbnailGroup;
     private IReadOnlyList<RunningWindow>? thumbnailWindows;
     private bool? dark, contrast;
@@ -186,8 +188,20 @@ internal sealed partial class PreviewApplicationStrip
 
     internal void RememberForeground()
     {
-        var current = RunningWindows.Foreground();
-        if (current != owner) foreground = current;
+        nint current = RunningWindows.RawForeground();
+        if (AIEnter.Native.IsPanelWindow(owner, current)) return;
+        mouseActivation = (current, Stopwatch.GetTimestamp());
+        foreground = RunningWindows.RootOwnerOrSelf(current);
+    }
+
+    private nint ForegroundAtPress()
+    {
+        nint current = RunningWindows.RawForeground();
+        var activation = mouseActivation;
+        mouseActivation = default;
+        if (!AIEnter.Native.IsPanelWindow(owner, current)) return current;
+        return activation.Started != 0 && Stopwatch.GetElapsedTime(activation.Started).TotalMilliseconds < 250
+            ? activation.Window : foreground;
     }
 
     public void SetAvailableWidth(double width)
@@ -540,7 +554,8 @@ internal sealed partial class PreviewApplicationStrip
         if (group.Windows.Count > 0) ToolTipService.SetToolTip(button, null);
         button.PointerEntered += (_, args) =>
         {
-            if (args.Pointer.PointerDeviceType != PointerDeviceType.Mouse || openFlyout is not null || AppDragInteraction) return;
+            if (args.Pointer.PointerDeviceType != PointerDeviceType.Mouse || openFlyout is not null || AppDragInteraction ||
+                ReferenceEquals(thumbnailSuppressedUntilExit, button)) return;
             var current = Shown.FirstOrDefault(item => ReferenceEquals(item.Button, button));
             if (current is null || current.Group.Windows.Count == 0)
             {
@@ -564,9 +579,14 @@ internal sealed partial class PreviewApplicationStrip
         };
         button.PointerExited += (_, _) =>
         {
+            if (ReferenceEquals(thumbnailSuppressedUntilExit, button)) thumbnailSuppressedUntilExit = null;
             if (!ReferenceEquals(hoverAnchor, button)) return;
             hoverAnchor = null;
             ScheduleHover(260);
+        };
+        button.Unloaded += (_, _) =>
+        {
+            if (ReferenceEquals(thumbnailSuppressedUntilExit, button)) thumbnailSuppressedUntilExit = null;
         };
         var icon = ProgramIcon(group.IconExecutable, group.IconAppId);
         var plate = new Border
@@ -582,12 +602,23 @@ internal sealed partial class PreviewApplicationStrip
         feedback.ApplyStyle(feedbackStyle);
         iconHover.Track(plate, group.Pin is null ? runningApps.Panel : null);
         button.Content = feedback.Surface;
+        nint? pressedForeground = null;
+        button.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
+        {
+            var pointer = args.GetCurrentPoint(button);
+            if (pointer.PointerDeviceType == PointerDeviceType.Mouse && pointer.Properties.IsLeftButtonPressed)
+                pressedForeground = ForegroundAtPress();
+        }), handledEventsToo: true);
+        button.KeyDown += (_, _) => pressedForeground = null;
+        button.PointerCaptureLost += (_, _) => button.DispatcherQueue.TryEnqueue(() => pressedForeground = null);
         button.Click += (_, _) =>
         {
+            var captured = pressedForeground;
+            pressedForeground = null;
             if (AppClickSuppressed(button)) return;
             DismissThumbnails();
             if (groups.FirstOrDefault(value => StringComparer.OrdinalIgnoreCase.Equals(value.Key, group.Key)) is { } current)
-                Open(current, button, plate);
+                Open(current, button, plate, captured);
         };
         var view = new AppButton(group, button, feedback, plate, icon);
         EnableAppReordering(button, group.Pin is null ? runningApps : pinnedApps);
@@ -702,45 +733,53 @@ internal sealed partial class PreviewApplicationStrip
         MinimizeWindow(window, origin);
     }
 
-    private void Open(AppGroup group, FrameworkElement anchor, FrameworkElement plate)
+    private void Open(AppGroup group, Button anchor, FrameworkElement plate, nint? pressedForeground = null)
     {
-        // A window can appear between the last strip refresh and a click on its pinned icon.
-        if (UseRectangularWindowAnimation && group.Windows.Count == 0)
-        {
-            group = AppGroups.Build(pins.Items, RunningWindows.List())
-                .FirstOrDefault(current => StringComparer.OrdinalIgnoreCase.Equals(current.Key, group.Key)) ?? group;
-        }
+        // A reversing animation may temporarily hide a window from the live window list.
         if (UseRectangularWindowAnimation && group.Windows.Any(window => windowMotion.RetargetRectangular(window, opening: null)))
-            return;
-        windowAction?.Cancel();
-        if (group.Windows.Count == 0)
         {
-            if (!Launch(group) || !UsePreviewWindowAnimation) return;
-            WindowMotion.Pulse(plate);
-            if (WindowMotionNative.ScreenBounds(owner, plate) is { } origin)
-            {
-                int duration = iconLayout.EffectiveWindowDurationMs;
-                var style = iconLayout.WindowAnimation;
-                _ = RunWindowAction(token => AnimateLaunchAsync(group.Key, origin, style, duration, token));
-            }
+            if (pressedForeground.HasValue) SuppressMousePreview(anchor, plate);
+            return;
         }
-        else if (group.Windows.Count == 1) OpenWindow(group.Windows[0], plate, toggle: true);
-        else ShowThumbnails(anchor, plate, group);
+        // The cached group can still describe a just-opened or just-closed window.
+        var current = FindApp(AppGroups.Build(pins.Items, RunningWindows.List()), group.Key);
+        if (current is null) return;
+        if (current.Windows.Count == 1)
+        {
+            OpenWindow(current.Windows[0], plate, toggle: true, pressedForeground,
+                pressedForeground.HasValue ? anchor : null);
+            return;
+        }
+        windowAction?.Cancel();
+        if (current.Windows.Count == 0) Launch(current);
+        else ShowThumbnails(anchor, plate, current);
     }
 
-    private void OpenWindow(RunningWindow window, FrameworkElement plate, bool toggle)
+    private void SuppressMousePreview(Button anchor, FrameworkElement plate)
     {
-        if (UseRectangularWindowAnimation && windowMotion.RetargetRectangular(window, opening: toggle ? null : true)) return;
+        thumbnailSuppressedUntilExit = anchor;
+        DismissThumbnails();
+        iconHover.SuppressUntilExit(plate);
+    }
+
+    private void OpenWindow(RunningWindow window, FrameworkElement plate, bool toggle,
+        nint? pressedForeground = null, Button? mouseAnchor = null)
+    {
+        if (UseRectangularWindowAnimation && windowMotion.RetargetRectangular(window, opening: toggle ? null : true))
+        {
+            if (mouseAnchor is not null) SuppressMousePreview(mouseAnchor, plate);
+            return;
+        }
         windowAction?.Cancel();
         if (!RunningWindows.IsCurrent(window)) { report("暂时无法切换到该窗口。"); return; }
         bool minimized = RunningWindows.IsMinimized(window);
-        nint current = RunningWindows.Foreground();
-        bool minimize = toggle && !minimized &&
-            (current == window.Handle || foreground == window.Handle && AIEnter.Native.PanelHasFocus(owner));
+        nint current = pressedForeground ?? (AIEnter.Native.PanelHasFocus(owner) ? foreground : RunningWindows.RawForeground());
+        bool minimize = toggle && !minimized && RunningWindows.MatchesForeground(window, current);
         if (!minimize && !minimized) { Activate(window); return; }
         var origin = UsePreviewWindowAnimation ? WindowMotionNative.ScreenBounds(owner, plate) : null;
         if (minimize)
         {
+            if (mouseAnchor is not null) SuppressMousePreview(mouseAnchor, plate);
             MinimizeWindow(window, origin);
             return;
         }
@@ -800,23 +839,6 @@ internal sealed partial class PreviewApplicationStrip
         try { await action(request.Token); }
         catch (OperationCanceledException) when (request.IsCancellationRequested) { }
         finally { if (ReferenceEquals(windowAction, request)) windowAction = null; }
-    }
-
-    private async Task AnimateLaunchAsync(string key, Rect origin, WindowAnimationStyle style, int duration, CancellationToken token)
-    {
-        long started = Stopwatch.GetTimestamp();
-        while (Stopwatch.GetElapsedTime(started).TotalSeconds < 2.5)
-        {
-            await Task.Delay(45, token);
-            var current = RunningWindows.Foreground();
-            if (current == 0 || current == owner) continue;
-            var launched = AppGroups.Build(pins.Items, RunningWindows.List())
-                .FirstOrDefault(group => StringComparer.OrdinalIgnoreCase.Equals(group.Key, key))?
-                .Windows.FirstOrDefault(window => window.Handle == current);
-            if (launched is null) continue;
-            await windowMotion.ExpandLaunchedAsync(launched, origin, style, duration, token);
-            return;
-        }
     }
 
     private MenuFlyout NewMenu()

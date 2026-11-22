@@ -120,11 +120,15 @@ internal static class RunningWindows
             ShowWindowAsync(window.Handle, IsMinimized(window) ? 7 : 8); // SW_SHOWMINNOACTIVE / SW_SHOWNA
     }
 
-    public static nint Foreground()
-    {
-        var handle = AIEnter.Native.GetForegroundWindow();
-        return AIEnter.Native.GetAncestor(handle, 3) is var owner && owner != 0 ? owner : handle;
-    }
+    public static nint Foreground() => RootOwnerOrSelf(RawForeground());
+
+    internal static nint RootOwnerOrSelf(nint handle) =>
+        AIEnter.Native.GetAncestor(handle, 3) is var owner && owner != 0 ? owner : handle;
+
+    internal static nint RawForeground() => AIEnter.Native.GetForegroundWindow();
+
+    internal static bool MatchesForeground(RunningWindow window, nint foreground) =>
+        foreground != 0 && (foreground == window.Handle || AIEnter.Native.GetAncestor(foreground, 3) == window.Handle);
 
     public static bool CanPin(string? executable) => Path.IsPathFullyQualified(executable ?? "") &&
         string.Equals(Path.GetExtension(executable), ".exe", StringComparison.OrdinalIgnoreCase) &&

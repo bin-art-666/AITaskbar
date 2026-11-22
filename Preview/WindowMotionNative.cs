@@ -225,75 +225,6 @@ internal static class WindowMotionNative
         }
     }
 
-    internal sealed class WindowCover : IDisposable
-    {
-        private readonly RunningWindow source;
-        private bool cloaked, clipped;
-        private nint originalRegion;
-
-        internal WindowCover(RunningWindow source)
-        {
-            this.source = source;
-            if (!RunningWindows.IsCurrent(source) || IsHungAppWindow(source.Handle) ||
-                DwmGetWindowAttribute(source.Handle, 14, out int original, sizeof(int)) >= 0 && original != 0) return;
-
-            int enabled = 1;
-            cloaked = Native.DwmSetWindowAttribute(source.Handle, 13, ref enabled, sizeof(int)) >= 0;
-            if (cloaked) return;
-
-            // DWM can reject cloaking another process. Keep its exact window region before
-            // hiding its pixels and give the backup back only if our empty region is still set.
-            nint saved = CreateRectRgn(0, 0, 0, 0);
-            nint empty = CreateRectRgn(0, 0, 0, 0);
-            try
-            {
-                if (saved == 0 || empty == 0) return;
-                int kind = GetWindowRgn(source.Handle, saved);
-                if (kind == 1 || SetWindowRgn(source.Handle, empty, true) == 0) return;
-                empty = 0; // SetWindowRgn owns this handle after success.
-                clipped = true;
-                if (kind != 0)
-                {
-                    originalRegion = saved;
-                    saved = 0;
-                }
-            }
-            finally
-            {
-                if (saved != 0) DeleteObject(saved);
-                if (empty != 0) DeleteObject(empty);
-            }
-        }
-
-        internal bool Applied => cloaked || clipped;
-
-        public void Dispose()
-        {
-            if (!Applied) return;
-            // Restore only the HWND that was covered, even if the window became hidden.
-            bool same = StillOwnsWindow(source);
-            if (same && cloaked)
-            {
-                int enabled = 0;
-                Native.DwmSetWindowAttribute(source.Handle, 13, ref enabled, sizeof(int));
-            }
-            if (same && clipped)
-            {
-                nint current = CreateRectRgn(0, 0, 0, 0);
-                try
-                {
-                    if ((current == 0 || GetWindowRgn(source.Handle, current) == 1) &&
-                        SetWindowRgn(source.Handle, originalRegion, true) != 0)
-                        originalRegion = 0;
-                }
-                finally { if (current != 0) DeleteObject(current); }
-            }
-            if (originalRegion != 0) DeleteObject(originalRegion);
-            originalRegion = 0;
-            cloaked = clipped = false;
-        }
-    }
-
     private static bool StillOwnsWindow(RunningWindow window) =>
         GetWindowThreadProcessId(window.Handle, out uint process) != 0 && process == window.ProcessId;
 
@@ -371,12 +302,9 @@ internal static class WindowMotionNative
     [DllImport("user32.dll")] private static extern bool GetWindowDisplayAffinity(nint hwnd, out uint affinity);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
     [DllImport("user32.dll")] private static extern bool PrintWindow(nint hwnd, nint dc, uint flags);
-    [DllImport("user32.dll")] private static extern int GetWindowRgn(nint hwnd, nint region);
-    [DllImport("user32.dll")] private static extern int SetWindowRgn(nint hwnd, nint region, bool redraw);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint hwnd, uint attribute, out Native.Rect value, int size);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint hwnd, uint attribute, out int value, int size);
     [DllImport("dwmapi.dll")] internal static extern int DwmFlush();
-    [DllImport("gdi32.dll")] private static extern nint CreateRectRgn(int left, int top, int right, int bottom);
     [DllImport("gdi32.dll", SetLastError = true)] private static extern nint CreateCompatibleDC(nint dc);
     [DllImport("gdi32.dll")] private static extern bool DeleteDC(nint dc);
     [DllImport("gdi32.dll", SetLastError = true)]

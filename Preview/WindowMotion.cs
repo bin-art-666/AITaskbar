@@ -1,7 +1,5 @@
 using System.Diagnostics;
-using System.Numerics;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Hosting;
 using Windows.Foundation;
 
 namespace AITaskbar;
@@ -214,44 +212,6 @@ internal sealed class WindowMotion(FrameworkElement owner, nint taskbarHandle)
             Debug.WriteLine(error);
             return RunningWindows.Activate(window);
         }
-    }
-
-    internal async Task ExpandLaunchedAsync(RunningWindow window, Rect icon, WindowAnimationStyle style, int duration,
-        CancellationToken token)
-    {
-        if (RunningWindows.IsMinimized(window)) return;
-        var image = await CaptureAsync(window, token);
-        if (image is null && RunningWindows.Foreground() == window.Handle)
-        {
-            await Task.Delay(32, token);
-            image = await CaptureAsync(window, token);
-        }
-        if (image is null || RunningWindows.Foreground() != window.Handle) return;
-        try
-        {
-            using var overlay = new WindowMotionOverlay(owner, image, image.Bounds, icon, style);
-            overlay.DrawTransition(0, opening: true);
-            using var cloak = new WindowMotionNative.WindowCover(window);
-            if (!cloak.Applied) return;
-            using var cancellation = token.Register(cloak.Dispose);
-            await AnimateAsync(overlay, opening: true, duration, token);
-            cloak.Dispose();
-            await HandOffAsync(overlay, window, token);
-        }
-        catch (Exception error) when (Recoverable(error)) { Debug.WriteLine(error); }
-    }
-
-    internal static void Pulse(FrameworkElement plate)
-    {
-        if (!plate.IsLoaded) return;
-        var visual = ElementCompositionPreview.GetElementVisual(plate);
-        visual.CenterPoint = new Vector3((float)(plate.ActualWidth / 2), (float)(plate.ActualHeight / 2), 0);
-        using var animation = visual.Compositor.CreateVector3KeyFrameAnimation();
-        animation.Duration = TimeSpan.FromMilliseconds(180);
-        animation.InsertKeyFrame(0, Vector3.One);
-        animation.InsertKeyFrame(.35f, new Vector3(.92f, .92f, 1));
-        animation.InsertKeyFrame(1, Vector3.One);
-        visual.StartAnimation("Scale", animation);
     }
 
     private async Task<WindowMotionNative.Snapshot?> CaptureAsync(RunningWindow window, CancellationToken token)
