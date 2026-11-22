@@ -50,11 +50,11 @@ internal sealed partial class WindowThumbnailPopup : Window
     {
         ClearThumbnails();
         if (button.XamlRoot is not { } root) { Dismiss(); return; }
-        var point = button.TransformToVisual(root.Content).TransformPoint(new());
+        var bounds = button.TransformToVisual(root.Content).TransformBounds(new Rect(0, 0, button.ActualWidth, button.ActualHeight));
         scale = root.RasterizationScale;
-        var origin = new Native.Point { X = Pixel(point.X), Y = Pixel(point.Y) };
+        var origin = new Native.Point { X = Pixel(bounds.X), Y = Pixel(bounds.Y) };
         if (!ClientToScreen(owner, ref origin)) { Dismiss(); return; }
-        anchor = new(origin.X, origin.Y, Pixel(button.ActualWidth), Pixel(button.ActualHeight));
+        anchor = new(origin.X, origin.Y, Pixel(bounds.Width), Pixel(bounds.Height));
         workArea = DisplayArea.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(owner),
             DisplayAreaFallback.Nearest).WorkArea;
         foreach (var source in sources.Where(RunningWindows.IsCurrent)) windows.Add(Register(source));

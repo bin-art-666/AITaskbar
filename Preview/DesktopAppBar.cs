@@ -20,14 +20,14 @@ internal sealed class DesktopAppBar : IDisposable
     internal bool CoversWindows { get; private set; }
     private bool registered, disposed, queued, shellRestarted, fullscreen;
 
-    public DesktopAppBar(nint handle, DispatcherQueue dispatcher, int iconSize, bool coversWindows,
+    public DesktopAppBar(nint handle, DispatcherQueue dispatcher, int height, bool coversWindows,
         Action beforeMouseActivation, Action<Exception> reportFailure)
     {
         this.handle = handle;
         this.dispatcher = dispatcher;
         this.reportFailure = reportFailure;
         this.beforeMouseActivation = beforeMouseActivation;
-        heightDip = HeightFor(iconSize);
+        heightDip = height;
         CoversWindows = coversWindows;
         callback = WndProc;
         if (notification == 0 || taskbarCreated == 0 || !SetWindowSubclass(handle, callback, 1, 0))
@@ -88,15 +88,12 @@ internal sealed class DesktopAppBar : IDisposable
         Reposition();
     }
 
-    internal void SetIconSize(int size)
+    internal void SetHeight(int height)
     {
-        int height = HeightFor(size);
         if (heightDip == height) return;
         heightDip = height;
         Reposition();
     }
-
-    private static int HeightFor(int iconSize) => Math.Max(50, iconSize + TaskbarAppFeedback.ExtraHeight + 1);
 
     private void QueuePosition(bool newShell = false)
     {

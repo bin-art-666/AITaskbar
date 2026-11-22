@@ -15,7 +15,11 @@ internal sealed record PreviewIconLayout
     internal const int MinThumbnailAnimationMs = 150, MaxThumbnailAnimationMs = 600, DefaultThumbnailAnimationMs = 220;
     internal const int MinWindowDurationMs = 200, MaxWindowDurationMs = 1000, DefaultWindowDurationMs = 240;
     private const int WindowsStyleDurationMs = 200; // Match the visible resize in the native animation comparison.
-    internal static PreviewIconLayout Default { get; } = new();
+    internal static PreviewIconLayout Default { get; } = new()
+    {
+        MenuColorMode = AppMenuColorMode.Light,
+        WindowAnimation = WindowAnimationStyle.WindowsStyle
+    };
 
     public int Gap { get; init; } = DefaultGap;
     public int ThumbnailWidth { get; init; } = DefaultThumbnailWidth;

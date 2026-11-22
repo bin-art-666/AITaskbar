@@ -17,6 +17,11 @@ internal sealed partial class TaskbarSettingsWindow : Window
 {
     private readonly App app;
     private readonly Button previewToggle = new();
+    private readonly Slider heightSlider = new() { Minimum = PreviewHeight.Minimum, Maximum = PreviewHeight.Maximum,
+        StepFrequency = 1, Width = 132 };
+    private readonly TextBlock heightValue = new() { MinWidth = 46, VerticalAlignment = VerticalAlignment.Center };
+    private Button resetHeight = null!;
+    private bool syncingHeight;
     private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly UISettings colors = new();
     private readonly AccessibilitySettings accessibility = new();
@@ -248,11 +253,29 @@ internal sealed partial class TaskbarSettingsWindow : Window
 
     private void BuildPreview(StackPanel page)
     {
+        resetHeight = ActionButton("默认", () => app.SetTaskbarHeight(null), "恢复默认任务栏高度");
+        AutomationProperties.SetName(heightSlider, "任务栏高度");
+        heightSlider.ValueChanged += (_, args) =>
+        {
+            if (!syncingHeight) app.SetTaskbarHeight((int)Math.Round(args.NewValue));
+        };
+        page.Children.Add(SettingRow("任务栏高度", "拖动即时生效。栏较矮时，图标会随之缩小。",
+            Actions(heightSlider, heightValue, resetHeight)));
+        UpdateHeightControl();
         BuildGlassSettings(page);
         previewToggle.Click += (_, _) => app.TogglePreview();
-        page.Children.Add(SettingRow("双栏对比", "让 AITaskbar 预览栏与 Windows 原生任务栏同时显示。", previewToggle));
+        page.Children.Add(SettingRow("AITaskbar 任务栏", "在栏上右键可显示 Windows 原生任务栏，开启双栏对照。", previewToggle));
 
         BuildLumaPreferences(page);
+    }
+
+    internal void UpdateHeightControl()
+    {
+        syncingHeight = true;
+        heightSlider.Value = app.TaskbarHeight;
+        heightValue.Text = $"{app.TaskbarHeight} DIP";
+        resetHeight.IsEnabled = app.TaskbarHeight != PreviewHeight.Default;
+        syncingHeight = false;
     }
 
     private void AddNavigation(SettingsSection section, string title, IconElement icon)

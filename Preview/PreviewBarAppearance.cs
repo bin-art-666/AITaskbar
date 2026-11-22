@@ -36,7 +36,7 @@ internal sealed class PreviewBarAppearance : IDisposable
     private bool disposed;
     public bool? IsLight => lastLight;
 
-    public PreviewBarAppearance(Window window, Border surface, Grid content, AppearanceHost host, Action<bool> updateIconTone)
+    public PreviewBarAppearance(Window window, Border surface, FrameworkElement content, AppearanceHost host, Action<bool> updateIconTone)
     {
         this.window = window;
         dispatcher = window.DispatcherQueue;

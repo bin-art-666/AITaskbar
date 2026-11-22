@@ -108,7 +108,7 @@ internal sealed class AppearanceHost
                 LumaBar.Files.Root = dataDirectory;
                 var state = new PreviewThemeState();
                 var controller = new LumaBar.ThemeController(state, state);
-                var settings = LumaBar.Files.ReadSettings();
+                var settings = LumaBar.Files.ReadSettings(DefaultSettings);
                 using var app = new LumaBar.TrayApp(settings, controller, monitorOnly: false, startHidden: hidden,
                     publishBarAppearance: UpdateBarAppearance, previewOnly: true);
                 lock (gate) context = app;
@@ -142,6 +142,23 @@ internal sealed class AppearanceHost
             lock (gate)
                 if (stopRequested) RequestAppearanceStop();
         }
+    }
+
+    private static LumaBar.Settings DefaultSettings()
+    {
+        var settings = new LumaBar.Settings
+        {
+            MouseGlowRadius = 27,
+            MouseGlowStrength = 64,
+            Glass = new()
+            {
+                AutoContrast = false,
+                Desktop = new() { TintOpacity = 7, BlurRadius = 11, ShowLine = true },
+                Window = new() { TintOpacity = 0, BlurRadius = 1, ShowLine = true }
+            }
+        };
+        settings.SetPace("灵敏");
+        return settings;
     }
 
     private sealed class PreviewThemeState : LumaBar.IThemeStore, LumaBar.ISessionJournal

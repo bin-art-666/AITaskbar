@@ -22,23 +22,28 @@ internal sealed class SystemTaskbarVisibility : IDisposable
 
     internal bool CanToggle => !toggling && !disposed && Primary() != 0;
 
-    internal async Task ToggleAsync()
+    internal void KeepHidden()
     {
-        if (!CanToggle) return;
+        if (hidden is not { } snapshot) return;
+        // Explorer can re-show its auto-hide strip after applying the shell state change.
+        foreach (var window in snapshot.Windows)
+            if (IsWindowVisible(window)) ShowWindowAsync(window, HideWindow);
+    }
+
+    internal async Task<bool> SetVisibleAsync(bool visible)
+    {
+        if (!CanToggle) return false;
+        if (Visible == visible) return true;
         toggling = true;
         try
         {
-            if (hidden is not null)
-            {
-                RestoreOwned();
-                return;
-            }
             var primary = Primary();
-            if (primary == 0) return;
-            if (!IsWindowVisible(primary))
+            if (primary == 0) return false;
+            if (visible)
             {
-                ShowWindowAsync(primary, ShowWithoutActivating);
-                return;
+                if (hidden is not null) RestoreOwned();
+                else ShowWindowAsync(primary, ShowWithoutActivating);
+                return true;
             }
             var snapshot = new Snapshot(State(primary), VisibleWindows().ToArray());
             string token = Guid.NewGuid().ToString("N");
@@ -53,11 +58,12 @@ internal sealed class SystemTaskbarVisibility : IDisposable
                 using var guard = Process.Start(start) ?? throw new InvalidOperationException("无法启动系统任务栏恢复进程。");
                 if (!await Task.Run(() => ready.WaitOne(TimeSpan.FromSeconds(5))) || guard.HasExited)
                     throw new InvalidOperationException("系统任务栏恢复进程未就绪。");
-                if (disposed) return;
+                if (disposed) return false;
                 if (Primary() != primary) throw new InvalidOperationException("系统任务栏已重新启动，请重试。");
                 hidden = snapshot;
                 if ((snapshot.State & AutoHide) == 0) UpdateState(primary, snapshot.State | AutoHide);
                 foreach (var window in snapshot.Windows) ShowWindowAsync(window, HideWindow);
+                return true;
             }
             finally
             {

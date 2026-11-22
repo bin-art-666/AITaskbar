@@ -11,11 +11,11 @@ internal static class WindowMotionNative
     internal static Rect? ScreenBounds(nint owner, FrameworkElement icon)
     {
         if (icon.XamlRoot is not { } root || !icon.IsLoaded || icon.ActualWidth <= 0) return null;
-        var point = icon.TransformToVisual(root.Content).TransformPoint(new());
+        var bounds = icon.TransformToVisual(root.Content).TransformBounds(new Rect(0, 0, icon.ActualWidth, icon.ActualHeight));
         double scale = root.RasterizationScale;
-        var origin = new Native.Point { X = (int)Math.Round(point.X * scale), Y = (int)Math.Round(point.Y * scale) };
+        var origin = new Native.Point { X = (int)Math.Round(bounds.X * scale), Y = (int)Math.Round(bounds.Y * scale) };
         return ClientToScreen(owner, ref origin)
-            ? new Rect(origin.X, origin.Y, icon.ActualWidth * scale, icon.ActualHeight * scale) : null;
+            ? new Rect(origin.X, origin.Y, bounds.Width * scale, bounds.Height * scale) : null;
     }
 
     internal static Rect? WindowBounds(RunningWindow window)

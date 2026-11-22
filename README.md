@@ -28,9 +28,11 @@
 
 ## 任务栏预览
 
-开发期间，本机登录后自动打开双栏对比。预览栏通过 Windows AppBar 停靠在主屏原生任务栏上方。右键点击空白处可固定应用、打开设置、隐藏或显示系统任务栏、切换「覆盖窗口」，以及退出 AITaskbar。启用覆盖后，预览栏保持在原位并释放预留的工作区，最大化窗口可延伸到预览栏下方。覆盖选项会自动保存。隐藏系统栏后，AITaskbar 移到屏幕底边。退出 AITaskbar 时，系统栏恢复到之前的状态。设置窗口中的双栏开关可单独关闭或开启预览栏。
+本机登录后自动打开 AITaskbar，默认隐藏 Windows 原生任务栏。右键点击空白处可固定应用、打开设置、显示或隐藏系统任务栏、切换「覆盖窗口」，以及退出 AITaskbar。显示或隐藏的选择会自动保存。双栏对照时，AITaskbar 停靠在原生任务栏上方。启用覆盖后，AITaskbar 保持在原位并释放预留的工作区，最大化窗口可延伸到栏后。退出 AITaskbar 时，系统栏恢复到之前的状态。
 
-构建后可运行 `wscript.exe .\tools\StartBackground.vbs` 重现登录时的双栏启动。若已关闭预览栏，只需重新运行该命令即可在现有进程中开启对比。
+构建后可运行 `wscript.exe .\tools\StartBackground.vbs` 重现登录启动。运行 `.\dist\AITaskbar.exe --compare` 可临时开启双栏对照。
+
+「任务栏外观设置 → 任务栏高度」可在 10–60 DIP 间实时调整预览栏的高度与停靠空间。栏较矮时图标会按比例缩小。手动数值会自动保存，点「默认」可恢复到 50 DIP。
 
 中间的应用区按应用显示图标。固定项在前，正在运行的非固定应用在后。运行应用放不下时，鼠标停在运行区滚动，每格切换一个图标，固定区保持原位。键盘聚焦某个图标后，可用左右方向键浏览所在区，包括空间不足时暂未显示的固定项。小点表示正在运行，短线表示当前前台应用。有一个窗口时单击切换或还原，有多个窗口时从图标上方的标题列表选择。右键可固定支持的桌面应用，以及画图、Windows 设置、ChatGPT 和 Windows 终端。也可通过「固定应用」选择桌面应用的 `.exe`。固定列表保存在 `%LOCALAPPDATA%\AITaskbar\preview-pins.json`。Halo 和 AIEnter 按钮可打开各自的面板，也可接收拖入内容，AIEnter 的内容进入附件或草稿流程。
 
@@ -54,7 +56,7 @@ Chrome 和 Edge 各有「最近文件」和「最近关闭」，四项默认开�
 
 ## 登录启动
 
-当前用户登录后，计划任务「AITaskbar」延迟 20 秒运行 `tools\StartBackground.vbs`，只启动 AITaskbar 并打开双栏对比。启动脚本将执行结果记到 `%LOCALAPPDATA%\AITaskbar\startup.log`。开始菜单中的 AITaskbar 快捷方式可打开设置窗口。
+当前用户登录后，计划任务「AITaskbar」延迟 20 秒运行 `tools\StartBackground.vbs`，启动 AITaskbar 并按保存的设置显示或隐藏系统任务栏。启动脚本将执行结果记到 `%LOCALAPPDATA%\AITaskbar\startup.log`。开始菜单中的 AITaskbar 快捷方式可打开设置窗口。
 
 旧版曾通过便携 Windhawk 把 Halo 和 AIEnter 接入 Explorer。升级已有部署时，可对旧运行时执行 `tools\RegisterTaskbar.ps1 -RuntimeRoot .tools\windhawk -Disable`，重启后移除已加载的扩展。
 

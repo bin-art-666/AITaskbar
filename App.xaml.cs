@@ -11,16 +11,18 @@ public partial class App : Application
     internal Halo.App HaloModule { get; } = new();
     private readonly AppearanceHost appearance = new();
     private Mutex? instance;
-    private EventWaitHandle? open, quit, compare;
-    private RegisteredWaitHandle? openWait, quitWait, compareWait;
+    private EventWaitHandle? open, quit, compare, startup;
+    private RegisteredWaitHandle? openWait, quitWait, compareWait, startupWait;
     private TaskbarSettingsWindow? settingsWindow;
     private PreviewTaskbar? preview;
-    private bool shuttingDown, comparisonStarting;
+    private bool shuttingDown, taskbarStarting, comparisonRequested;
     private bool useDefaultRoot;
     private string root = "";
     private int iconSize;
+    private int? previewHeight;
     internal bool TaskbarCoversWindows { get; private set; }
     private string TaskbarCoverFile => Path.Combine(root, "preview-cover-windows");
+    private string ShowSystemTaskbarFile => Path.Combine(root, "show-system-taskbar");
     internal TaskbarAppFeedbackStyle AppFeedback { get; private set; } = TaskbarAppFeedbackStyle.Default;
     internal PreviewIconLayout IconLayout { get; private set; } = PreviewIconLayout.Default;
     internal PreviewIconPreferences IconPreferences { get; private set; } = null!;
@@ -47,6 +49,7 @@ public partial class App : Application
             ? arguments[customRoot + 1]
             : defaultRoot));
         iconSize = PreviewIconSize.Read(root);
+        previewHeight = PreviewHeight.Read(root);
         TaskbarCoversWindows = File.Exists(TaskbarCoverFile);
         AppFeedback = TaskbarAppFeedbackStyle.Read(root);
         IconLayout = PreviewIconLayout.Read(root);
@@ -70,6 +73,7 @@ public partial class App : Application
         open = new(false, EventResetMode.AutoReset, prefix + ".Open");
         quit = new(false, EventResetMode.AutoReset, prefix + ".Quit");
         compare = new(false, EventResetMode.AutoReset, prefix + ".Compare");
+        startup = new(false, EventResetMode.AutoReset, prefix + ".Startup");
 
         if (!first)
         {
@@ -77,7 +81,8 @@ public partial class App : Application
             else if (arguments.Contains("--ai")) Environment.ExitCode = AIEnter.App.Relay(arguments, aiDirectory) ? 0 : 1;
             else if (arguments.Contains("--halo")) Environment.ExitCode = Halo.App.Relay(arguments, haloDirectory) ? 0 : 1;
             else if (arguments.Contains("--compare")) compare.Set();
-            else if (!arguments.Contains("--startup")) open.Set();
+            else if (arguments.Contains("--startup")) startup.Set();
+            else open.Set();
             Exit();
             return;
         }
@@ -91,7 +96,8 @@ public partial class App : Application
         var dispatcher = DispatcherQueue.GetForCurrentThread();
         openWait = ThreadPool.RegisterWaitForSingleObject(open, (_, _) => dispatcher.TryEnqueue(ShowSettings), null, Timeout.Infinite, false);
         quitWait = ThreadPool.RegisterWaitForSingleObject(quit, (_, _) => dispatcher.TryEnqueue(RequestExit), null, Timeout.Infinite, false);
-        compareWait = ThreadPool.RegisterWaitForSingleObject(compare, (_, _) => dispatcher.TryEnqueue(StartComparison), null, Timeout.Infinite, false);
+        compareWait = ThreadPool.RegisterWaitForSingleObject(compare, (_, _) => dispatcher.TryEnqueue(() => StartTaskbar(comparison: true)), null, Timeout.Infinite, false);
+        startupWait = ThreadPool.RegisterWaitForSingleObject(startup, (_, _) => dispatcher.TryEnqueue(() => StartTaskbar()), null, Timeout.Infinite, false);
 
         if (arguments.Contains("--verify-station"))
         {
@@ -116,8 +122,8 @@ public partial class App : Application
         EnsureBrowserRecentHosts();
         AiModule.Start(ai ? arguments : ["--background"], aiDirectory);
         HaloModule.Start(halo ? arguments : ["--background"], haloDirectory);
-        if (arguments.Contains("--compare")) StartComparison();
-        else if (arguments.Contains("--startup")) ShowAppearance(hidden: true);
+        if (arguments.Contains("--compare")) StartTaskbar(comparison: true);
+        else if (arguments.Contains("--startup")) StartTaskbar();
         else if (!ai && !halo && !arguments.Contains("--background")) ShowSettings();
     }
 
@@ -224,6 +230,7 @@ public partial class App : Application
     }
 
     internal int IconSize => iconSize;
+    internal int TaskbarHeight => previewHeight ?? PreviewHeight.Default;
 
     internal void SaveTaskbarCoverWindows(bool enabled)
     {
@@ -234,6 +241,17 @@ public partial class App : Application
         }
         else File.Delete(TaskbarCoverFile);
         TaskbarCoversWindows = enabled;
+    }
+
+    internal void SaveSystemTaskbarVisibility(bool visible)
+    {
+        if (!visible)
+        {
+            File.Delete(ShowSystemTaskbarFile);
+            return;
+        }
+        Directory.CreateDirectory(root);
+        using var marker = File.Create(ShowSystemTaskbarFile);
     }
     internal bool PreviewVisible => preview is not null;
     internal IReadOnlyList<PinnedApp> PreviewPins => preview?.PinnedItems ?? new PinnedApps(Path.Combine(root, "preview-pins.json")).Items;
@@ -265,6 +283,24 @@ public partial class App : Application
         preview?.SetIconSize(size);
         settingsWindow?.SetStatus("");
         return true;
+    }
+
+    internal void SetTaskbarHeight(int? height)
+    {
+        if (height is not null) height = PreviewHeight.Clamp(height.Value);
+        if (height == previewHeight) return;
+        try { PreviewHeight.Save(root, height); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Log(error);
+            settingsWindow?.SetStatus("无法保存任务栏高度。");
+            settingsWindow?.UpdateHeightControl();
+            return;
+        }
+        previewHeight = height;
+        preview?.SetHeight(TaskbarHeight);
+        settingsWindow?.UpdateHeightControl();
+        settingsWindow?.SetStatus("");
     }
 
     internal bool TrySetAppFeedback(TaskbarAppFeedbackStyle style)
@@ -338,38 +374,45 @@ public partial class App : Application
         return true;
     }
 
-    internal void TogglePreview()
+    internal async void TogglePreview()
     {
         if (shuttingDown) return;
         if (preview is not null) { preview.Close(); return; }
-        OpenPreview();
+        await OpenPreviewAsync();
     }
 
-    private async void StartComparison()
+    private async void StartTaskbar(bool comparison = false)
     {
-        if (shuttingDown || comparisonStarting) return;
-        comparisonStarting = true;
+        if (shuttingDown) return;
+        comparisonRequested |= comparison;
+        if (taskbarStarting) return;
+        taskbarStarting = true;
         try
         {
             ShowAppearance(hidden: true);
-            if (preview is not null) return;
             // At sign-in, Explorer may still be creating the native taskbar.
             for (var attempt = 0; attempt < 40 && !shuttingDown && preview is null; attempt++)
             {
                 if (LumaBar.Native.FindWindow("Shell_TrayWnd", null) != IntPtr.Zero)
                 {
-                    OpenPreview(activate: false);
-                    return;
+                    await OpenPreviewAsync(activate: false, comparison: comparisonRequested);
+                    break;
                 }
                 await Task.Delay(250);
             }
             if (!shuttingDown && preview is null)
                 ReportPreviewFailure(new InvalidOperationException("Windows 原生任务栏尚未就绪，可从控制台重新开启预览。"));
+            if (comparisonRequested && preview is { } bar)
+                await bar.SetSystemTaskbarVisibilityAsync(visible: true);
         }
-        finally { comparisonStarting = false; }
+        finally
+        {
+            comparisonRequested = false;
+            taskbarStarting = false;
+        }
     }
 
-    private void OpenPreview(bool activate = true)
+    private async Task OpenPreviewAsync(bool activate = true, bool comparison = false)
     {
         try
         {
@@ -383,6 +426,7 @@ public partial class App : Application
             };
             bar.ShowDocked(activate);
             settingsWindow?.UpdatePreviewState(true);
+            await bar.SetSystemTaskbarVisibilityAsync(comparison || File.Exists(ShowSystemTaskbarFile));
         }
         catch (Exception error)
         {
@@ -434,9 +478,11 @@ public partial class App : Application
         openWait?.Unregister(null);
         quitWait?.Unregister(null);
         compareWait?.Unregister(null);
+        startupWait?.Unregister(null);
         open?.Dispose();
         quit?.Dispose();
         compare?.Dispose();
+        startup?.Dispose();
         instance?.Dispose();
         Exit();
     }

@@ -10,7 +10,7 @@ logPath = files.BuildPath(data, "startup.log")
 
 WriteLog "Launcher started"
 shell.CurrentDirectory = root
-appStarted = StartProgram("AITaskbar", app, "--startup --compare")
+appStarted = StartProgram("AITaskbar", app, "--startup")
 If Not appStarted Then WScript.Quit 1
 WScript.Quit 0
 

@@ -16,6 +16,10 @@ internal sealed class PreviewTaskbar : Window
     private readonly PinnedApps pins;
     private readonly DispatcherQueueTimer refresh;
     private readonly PreviewApplicationStrip tasks;
+    private readonly Border surface = new() { CornerRadius = new CornerRadius(0) };
+    private readonly Grid strip = new() { Padding = new Thickness(10, 0, 10, 0) };
+    private readonly ScaleTransform stripScale = new();
+    private int naturalStripHeight;
     private readonly SystemTaskbarVisibility systemTaskbar = new();
     private readonly TextBlock feedback = new() { MaxWidth = 200, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
     private bool closed, menuOpen;
@@ -26,6 +30,7 @@ internal sealed class PreviewTaskbar : Window
         Action<Exception> reportFailure)
     {
         Title = "AITaskbar 预览栏";
+        naturalStripHeight = HeightForIcons(iconSize);
         pins = new(Path.Combine(root, "preview-pins.json"));
         AppWindow.IsShownInSwitchers = false;
         var presenter = (Microsoft.UI.Windowing.OverlappedPresenter)AppWindow.Presenter;
@@ -62,7 +67,6 @@ internal sealed class PreviewTaskbar : Window
         right.Children.Add(feedback);
         right.Children.Add(icons.AiEntrance);
 
-        var strip = new Grid { Padding = new Thickness(10, 0, 10, 0) };
         strip.Children.Add(tasks.HoverSurface);
         strip.Children.Add(tasks.Surface);
         strip.Children.Add(tasks.AppDragSurface);
@@ -73,19 +77,18 @@ internal sealed class PreviewTaskbar : Window
         strip.SizeChanged += FitApps;
         left.SizeChanged += FitApps;
         right.SizeChanged += FitApps;
-        var surface = new Border { CornerRadius = new CornerRadius(0) };
+        strip.RenderTransform = stripScale;
+        var stripHost = new Canvas();
+        stripHost.Children.Add(strip);
+        surface.SizeChanged += (_, _) => UpdateStripLayout();
         var taskbarMenu = NewBarMenu();
         AddMenuAction(taskbarMenu, "固定应用", () => _ = PickPinAsync());
         AddMenuAction(taskbarMenu, "AITaskbar 设置", app.ShowSettings);
         var visibility = new MenuFlyoutItem();
         visibility.Click += async (_, _) =>
         {
-            try
-            {
-                await systemTaskbar.ToggleAsync();
-                if (!closed) bar.Reposition();
-            }
-            catch (Exception error) { Report(error.Message); }
+            if (systemTaskbar.Visible is bool visible)
+                await SetSystemTaskbarVisibilityAsync(!visible, app.SaveSystemTaskbarVisibility);
         };
         var coverWindows = new ToggleMenuFlyoutItem { Text = "覆盖窗口" };
         coverWindows.Click += (_, _) =>
@@ -123,7 +126,7 @@ internal sealed class PreviewTaskbar : Window
             args.Handled = true;
             taskbarMenu.ShowAt(surface, point);
         };
-        var visual = new PreviewBarAppearance(this, surface, strip, appearance, light =>
+        var visual = new PreviewBarAppearance(this, surface, stripHost, appearance, light =>
         {
             icons.RefreshSystem(light);
             tasks.SetFeedbackLight(light);
@@ -133,6 +136,7 @@ internal sealed class PreviewTaskbar : Window
         refresh.Interval = TimeSpan.FromMilliseconds(1100);
         refresh.Tick += (_, _) =>
         {
+            systemTaskbar.KeepHidden();
             visual.Refresh();
             icons.RefreshSystem(visual.IsLight);
             if (!menuOpen) tasks.Refresh();
@@ -151,7 +155,7 @@ internal sealed class PreviewTaskbar : Window
         {
             Content = surface;
             visual.Refresh();
-            bar = new(handle, DispatcherQueue, iconSize, app.TaskbarCoversWindows,
+            bar = new(handle, DispatcherQueue, app.TaskbarHeight, app.TaskbarCoversWindows,
                 tasks.RememberForeground, error => { Close(); reportFailure(error); });
             tasks.Refresh();
             refresh.Start();
@@ -176,7 +180,36 @@ internal sealed class PreviewTaskbar : Window
     internal void SetIconSize(int size)
     {
         tasks.SetIconSize(size);
-        bar.SetIconSize(size);
+        naturalStripHeight = HeightForIcons(size);
+        UpdateStripLayout();
+    }
+
+    internal void SetHeight(int height) => bar.SetHeight(height);
+
+    internal async Task SetSystemTaskbarVisibilityAsync(bool visible, Action<bool>? save = null)
+    {
+        try
+        {
+            if (!await systemTaskbar.SetVisibleAsync(visible) || closed) return;
+            bar.Reposition();
+            save?.Invoke(visible);
+        }
+        catch (Exception error)
+        {
+            if (!closed) Report(error.Message);
+        }
+    }
+
+    private static int HeightForIcons(int iconSize) => Math.Max(48, iconSize + TaskbarAppFeedback.ExtraHeight + 1);
+
+    private void UpdateStripLayout()
+    {
+        double width = surface.ActualWidth, height = surface.ActualHeight;
+        if (width <= 0 || height <= 0) return;
+        double scale = Math.Min(1, height / naturalStripHeight);
+        strip.Width = width / scale;
+        strip.Height = Math.Max(height, naturalStripHeight);
+        stripScale.ScaleX = stripScale.ScaleY = scale;
     }
     internal void RefreshIconStyle(string executable) => tasks.RefreshIconStyle(executable);
     internal void SetAppCenterIcon(AppCenterIconStyle style) => tasks.SetAppCenterIcon(style);

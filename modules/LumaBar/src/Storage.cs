@@ -47,10 +47,10 @@ namespace LumaBar
             if (File.Exists(path)) File.Replace(temp, path, null);
             else File.Move(temp, path);
         }
-        internal static Settings ReadSettings()
+        internal static Settings ReadSettings(Func<Settings>? defaults = null)
         {
             string path = Path.Combine(Root, "settings.json");
-            Settings settings = File.Exists(path) ? Json.Deserialize<Settings>(File.ReadAllText(path)) : new Settings();
+            Settings settings = File.Exists(path) ? Json.Deserialize<Settings>(File.ReadAllText(path)) : defaults?.Invoke() ?? new Settings();
             if (settings == null) throw new InvalidDataException("settings.json 不能为空。");
             settings.Validate();
             return settings;
