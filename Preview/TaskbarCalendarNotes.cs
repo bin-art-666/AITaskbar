@@ -17,10 +17,11 @@ internal static class TaskbarCalendarNotes
     internal static Note ForDate(DateTime date)
     {
         date = date.Date;
+        string? solarTerm = TaskbarSolarTerms.ForDate(date);
         string? solarFestival = (date.Month, date.Day) switch
         {
             (1, 1) => "元旦",
-            (4, _) when date.Day == QingmingDay(date.Year) => "清明节",
+            (4, _) when solarTerm == "清明" => "清明节",
             (5, 1) => "劳动节",
             (10, 1) => "国庆节",
             _ => null,
@@ -51,24 +52,12 @@ internal static class TaskbarCalendarNotes
         string? mark = schedule switch { Schedule.Rest => "休", Schedule.Work => "班", _ => null };
         string? festivalLabel = mark is not null && festival is { Length: > 2 } && festival.EndsWith('节')
             ? festival[..^1] : festival;
-        string label = string.Join(" ", new[] { festivalLabel ?? lunarLabel, mark }.OfType<string>());
+        string label = string.Join(" ", new[] { festivalLabel ?? solarTerm ?? lunarLabel, mark }.OfType<string>());
         string details = string.Join(" · ", new[] { lunarDetails, solarFestival, lunarFestival,
+            solarTerm is null ? null : $"节气 {solarTerm}",
             schedule switch { Schedule.Rest => "放假", Schedule.Work => "调休上班", _ => null } }.OfType<string>());
         return new(label, details, festival is not null || mark is not null);
     }
-
-    // China Standard Time dates, Central Weather Administration's published Qingming tables.
-    private static int QingmingDay(int year) => year switch
-    {
-        >= 1912 and <= 1943 => year % 4 == 3 ? 6 : 5,
-        >= 1944 and <= 1975 => 5,
-        >= 1976 and <= 2007 => year % 4 == 0 ? 4 : 5,
-        >= 2008 and <= 2039 => year % 4 < 2 ? 4 : 5,
-        >= 2040 and <= 2071 => year % 4 == 3 ? 5 : 4,
-        >= 2072 and <= 2099 => 4,
-        2100 => 5,
-        _ => 0,
-    };
 
     // Annual schedules are published separately from festival dates.
     // 2026: 国办发明电〔2025〕7号. 2027: 国办发明电〔2026〕10号.
