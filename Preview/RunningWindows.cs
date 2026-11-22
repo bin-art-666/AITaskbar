@@ -95,10 +95,6 @@ internal static class RunningWindows
         return window.Executable is null ? "无法确认应用进程。" : null;
     }
 
-    internal static bool ConfirmEndTask(nint owner, string name) =>
-        MessageBox(owner, $"将强制结束「{name}」的应用进程。未保存的内容可能丢失。", "结束任务",
-            0x00000004 | 0x00000030 | 0x00000100) == 6; // Yes/No, warning, default No
-
     internal static bool EndTask(RunningWindow window)
     {
         if (EndTaskUnavailable(window) is not null) return false;
@@ -188,7 +184,6 @@ internal static class RunningWindows
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint id);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint hwnd, uint attribute, out int result, int size);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool PostMessage(nint hwnd, uint message, nint wParam, nint lParam);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int MessageBox(nint hwnd, string text, string caption, uint type);
     [DllImport("kernel32.dll")] private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, uint processId);
     [DllImport("kernel32.dll")] private static extern bool IsProcessCritical(SafeProcessHandle process, out bool critical);
     [DllImport("kernel32.dll")] private static extern bool TerminateProcess(SafeProcessHandle process, uint exitCode);

@@ -1138,7 +1138,6 @@ internal sealed partial class PreviewApplicationStrip
 
     private void EndAppTask(AppGroup selected)
     {
-        if (!RunningWindows.ConfirmEndTask(owner, selected.Name)) return;
         var current = AppGroups.Build(pins.Items, RunningWindows.List());
         if (FindApp(current, selected.Key) is not { } group) return;
         if (EndTaskUnavailable(group, current) is { } reason) { report(reason); return; }
