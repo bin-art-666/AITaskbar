@@ -52,6 +52,7 @@ internal sealed class IconSettingsPreview
             };
             ToolTipService.SetToolTip(taskViewIcon, "任务视图");
             AutomationProperties.SetName(taskViewIcon, "任务视图");
+            iconHover.Track(taskViewIcon);
         }
         var row = new Grid { ColumnSpacing = 8 };
         row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });

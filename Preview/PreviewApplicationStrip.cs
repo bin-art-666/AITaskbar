@@ -121,6 +121,7 @@ internal sealed partial class PreviewApplicationStrip
         items.Children.Add(AppCenterButton);
         taskViewIcon = new TaskViewIcon(iconSize);
         taskViewButton = IconButton("任务视图", taskViewIcon);
+        TrackIconHover(taskViewButton, taskViewIcon);
         taskViewButton.VerticalContentAlignment = VerticalAlignment.Top;
         ToolTipService.SetToolTip(taskViewButton, "任务视图（Win + Tab）");
         taskViewButton.Click += (_, _) => OpenTaskView();
@@ -540,10 +541,6 @@ internal sealed partial class PreviewApplicationStrip
     {
         var button = IconButton(group.Name, "\uE7C5", glyph: true);
         button.Height = iconSize + TaskbarAppFeedback.ExtraHeight;
-        button.Resources["ButtonBackgroundPointerOver"] = button.Background;
-        button.Resources["ButtonBackgroundPressed"] = button.Background;
-        button.Resources["ButtonBorderBrushPointerOver"] = button.Background;
-        button.Resources["ButtonBorderBrushPressed"] = button.Background;
         if (group.Windows.Count > 0) ToolTipService.SetToolTip(button, null);
         button.PointerEntered += (_, args) =>
         {
@@ -593,7 +590,7 @@ internal sealed partial class PreviewApplicationStrip
             plate.Child = new FontIcon { Glyph = "\uE7C5", FontSize = Math.Round(iconSize * .7) };
         var feedback = new TaskbarAppFeedback(plate, iconSize);
         feedback.ApplyStyle(feedbackStyle);
-        iconHover.Track(plate, group.Pin is null ? runningApps.Panel : null);
+        TrackIconHover(button, plate, group.Pin is null ? runningApps.Panel : null);
         button.Content = feedback.Surface;
         nint? pressedForeground = null;
         button.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
@@ -617,6 +614,15 @@ internal sealed partial class PreviewApplicationStrip
         EnableAppReordering(button, group.Pin is null ? runningApps : pinnedApps);
         SetAppMenu(view);
         return view;
+    }
+
+    private void TrackIconHover(Button button, FrameworkElement icon, FrameworkElement? scrollViewport = null)
+    {
+        button.Resources["ButtonBackgroundPointerOver"] = button.Background;
+        button.Resources["ButtonBackgroundPressed"] = button.Background;
+        button.Resources["ButtonBorderBrushPointerOver"] = button.Background;
+        button.Resources["ButtonBorderBrushPressed"] = button.Background;
+        iconHover.Track(icon, scrollViewport);
     }
 
     private Button IconButton(string name, object content, bool glyph = false)

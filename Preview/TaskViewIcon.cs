@@ -12,12 +12,14 @@ internal sealed class TaskViewIcon : Grid
     internal TaskViewIcon(int size)
     {
         SetSize(size);
+        Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         Children.Add(new Image
         {
             Source = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TaskView.png")))
             {
                 DecodePixelWidth = 160
             },
+            IsHitTestVisible = false,
             Stretch = Stretch.Uniform,
             RenderTransformOrigin = new Windows.Foundation.Point(.5, .5),
             RenderTransform = new ScaleTransform { ScaleX = ArtworkScale, ScaleY = ArtworkScale }
