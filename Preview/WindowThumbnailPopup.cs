@@ -11,23 +11,26 @@ using Native = AIEnter.Native;
 
 namespace AITaskbar;
 
-internal sealed class WindowThumbnailPopup : Window
+internal sealed partial class WindowThumbnailPopup : Window
 {
     private const int Padding = WindowThumbnailLayout.Padding, Gap = WindowThumbnailLayout.Gap;
-    private const uint Destination = 1, VisibilityFlag = 8;
+    private const uint Destination = 1, ThumbnailOpacity = 4, VisibilityFlag = 8;
     private readonly Canvas panel = new();
     private Action<RunningWindow>? activate, close;
     private readonly nint handle;
     private readonly List<Source> windows = [];
     private WindowThumbnailLayout.Page[] pages = [];
-    private RectInt32 anchor, workArea;
+    private RectInt32 anchor, workArea, bounds, positionedBounds;
     private double scale;
     private int page, requestedWidth;
     private bool visible, above;
     private sealed record Source(RunningWindow Window, nint Thumbnail, double Aspect);
 
-    public WindowThumbnailPopup(Action enter, Action leave)
+    private readonly Action dismissed;
+
+    public WindowThumbnailPopup(Action enter, Action leave, Action dismissed)
     {
+        this.dismissed = dismissed;
         Title = "AITaskbar 窗口缩略图";
         AppWindow.IsShownInSwitchers = false;
         var presenter = (OverlappedPresenter)AppWindow.Presenter;
@@ -36,7 +39,7 @@ internal sealed class WindowThumbnailPopup : Window
         presenter.IsAlwaysOnTop = true;
         handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         Native.RemoveWindowFrame(handle);
-        panel.PointerEntered += (_, _) => enter();
+        panel.PointerEntered += (_, _) => { enter(); ResumeHover(); };
         panel.PointerExited += (_, _) => leave();
         Content = panel;
         Closed += (_, _) => ClearThumbnails();
@@ -77,7 +80,35 @@ internal sealed class WindowThumbnailPopup : Window
         if (visible) RebuildPages(pages[page].Start);
     }
 
-    private void RebuildPages(int first = 0)
+    internal bool ContainsPointer() => PointerWithinPopup() is not null;
+
+    private Native.Point? PointerWithinPopup() =>
+        visible && GetCursorPos(out var point) && point.X >= positionedBounds.X && point.X < positionedBounds.X + positionedBounds.Width &&
+        point.Y >= positionedBounds.Y && point.Y < positionedBounds.Y + positionedBounds.Height ? point : null;
+
+    internal void UpdateSources(IEnumerable<RunningWindow> sources)
+    {
+        if (!visible) return;
+        var pointer = PointerWithinPopup();
+        if (windows.Count == 0) return;
+        int first = pages[page].Start;
+        var firstWindow = windows[first].Window;
+        var existing = windows.ToDictionary(source => Identity(source.Window));
+        windows.Clear();
+        foreach (var window in sources.Where(RunningWindows.IsCurrent))
+        {
+            windows.Add(existing.Remove(Identity(window), out var source) ? source with { Window = window } : Register(window));
+        }
+        foreach (var removed in existing.Values)
+            if (removed.Thumbnail != 0) DwmUnregisterThumbnail(removed.Thumbnail);
+        if (windows.Count == 0) { FadeLastCard(); return; }
+        int remembered = windows.FindIndex(source => Identity(source.Window) == Identity(firstWindow));
+        RebuildPages(remembered >= 0 ? remembered : Math.Min(first, windows.Count - 1), pointer, animate: existing.Count != 0);
+    }
+
+    private static (nint Handle, uint ProcessId) Identity(RunningWindow window) => (window.Handle, window.ProcessId);
+
+    private void RebuildPages(int first = 0, Native.Point? pointer = null, bool animate = false)
     {
         int gap = Pixel(WindowThumbnailLayout.AnchorGap);
         int roomAbove = Math.Min(anchor.Y, workArea.Y + workArea.Height) - workArea.Y - gap;
@@ -87,27 +118,21 @@ internal sealed class WindowThumbnailPopup : Window
             (int)Math.Floor(workArea.Width / scale), (int)Math.Floor(Math.Max(roomAbove, roomBelow) / scale));
         if (pages.Length == 0) { Dismiss(); return; }
         page = Math.Max(0, Array.FindLastIndex(pages, value => value.Start <= first));
-        RenderPage();
+        RenderPage(pointer, animate);
     }
 
     public void Dismiss()
     {
+        bool wasVisible = visible;
+        visible = false;
+        if (wasVisible) AppWindow.Hide();
         ClearThumbnails();
         activate = close = null;
-        if (!visible) return;
-        visible = false;
-        AppWindow.Hide();
+        if (wasVisible) dismissed();
     }
 
-    private void RenderPage()
+    private void RenderPage(Native.Point? pointer = null, bool animate = false)
     {
-        foreach (var source in windows)
-            if (source.Thumbnail != 0)
-            {
-                var hide = new ThumbnailProperties { Flags = VisibilityFlag };
-                DwmUpdateThumbnailProperties(source.Thumbnail, in hide);
-            }
-        panel.Children.Clear();
         var layout = pages[page];
         bool paging = pages.Length > 1;
         int width = layout.Width, height = layout.Height(paging);
@@ -115,20 +140,29 @@ internal sealed class WindowThumbnailPopup : Window
         int x = Math.Clamp(anchor.X + (anchor.Width - widthPx) / 2, workArea.X, workArea.X + workArea.Width - widthPx);
         int gap = Pixel(WindowThumbnailLayout.AnchorGap);
         int y = above ? anchor.Y - heightPx - gap : anchor.Y + anchor.Height + gap;
+        // If the card row became narrower, keep the pointer inside the refreshed popup.
+        if (pointer is { } point)
+        {
+            int inset = Pixel(4);
+            x = Math.Clamp(Math.Clamp(x, point.X - widthPx + inset, point.X - inset), workArea.X, workArea.X + workArea.Width - widthPx);
+            y = Math.Clamp(y, point.Y - heightPx + inset, point.Y - inset);
+        }
         y = Math.Clamp(y, workArea.Y, workArea.Y + workArea.Height - heightPx);
-        AppWindow.MoveAndResize(new(x, y, widthPx, heightPx));
+        var target = new RectInt32(x, y, widthPx, heightPx);
+        var nextCards = new List<PreviewCard>();
         int left = Padding;
         for (int index = 0; index < layout.Cards.Length; index++)
         {
             var card = layout.Cards[index];
             var image = new RectInt32(left + (card.Width - card.ImageWidth) / 2, 2 * Padding, card.ImageWidth, layout.ImageHeight);
-            AddCard(windows[layout.Start + index], left, card.Width, layout.CardHeight, image);
+            nextCards.Add(BuildCard(windows[layout.Start + index], left, card.Width, layout.CardHeight, image));
             left += card.Width + Gap;
         }
+        Grid? navigation = null;
         if (paging)
         {
             int navigationWidth = Math.Min(106, width - 2 * Padding);
-            var navigation = new Grid { Width = navigationWidth, ColumnSpacing = 3 };
+            navigation = new Grid { Width = navigationWidth, ColumnSpacing = 3 };
             navigation.ColumnDefinitions.Add(new() { Width = new GridLength(24) });
             navigation.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
             navigation.ColumnDefinitions.Add(new() { Width = new GridLength(24) });
@@ -143,16 +177,19 @@ internal sealed class WindowThumbnailPopup : Window
             double centeredOnAnchor = (anchor.X + anchor.Width / 2d - x) / scale - navigationWidth / 2d;
             Canvas.SetLeft(navigation, Math.Clamp(centeredOnAnchor, Padding, width - Padding - navigationWidth));
             Canvas.SetTop(navigation, Padding + layout.CardHeight + 3);
-            panel.Children.Add(navigation);
         }
+        bool reveal = !visible && Animate;
+        if (reveal) PrepareReveal();
+        ShowCards(nextCards, target, navigation, animate);
         if (!visible)
         {
             visible = true;
             AppWindow.Show(activateWindow: false);
+            if (reveal) StartVisibilityAnimation(hide: false);
         }
     }
 
-    private void AddCard(Source entry, int left, int cardWidth, int cardHeight, RectInt32 at)
+    private PreviewCard BuildCard(Source entry, int left, int cardWidth, int cardHeight, RectInt32 at)
     {
         var source = entry.Window;
         var placeholder = new TextBlock { Text = "无可用缩略图", Opacity = .65,
@@ -174,17 +211,22 @@ internal sealed class WindowThumbnailPopup : Window
         AutomationProperties.SetName(button, "切换到 " + source.Title);
         ToolTipService.SetToolTip(button, source.Title);
         button.Click += (_, _) => activate?.Invoke(source);
-        Canvas.SetLeft(button, left);
-        Canvas.SetTop(button, Padding);
-        panel.Children.Add(button);
+        var card = new Canvas { Width = cardWidth, Height = cardHeight };
+        card.Children.Add(button);
         var closeButton = ThumbnailButton(CloseIcon());
         AutomationProperties.SetName(closeButton, "关闭 " + source.Title);
         ToolTipService.SetToolTip(closeButton, "关闭窗口");
-        closeButton.Click += (_, _) => close?.Invoke(source);
-        Canvas.SetLeft(closeButton, left + cardWidth - Padding - 24);
-        Canvas.SetTop(closeButton, Padding + cardHeight - Padding - WindowThumbnailLayout.FooterHeight + 2);
-        panel.Children.Add(closeButton);
-        if (ShowThumbnail(entry, at)) placeholder.Visibility = Visibility.Collapsed;
+        closeButton.Click += async (_, _) =>
+        {
+            closeButton.IsEnabled = false;
+            await CloseWithSnapshotAsync(source);
+            closeButton.IsEnabled = true;
+        };
+        Canvas.SetLeft(closeButton, cardWidth - Padding - 24);
+        Canvas.SetTop(closeButton, cardHeight - Padding - WindowThumbnailLayout.FooterHeight + 2);
+        card.Children.Add(closeButton);
+        return new(entry, card, image, placeholder, new Rect(left, Padding, cardWidth, cardHeight),
+            new Rect(at.X - left, at.Y - Padding, at.Width, at.Height));
     }
 
     private static string DisplayTitle(string title)
@@ -239,7 +281,7 @@ internal sealed class WindowThumbnailPopup : Window
         return new(source, 0, 16d / 10);
     }
 
-    private bool ShowThumbnail(Source source, RectInt32 area)
+    private bool ShowThumbnail(Source source, Rect area, double opacity)
     {
         if (source.Thumbnail == 0) return false;
         double width = Math.Min(area.Width, area.Height * source.Aspect);
@@ -247,7 +289,8 @@ internal sealed class WindowThumbnailPopup : Window
         double left = area.X + (area.Width - width) / 2, top = area.Y + (area.Height - height) / 2;
         var properties = new ThumbnailProperties
         {
-            Flags = Destination | VisibilityFlag, Visible = 1, Destination = new Native.Rect
+            Flags = Destination | ThumbnailOpacity | VisibilityFlag, Visible = 1,
+            Opacity = (byte)Math.Round(255 * Math.Clamp(opacity, 0, 1)), Destination = new Native.Rect
             { Left = Pixel(left), Top = Pixel(top), Right = Pixel(left + width), Bottom = Pixel(top + height) }
         };
         return DwmUpdateThumbnailProperties(source.Thumbnail, in properties) >= 0;
@@ -257,6 +300,7 @@ internal sealed class WindowThumbnailPopup : Window
 
     private void ClearThumbnails()
     {
+        ClearCardAnimation();
         foreach (var source in windows)
             if (source.Thumbnail != 0) DwmUnregisterThumbnail(source.Thumbnail);
         windows.Clear();
@@ -273,6 +317,7 @@ internal sealed class WindowThumbnailPopup : Window
     }
 
     [DllImport("user32.dll")] private static extern bool ClientToScreen(nint hwnd, ref Native.Point point);
+    [DllImport("user32.dll")] private static extern bool GetCursorPos(out Native.Point point);
     [DllImport("dwmapi.dll")] private static extern int DwmRegisterThumbnail(nint destination, nint source, out nint thumbnail);
     [DllImport("dwmapi.dll")] private static extern int DwmQueryThumbnailSourceSize(nint thumbnail, out SizeInt32 size);
     [DllImport("dwmapi.dll")] private static extern int DwmUpdateThumbnailProperties(nint thumbnail, in ThumbnailProperties properties);

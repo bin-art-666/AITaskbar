@@ -18,6 +18,13 @@ internal sealed partial class TaskbarSettingsWindow
         var value = new TextBlock { VerticalAlignment = VerticalAlignment.Center, MinWidth = 58 };
         page.Children.Add(SettingRow("画面大小", "按原窗口比例缩放，拖动时预览，松手后保存。", Actions(slider, value)));
 
+        var speed = FeedbackSlider("预览动画时长", PreviewIconLayout.MinThumbnailAnimationMs, PreviewIconLayout.MaxThumbnailAnimationMs);
+        speed.StepFrequency = 10;
+        speed.LargeChange = 50;
+        var speedValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center, MinWidth = 64 };
+        page.Children.Add(SettingRow("预览动画时长", "同时调节缩略图弹出和移开鼠标时收起的速度。数值越大，动画越慢。",
+            Actions(speed, speedValue)));
+
         var window = new Grid();
         window.RowDefinitions.Add(new() { Height = new GridLength(12) });
         window.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
@@ -54,39 +61,50 @@ internal sealed partial class TaskbarSettingsWindow
         sampleRow.Children.Add(sample);
         page.Children.Add(sampleRow);
 
-        bool syncing = false;
-        uint? heldPointer = null;
-        int SelectedWidth() => (int)Math.Round(slider.Value);
-
-        void UpdateSample()
+        void UpdateSample(int width)
         {
-            int width = SelectedWidth();
             value.Text = $"{width} DIP";
             double room = sampleRow.ActualWidth > 0 ? sampleRow.ActualWidth : width + 2 * WindowThumbnailLayout.Padding;
             sampleImage.Width = Math.Max(1, Math.Min(width, room - 2 * WindowThumbnailLayout.Padding));
             sampleImage.Height = sampleImage.Width * 10 / 16;
         }
 
+        BindThumbnailSlider(slider, () => app.IconLayout.ThumbnailWidth,
+            width => app.TrySetIconLayout(app.IconLayout with { ThumbnailWidth = width }),
+            app.PreviewThumbnailWidth, UpdateSample);
+        BindThumbnailSlider(speed, () => app.IconLayout.ThumbnailAnimationMs,
+            duration => app.TrySetIconLayout(app.IconLayout with { ThumbnailAnimationMs = duration }),
+            app.PreviewThumbnailAnimation, duration => speedValue.Text = $"{duration} 毫秒");
+        sampleRow.SizeChanged += (_, _) => UpdateSample((int)Math.Round(slider.Value));
+    }
+
+    private static void BindThumbnailSlider(Slider slider, Func<int> read, Func<int, bool> save,
+        Action<int> preview, Action<int> updateLabel)
+    {
+        bool syncing = false;
+        uint? heldPointer = null;
+        int SelectedValue() => (int)Math.Round(slider.Value);
+
         void ReadSaved()
         {
             syncing = true;
-            slider.Value = app.IconLayout.ThumbnailWidth;
+            slider.Value = read();
             syncing = false;
-            UpdateSample();
-            app.PreviewThumbnailWidth(app.IconLayout.ThumbnailWidth);
+            updateLabel(SelectedValue());
+            preview(SelectedValue());
         }
 
         void Save()
         {
-            if (!slider.IsLoaded || heldPointer is not null || SelectedWidth() == app.IconLayout.ThumbnailWidth) return;
-            if (!app.TrySetIconLayout(app.IconLayout with { ThumbnailWidth = SelectedWidth() })) ReadSaved();
+            if (!slider.IsLoaded || heldPointer is not null || SelectedValue() == read()) return;
+            if (!save(SelectedValue())) ReadSaved();
         }
 
         slider.ValueChanged += (_, _) =>
         {
-            UpdateSample();
+            updateLabel(SelectedValue());
             if (syncing) return;
-            app.PreviewThumbnailWidth(SelectedWidth());
+            preview(SelectedValue());
             // A track click can raise ValueChanged before PointerPressed reaches the slider.
             slider.DispatcherQueue.TryEnqueue(Save);
         };
@@ -103,9 +121,8 @@ internal sealed partial class TaskbarSettingsWindow
         slider.Unloaded += (_, _) =>
         {
             heldPointer = null;
-            app.PreviewThumbnailWidth(app.IconLayout.ThumbnailWidth);
+            preview(read());
         };
-        sampleRow.SizeChanged += (_, _) => UpdateSample();
         ReadSaved();
     }
 }

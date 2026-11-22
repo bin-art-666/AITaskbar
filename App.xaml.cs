@@ -260,6 +260,7 @@ public partial class App : Application
     internal void PreviewAppFeedback(TaskbarAppFeedbackStyle style) => preview?.SetAppFeedback(style);
 
     internal void PreviewThumbnailWidth(int width) => preview?.SetThumbnailWidth(width);
+    internal void PreviewThumbnailAnimation(int durationMs) => preview?.SetThumbnailAnimation(durationMs);
 
     internal bool TrySetIconLayout(PreviewIconLayout layout)
     {

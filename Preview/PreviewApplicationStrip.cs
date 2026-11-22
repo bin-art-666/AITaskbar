@@ -59,6 +59,7 @@ internal sealed partial class PreviewApplicationStrip
     private TaskbarAppFeedbackStyle feedbackStyle;
     private PreviewIconLayout iconLayout;
     private int thumbnailWidth;
+    private int thumbnailAnimationMs;
     private bool feedbackLight;
     private double available = double.PositiveInfinity;
     private FlyoutBase? openFlyout;
@@ -95,6 +96,7 @@ internal sealed partial class PreviewApplicationStrip
         this.feedbackStyle = feedbackStyle;
         this.iconLayout = iconLayout;
         thumbnailWidth = iconLayout.ThumbnailWidth;
+        thumbnailAnimationMs = iconLayout.ThumbnailAnimationMs;
         pinnedPanel.Spacing = iconLayout.Gap;
         pinnedApps = new(pinnedPanel);
         this.owner = owner;
@@ -157,10 +159,25 @@ internal sealed partial class PreviewApplicationStrip
         else if (!AIEnter.Native.PanelHasFocus(owner))
             foreground = 0;
         Render(preserveRangeStart: preserveRangeStart);
-        if (thumbnailGroup is { } key && thumbnailWindows is { } opened &&
-            (groups.FirstOrDefault(group => StringComparer.OrdinalIgnoreCase.Equals(group.Key, key)) is not { } current
-                || !opened.SequenceEqual(current.Windows)))
-            DismissThumbnails();
+        if (thumbnailGroup is { } key && thumbnailWindows is { } opened)
+        {
+            var current = groups.FirstOrDefault(group => StringComparer.OrdinalIgnoreCase.Equals(group.Key, key));
+            if (current is null || current.Windows.Count == 0)
+            {
+                hoverAnchor = null;
+                thumbnailGroup = null;
+                thumbnailWindows = null;
+                hoverTimer.Stop();
+                thumbnails?.UpdateSources([]);
+            }
+            else if (!Shown.Any(view => StringComparer.OrdinalIgnoreCase.Equals(view.Group.Key, key)))
+                DismissThumbnails();
+            else if (!opened.SequenceEqual(current.Windows))
+            {
+                thumbnailWindows = current.Windows;
+                thumbnails?.UpdateSources(current.Windows);
+            }
+        }
     }
 
     internal void RememberForeground()
@@ -208,6 +225,7 @@ internal sealed partial class PreviewApplicationStrip
         bool menuColorChanged = iconLayout.MenuColorMode != layout.MenuColorMode;
         iconLayout = layout;
         SetThumbnailWidth(layout.ThumbnailWidth);
+        SetThumbnailAnimation(layout.ThumbnailAnimationMs);
         if (colorChanged || menuColorChanged) openFlyout?.Hide();
         if (colorChanged)
             foreach (var view in Rendered) UpdateIcon(view);
@@ -226,6 +244,12 @@ internal sealed partial class PreviewApplicationStrip
     {
         thumbnailWidth = width;
         thumbnails?.Resize(width);
+    }
+
+    internal void SetThumbnailAnimation(int durationMs)
+    {
+        thumbnailAnimationMs = durationMs;
+        if (thumbnails is not null) thumbnails.HoverDurationMs = durationMs;
     }
 
     internal void SetFeedbackLight(bool light)
@@ -287,7 +311,6 @@ internal sealed partial class PreviewApplicationStrip
         if (range.Layout is null || !range.Layout.SequenceEqual(order, StringComparer.OrdinalIgnoreCase) ||
             (running && mountedStart != range.Start))
         {
-            DismissThumbnails();
             bool slide = animate && iconLayout.DurationMs > 0 && range.Layout is { } previous && previous.Length == visible &&
                 Surface.IsLoaded && system.AnimationsEnabled && !accessibility.HighContrast;
             range.Layout = order;
@@ -494,14 +517,23 @@ internal sealed partial class PreviewApplicationStrip
         {
             if (args.Pointer.PointerDeviceType != PointerDeviceType.Mouse || openFlyout is not null || AppDragInteraction) return;
             var current = Shown.FirstOrDefault(item => ReferenceEquals(item.Button, button));
-            if (current is null || current.Group.Windows.Count == 0) { DismissThumbnails(); return; }
-            hoverAnchor = button;
-            if (StringComparer.OrdinalIgnoreCase.Equals(thumbnailGroup, current.Group.Key)) hoverTimer.Stop();
+            if (current is null || current.Group.Windows.Count == 0)
+            {
+                hoverAnchor = null;
+                hoverTimer.Stop();
+                thumbnails?.FadeOutOnLeave();
+                return;
+            }
+            if (StringComparer.OrdinalIgnoreCase.Equals(thumbnailGroup, current.Group.Key) &&
+                thumbnails?.ResumeHover() == true)
+            {
+                hoverAnchor = button;
+                hoverTimer.Stop();
+            }
             else
             {
-                thumbnails?.Dismiss();
-                thumbnailGroup = null;
-                thumbnailWindows = null;
+                DismissThumbnails();
+                hoverAnchor = button;
                 ScheduleHover(400);
             }
         };
@@ -822,6 +854,12 @@ internal sealed partial class PreviewApplicationStrip
 
     private void UpdateThumbnails()
     {
+        if (thumbnails?.ContainsPointer() == true) return;
+        if (hoverAnchor is null && openFlyout is null)
+        {
+            thumbnails?.FadeOutOnLeave();
+            return;
+        }
         if (hoverAnchor is not { } anchor || openFlyout is not null ||
             Shown.FirstOrDefault(view => ReferenceEquals(view.Button, anchor)) is not { } hovered || hovered.Group.Windows.Count == 0)
         {
@@ -835,14 +873,27 @@ internal sealed partial class PreviewApplicationStrip
     {
         try
         {
-            thumbnails ??= new WindowThumbnailPopup(() => hoverTimer.Stop(), () => ScheduleHover(260));
+            thumbnails ??= new WindowThumbnailPopup(() => hoverTimer.Stop(), () => ScheduleHover(260), ClearThumbnailTracking)
+            {
+                HoverDurationMs = thumbnailAnimationMs
+            };
             UpdateThumbnailTheme(anchor.ActualTheme);
             hoverAnchor = anchor as Button;
             thumbnails.Open(owner, anchor, group.Windows, thumbnailWidth,
-                window => { DismissThumbnails(); OpenWindow(window, plate, toggle: false); },
-                window => { DismissThumbnails(); CloseWindows([window]); });
-            thumbnailGroup = group.Key;
-            thumbnailWindows = group.Windows;
+                window =>
+                {
+                    var currentPlate = Shown.FirstOrDefault(view => StringComparer.OrdinalIgnoreCase.Equals(view.Group.Key, group.Key))
+                        ?.IconPlate ?? plate;
+                    DismissThumbnails();
+                    OpenWindow(window, currentPlate, toggle: false);
+                },
+                CloseThumbnail);
+            if (thumbnails.ResumeHover())
+            {
+                thumbnailGroup = group.Key;
+                thumbnailWindows = group.Windows;
+            }
+            else ClearThumbnailTracking();
         }
         catch (Exception error)
         {
@@ -852,13 +903,33 @@ internal sealed partial class PreviewApplicationStrip
         }
     }
 
+    private async void CloseThumbnail(RunningWindow window)
+    {
+        var group = thumbnailGroup;
+        CloseWindows([window]);
+        // WM_CLOSE can be delayed by the application or open a save prompt.
+        for (int attempt = 0; attempt < 12 && group is not null && thumbnailGroup == group; attempt++)
+        {
+            await Task.Delay(60);
+            if (thumbnailGroup != group) return;
+            if (RunningWindows.IsCurrent(window)) continue;
+            Refresh();
+            return;
+        }
+    }
+
     public void DismissThumbnails()
+    {
+        ClearThumbnailTracking();
+        thumbnails?.Dismiss();
+    }
+
+    private void ClearThumbnailTracking()
     {
         hoverAnchor = null;
         thumbnailGroup = null;
         thumbnailWindows = null;
         hoverTimer.Stop();
-        thumbnails?.Dismiss();
     }
 
     public void Close()

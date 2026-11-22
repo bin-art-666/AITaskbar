@@ -130,6 +130,7 @@ internal sealed class PreviewTaskbar : Window
     internal void SetAppFeedback(TaskbarAppFeedbackStyle style) => tasks.SetAppFeedback(style);
     internal void SetIconLayout(PreviewIconLayout layout) => tasks.SetIconLayout(layout);
     internal void SetThumbnailWidth(int width) => tasks.SetThumbnailWidth(width);
+    internal void SetThumbnailAnimation(int durationMs) => tasks.SetThumbnailAnimation(durationMs);
 
     private async Task PickPinAsync()
     {
