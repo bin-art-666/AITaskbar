@@ -41,8 +41,6 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
     private readonly TaskbarStatusIcon wifiIcon, audioIcon;
     private readonly Button wifi, volume;
     private readonly QuickControlPanel quickControls;
-    private readonly FontIcon bolt = new() { FontFamily = new("Segoe Fluent Icons"), Glyph = "\uE945", FontSize = 12,
-        Width = 12, Visibility = Visibility.Collapsed };
     private readonly TextBlock time = new() { FontSize = 15, TextAlignment = TextAlignment.Right };
     private readonly TextBlock date = new() { FontSize = 11, TextAlignment = TextAlignment.Right };
     private readonly RotateTransform direction = new() { CenterX = 6, CenterY = 4 };
@@ -159,8 +157,6 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
         capsule.Children.Add(batteryBorder);
         capsule.Children.Add(controls);
         Children.Add(capsule);
-        bolt.Foreground = foreground;
-        Children.Add(bolt);
 
         var clock = new StackPanel { MinWidth = 66, Margin = new Thickness(2, 0, 3, 0),
             VerticalAlignment = VerticalAlignment.Center, Spacing = 0 };
@@ -366,12 +362,9 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
         {
             lastBattery = (battery, motion);
             batteryBorder.Update(battery.Percent, battery.Charging, motion);
-            bolt.Visibility = battery.PluggedIn || battery.Charging ? Visibility.Visible : Visibility.Collapsed;
             batteryDescription = battery.Percent is int percent
                 ? $"电量 {percent}%{(battery.Charging ? " · 充电中" : battery.PluggedIn ? " · 已接通电源" : "")}" : null;
             if (!volumeHovered) ToolTipService.SetToolTip(capsule, batteryDescription);
-            ToolTipService.SetToolTip(bolt, batteryDescription);
-            AutomationProperties.SetName(bolt, batteryDescription ?? "电源");
         }
         if (!wifiRefreshing && (wifiReadAt == 0 || Environment.TickCount64 - wifiReadAt >= 1500))
             _ = RefreshWifiAsync();

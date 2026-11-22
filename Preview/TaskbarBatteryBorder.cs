@@ -9,33 +9,72 @@ namespace AITaskbar;
 internal sealed class TaskbarBatteryBorder : Grid, IDisposable
 {
     internal const int CapsuleWidth = 74, CapsuleHeight = 32;
+    private static readonly Vector3 TideLow = new(-23, 4, 0), TideHigh = new(-8, -13, 0);
+    private readonly ContainerVisual rootVisual, tideLayer;
     private readonly ShapeVisual visual;
-    private readonly CompositionRoundedRectangleGeometry track, progress, sweep;
-    private readonly CompositionSpriteShape progressLine, sweepLine;
-    private readonly CompositionColorBrush trackBrush, levelBrush, sweepBrush;
+    private readonly CompositionRoundedRectangleGeometry track, progress;
+    private readonly CompositionSpriteShape progressLine;
+    private readonly CompositionColorBrush trackBrush, levelBrush;
+    private readonly SpriteVisual tide;
+    private readonly CompositionRoundedRectangleGeometry tideBounds;
+    private readonly CompositionGeometricClip tideClip;
+    private readonly CompositionRadialGradientBrush tideBrush;
+    private readonly CompositionColorGradientStop tideCenter, tideEdge, tideFade;
     private bool animated;
 
     internal TaskbarBatteryBorder()
     {
         IsHitTestVisible = false;
         var compositor = ElementCompositionPreview.GetElementVisual(this).Compositor;
+        rootVisual = compositor.CreateContainerVisual();
+        rootVisual.Size = new(CapsuleWidth, CapsuleHeight);
+        rootVisual.IsVisible = false;
+
+        tideLayer = compositor.CreateContainerVisual();
+        tideLayer.Size = rootVisual.Size;
+        tideBounds = CreateCapsule(compositor, 4);
+        tideClip = compositor.CreateGeometricClip(tideBounds);
+        tideLayer.Clip = tideClip;
+        tideLayer.IsVisible = false;
+        tideBrush = compositor.CreateRadialGradientBrush();
+        tideBrush.EllipseCenter = new(.5f, .79f);
+        tideBrush.EllipseRadius = new(.57f, .83f);
+        tideCenter = compositor.CreateColorGradientStop();
+        tideEdge = compositor.CreateColorGradientStop();
+        tideFade = compositor.CreateColorGradientStop();
+        tideEdge.Offset = .48f;
+        tideFade.Offset = 1;
+        tideBrush.ColorStops.Add(tideCenter);
+        tideBrush.ColorStops.Add(tideEdge);
+        tideBrush.ColorStops.Add(tideFade);
+        tide = compositor.CreateSpriteVisual();
+        tide.Size = new(104, 45);
+        tide.Offset = TideLow;
+        tide.Brush = tideBrush;
+        tideLayer.Children.InsertAtTop(tide);
+        rootVisual.Children.InsertAtTop(tideLayer);
+
         visual = compositor.CreateShapeVisual();
-        visual.Size = new(CapsuleWidth, CapsuleHeight);
-        visual.IsVisible = false;
-        (track, _, trackBrush) = CreateLine(compositor, 1.25f);
-        (progress, progressLine, levelBrush) = CreateLine(compositor, 1.6f);
-        (sweep, sweepLine, sweepBrush) = CreateLine(compositor, 2.2f);
-        sweep.TrimEnd = .12f;
-        ElementCompositionPreview.SetElementChildVisual(this, visual);
+        visual.Size = rootVisual.Size;
+        (track, _, trackBrush) = CreateLine(compositor, 2.2f);
+        (progress, progressLine, levelBrush) = CreateLine(compositor, 2.8f);
+        rootVisual.Children.InsertAtTop(visual);
+        ElementCompositionPreview.SetElementChildVisual(this, rootVisual);
+    }
+
+    private static CompositionRoundedRectangleGeometry CreateCapsule(Compositor compositor, float inset)
+    {
+        var geometry = compositor.CreateRoundedRectangleGeometry();
+        geometry.Offset = new Vector2(inset);
+        geometry.Size = new(CapsuleWidth - 2 * inset, CapsuleHeight - 2 * inset);
+        geometry.CornerRadius = new Vector2(geometry.Size.Y / 2);
+        return geometry;
     }
 
     private (CompositionRoundedRectangleGeometry, CompositionSpriteShape, CompositionColorBrush) CreateLine(
         Compositor compositor, float thickness)
     {
-        var geometry = compositor.CreateRoundedRectangleGeometry();
-        geometry.Offset = new Vector2(2);
-        geometry.Size = new(CapsuleWidth - 4, CapsuleHeight - 4);
-        geometry.CornerRadius = new Vector2((CapsuleHeight - 4) / 2f);
+        var geometry = CreateCapsule(compositor, 2);
         var shape = compositor.CreateSpriteShape(geometry);
         var brush = compositor.CreateColorBrush();
         shape.StrokeBrush = brush;
@@ -49,43 +88,62 @@ internal sealed class TaskbarBatteryBorder : Grid, IDisposable
     {
         trackBrush.Color = track;
         levelBrush.Color = level;
-        sweepBrush.Color = highlight;
+        tideCenter.Color = Color.FromArgb(148, highlight.R, highlight.G, highlight.B);
+        tideEdge.Color = Color.FromArgb(73, level.R, level.G, level.B);
+        tideFade.Color = Color.FromArgb(0, level.R, level.G, level.B);
     }
 
     internal void Update(int? percentage, bool charging, bool animations)
     {
-        visual.IsVisible = percentage.HasValue;
+        rootVisual.IsVisible = percentage.HasValue;
         progressLine.StrokeBrush = percentage > 0 ? levelBrush : null;
         progress.TrimEnd = (percentage ?? 0) / 100f;
-        bool showSweep = percentage.HasValue && charging;
-        sweepLine.StrokeBrush = showSweep ? sweepBrush : null;
-        bool animate = showSweep && animations;
+        bool animate = percentage.HasValue && charging && animations;
         if (animate == animated) return;
         animated = animate;
-        sweep.StopAnimation(nameof(CompositionGeometry.TrimOffset));
-        sweep.TrimOffset = 0;
-        if (!animate) return;
-        var compositor = visual.Compositor;
-        using var animation = compositor.CreateScalarKeyFrameAnimation();
-        using var linear = compositor.CreateLinearEasingFunction();
-        animation.InsertKeyFrame(0, 0, linear);
-        animation.InsertKeyFrame(1, 1, linear);
-        animation.Duration = TimeSpan.FromMilliseconds(2560);
-        animation.IterationBehavior = AnimationIterationBehavior.Forever;
-        sweep.StartAnimation(nameof(CompositionGeometry.TrimOffset), animation);
+        tideLayer.IsVisible = animate;
+        if (!animate)
+        {
+            tide.StopAnimation(nameof(Visual.Offset));
+            tide.StopAnimation(nameof(Visual.Opacity));
+            tide.Offset = TideLow;
+            return;
+        }
+        var compositor = tide.Compositor;
+        using var easing = compositor.CreateCubicBezierEasingFunction(new(.42f, 0), new(.58f, 1));
+        using var rise = compositor.CreateVector3KeyFrameAnimation();
+        using var fade = compositor.CreateScalarKeyFrameAnimation();
+        rise.Duration = fade.Duration = TimeSpan.FromSeconds(4);
+        rise.IterationBehavior = fade.IterationBehavior = AnimationIterationBehavior.Forever;
+        rise.InsertKeyFrame(0, TideLow);
+        rise.InsertKeyFrame(.5f, TideHigh, easing);
+        rise.InsertKeyFrame(1, TideLow, easing);
+        fade.InsertKeyFrame(0, .40f);
+        fade.InsertKeyFrame(.5f, .78f, easing);
+        fade.InsertKeyFrame(1, .40f, easing);
+        tide.StartAnimation(nameof(Visual.Offset), rise);
+        tide.StartAnimation(nameof(Visual.Opacity), fade);
     }
 
     public void Dispose()
     {
-        sweep.StopAnimation(nameof(CompositionGeometry.TrimOffset));
+        tide.StopAnimation(nameof(Visual.Offset));
+        tide.StopAnimation(nameof(Visual.Opacity));
         ElementCompositionPreview.SetElementChildVisual(this, null);
         foreach (var shape in visual.Shapes.ToArray()) shape.Dispose();
         track.Dispose();
         progress.Dispose();
-        sweep.Dispose();
         trackBrush.Dispose();
         levelBrush.Dispose();
-        sweepBrush.Dispose();
         visual.Dispose();
+        tide.Dispose();
+        tideCenter.Dispose();
+        tideEdge.Dispose();
+        tideFade.Dispose();
+        tideBrush.Dispose();
+        tideClip.Dispose();
+        tideBounds.Dispose();
+        tideLayer.Dispose();
+        rootVisual.Dispose();
     }
 }
