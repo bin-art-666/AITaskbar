@@ -14,7 +14,7 @@ internal sealed class TaskbarIconHoverLayer
     private readonly RectangleGeometry scrollClip = new();
     private FrameworkElement? icon, viewport;
     private int expansion;
-    private bool show;
+    private bool show, suspended;
     internal Canvas Surface { get; } = new() { IsHitTestVisible = false };
 
     internal TaskbarIconHoverLayer(bool animate)
@@ -46,6 +46,12 @@ internal sealed class TaskbarIconHoverLayer
         Reposition();
     }
 
+    internal void Suspend(bool value)
+    {
+        suspended = value;
+        Reposition();
+    }
+
     private void Hide(FrameworkElement target)
     {
         if (!ReferenceEquals(icon, target)) return;
@@ -55,7 +61,7 @@ internal sealed class TaskbarIconHoverLayer
 
     internal void Reposition()
     {
-        if (!show || icon is not { IsLoaded: true } target || Surface.XamlRoot is not { } root || target.XamlRoot != root)
+        if (suspended || !show || icon is not { IsLoaded: true } target || Surface.XamlRoot is not { } root || target.XamlRoot != root)
         {
             if (frame.Opacity != 0) frame.Opacity = 0;
             return;
