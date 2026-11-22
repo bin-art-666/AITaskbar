@@ -43,8 +43,10 @@ internal sealed partial class QuickControlPanel : IDisposable
     private readonly Border wifiDisc, bluetoothDisc, volumeDisc;
     private readonly TaskbarStatusIcon detailWifi, detailVolume;
     private readonly TextBlock wifiText, bluetoothText, volumeText, brightnessText, detailHeading, listStatus;
+    private readonly TextBlock wirelessStatusStrip;
     private readonly Slider volumeSlider, brightnessSlider;
     private readonly StackPanel detailList = new() { Spacing = 3 };
+    private readonly ScrollViewer detailScroll;
     private readonly ToggleSwitch radioSwitch = new() { HorizontalAlignment = HorizontalAlignment.Right, MinWidth = 0,
         OnContent = "已开启", OffContent = "已关闭" };
     private readonly RotateTransform sun = new();
@@ -113,6 +115,7 @@ internal sealed partial class QuickControlPanel : IDisposable
 
         var details = new Grid { Padding = new Thickness(11), RowSpacing = 5 };
         details.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        details.RowDefinitions.Add(new() { Height = GridLength.Auto });
         details.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         details.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var header = new Grid { ColumnSpacing = 8 };
@@ -130,22 +133,28 @@ internal sealed partial class QuickControlPanel : IDisposable
         header.Children.Add(detailClose);
         Grid.SetColumn(detailClose, 2);
         details.Children.Add(header);
+        wirelessStatusStrip = Text("", 12, ink);
+        wirelessStatusStrip.TextWrapping = TextWrapping.Wrap;
+        wirelessStatusStrip.Visibility = Visibility.Collapsed;
+        AutomationProperties.SetLiveSetting(wirelessStatusStrip, AutomationLiveSetting.Polite);
+        details.Children.Add(wirelessStatusStrip);
+        Grid.SetRow(wirelessStatusStrip, 1);
         listStatus = Text("", 12, subtle);
         listStatus.TextWrapping = TextWrapping.Wrap;
         AutomationProperties.SetLiveSetting(listStatus, AutomationLiveSetting.Polite);
         var detailContent = new StackPanel { Spacing = 4 };
         detailContent.Children.Add(listStatus);
         detailContent.Children.Add(detailList);
-        var scrolling = new ScrollViewer { Content = detailContent, HorizontalScrollMode = ScrollMode.Disabled,
+        detailScroll = new ScrollViewer { Content = detailContent, HorizontalScrollMode = ScrollMode.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        details.Children.Add(scrolling);
-        Grid.SetRow(scrolling, 1);
+        details.Children.Add(detailScroll);
+        Grid.SetRow(detailScroll, 2);
         detailedAppearance = DetailAction("详细外观设置", "›");
         AutomationProperties.SetName(detailedAppearance, "详细外观设置");
         detailedAppearance.Visibility = Visibility.Collapsed;
         detailedAppearance.Click += (_, _) => { afterClose = showAppearance; Hide(); };
         details.Children.Add(detailedAppearance);
-        Grid.SetRow(detailedAppearance, 2);
+        Grid.SetRow(detailedAppearance, 3);
         detail.Child = details;
         detail.RenderTransform = detailMotion;
         shade.PointerPressed += (_, args) => { args.Handled = true; CloseDetails(); };
@@ -282,7 +291,7 @@ internal sealed partial class QuickControlPanel : IDisposable
         if (Motion) AnimateDetail(area, show: true);
         if (area == Area.Audio) RefreshOutputs(force: true);
         else if (area == Area.Appearance) ShowBackdropModes();
-        else _ = RefreshDetailsAsync(scan: true);
+        else _ = ReturnToWirelessListAsync(scan: true);
     }
 
     private void CloseDetails()
@@ -307,6 +316,10 @@ internal sealed partial class QuickControlPanel : IDisposable
     private void ResetDetails()
     {
         detailArea = null;
+        detailRevision++;
+        wirelessEditor = false;
+        ShowWirelessNotice(null);
+        wirelessRows = null;
         detailAnimation?.Stop();
         shade.Visibility = detail.Visibility = Visibility.Collapsed;
         detail.IsHitTestVisible = true;

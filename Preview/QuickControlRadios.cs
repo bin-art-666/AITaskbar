@@ -16,8 +16,9 @@ internal sealed class QuickControlRadios
             Windows.Networking.Connectivity.NetworkAuthenticationType.Open80211;
     }
 
-    internal sealed record BluetoothEntry(DeviceInformation Device, bool Connected);
+    internal sealed record BluetoothEntry(string Key, DeviceInformation Device, bool Connected);
     private RadioAccessStatus? access;
+    private IReadOnlyList<WiFiAdapter>? wifiAdapters;
 
     internal static async Task<(Radio? Wifi, Radio? Bluetooth)> ReadAsync()
     {
@@ -35,10 +36,11 @@ internal sealed class QuickControlRadios
         return await radio.SetStateAsync(enabled ? RadioState.On : RadioState.Off) == RadioAccessStatus.Allowed;
     }
 
-    internal static async Task<Network[]> NetworksAsync(bool scan)
+    internal async Task<Network[]> NetworksAsync(bool scan)
     {
         // Enumeration can be declined by the Windows location policy.
-        var adapters = await WiFiAdapter.FindAllAdaptersAsync();
+        if (scan || wifiAdapters is null) wifiAdapters = await WiFiAdapter.FindAllAdaptersAsync();
+        var adapters = wifiAdapters;
         if (scan) await Task.WhenAll(adapters.Select(async adapter => { await adapter.ScanAsync(); }));
         return adapters.SelectMany(adapter => adapter.NetworkReport.AvailableNetworks.Select(entry => new Network(adapter, entry)))
             .Where(network => !string.IsNullOrWhiteSpace(network.Name))
@@ -81,7 +83,7 @@ internal sealed class QuickControlRadios
             (paired || device.Pairing.CanPair))
             .GroupBy(device => device.Properties.TryGetValue(Address, out var address) && address is string key ? key : device.Id,
                 StringComparer.OrdinalIgnoreCase)
-            .Select(group => new BluetoothEntry(group.First(), group.Any(device =>
+            .Select(group => new BluetoothEntry(group.Key, group.First(), group.Any(device =>
                 device.Properties.TryGetValue(Connected, out var value) && value is true)))
             .OrderByDescending(device => device.Connected).ThenBy(device => device.Device.Name).ToArray();
     }

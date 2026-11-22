@@ -39,7 +39,8 @@ internal sealed partial class QuickControlPanel
         if (!opened || closing || disposed || Environment.TickCount64 < nextPoll) return;
         nextPoll = Environment.TickCount64 + 2000;
         if (detailArea == Area.Audio) RefreshOutputs();
-        _ = PollRadiosAsync();
+        if (detailArea is Area.Wifi or Area.Bluetooth && !wirelessEditor) _ = RefreshWirelessListAsync();
+        else _ = PollRadiosAsync();
         if (!brightnessBusy) _ = RefreshBrightnessAsync();
     }
 
@@ -75,7 +76,9 @@ internal sealed partial class QuickControlPanel
 
     private async void RadioToggled(object sender, RoutedEventArgs args)
     {
-        if (applyingRadio || radioBusy || detailArea is not { } area || SelectedRadio is not { } radio) return;
+        if (applyingRadio || radioBusy || networkBusy || detailArea is not { } area || SelectedRadio is not { } radio) return;
+        int revision = detailRevision;
+        ShowWirelessNotice(null);
         radioBusy = true;
         radioSwitch.IsEnabled = false;
         bool enabled = radioSwitch.IsOn;
@@ -83,104 +86,32 @@ internal sealed partial class QuickControlPanel
         try { success = await radios.SetAsync(radio, enabled); }
         catch (Exception error) when (QuickControlRadios.IsUnavailable(error)) { }
         finally { radioBusy = false; }
-        if (disposed || detailArea != area) return;
+        if (disposed || detailArea != area || revision != detailRevision) return;
         if (!success)
         {
             UpdateRadioSwitch();
-            listStatus.Text = "Windows 未允许更改开关，可在系统设置中操作。";
+            ShowWirelessNotice("Windows 未允许更改开关，可在系统设置中操作。");
             return;
         }
         // Some drivers publish the new state after the operation completes.
         await Task.Delay(350);
-        if (disposed || detailArea != area) return;
+        if (disposed || detailArea != area || revision != detailRevision) return;
         await PollRadiosAsync();
-        await RefreshDetailsAsync(scan: enabled);
-    }
-
-    private async Task RefreshDetailsAsync(bool scan)
-    {
-        if (detailArea is not (Area.Wifi or Area.Bluetooth)) return;
-        var area = detailArea.Value;
-        int revision = ++detailRevision;
-        bool Current() => !disposed && detailArea == area && detailRevision == revision;
-        detailList.Children.Clear();
-        listStatus.Text = "正在读取…";
-        try
-        {
-            await PollRadiosAsync();
-            if (!Current()) return;
-            if (SelectedRadio?.State is RadioState.Off or RadioState.Disabled)
-            {
-                listStatus.Text = area == Area.Wifi ? "Wi‑Fi 已关闭" : "蓝牙已关闭";
-                return;
-            }
-            if (area == Area.Wifi)
-            {
-                var networks = await QuickControlRadios.NetworksAsync(scan);
-                if (!Current()) return;
-                listStatus.Text = networks.Length == 0 ? "未找到可用网络" : "";
-                foreach (var network in networks.OrderByDescending(network => network.Name == wifiStatus.Name))
-                {
-                    bool connected = network.Name == wifiStatus.Name && wifiStatus.Bars > 0;
-                    var button = DetailAction(network.Name, connected ? "已连接" :
-                        $"{network.Entry.SignalBars}/5{(network.Secured ? " · 已加密" : "")}");
-                    if (connected)
-                    {
-                        button.IsEnabled = false;
-                        detailList.Children.Add(button);
-                        var disconnect = DetailAction("断开连接", "");
-                        disconnect.Click += async (_, _) => await ChangeNetworkAsync(network, true, null);
-                        detailList.Children.Add(disconnect);
-                        continue;
-                    }
-                    button.Click += (_, _) => ChooseNetwork(network);
-                    detailList.Children.Add(button);
-                }
-            }
-            else
-            {
-                var devices = await QuickControlRadios.BluetoothDevicesAsync();
-                if (!Current()) return;
-                listStatus.Text = devices.Length == 0 ? "没有已配对的设备" : "";
-                foreach (var device in devices)
-                {
-                    var button = DetailAction(device.Device.Name, device.Connected ? "已连接" : "已配对");
-                    if (device.Connected) button.IsEnabled = false;
-                    else button.Click += async (_, _) => await OpenSettingsAsync(Area.Bluetooth);
-                    detailList.Children.Add(button);
-                }
-                var discover = DetailAction("查找新设备", "");
-                discover.Click += async (_, _) => await DiscoverBluetoothAsync();
-                detailList.Children.Add(discover);
-            }
-        }
-        catch (UnauthorizedAccessException)
-        {
-            if (Current()) listStatus.Text = area == Area.Wifi ? "Windows 未授权读取 Wi‑Fi 网络。" : "Windows 未授权读取蓝牙设备。";
-        }
-        catch (Exception error) when (QuickControlRadios.IsUnavailable(error))
-        {
-            if (Current()) listStatus.Text = area == Area.Wifi ? "暂时无法读取 Wi‑Fi 网络。" : "暂时无法读取蓝牙设备。";
-        }
-        finally
-        {
-            if (Current())
-            {
-                var settings = DetailAction(area == Area.Wifi ? "Windows 网络设置" : "Windows 蓝牙设备设置", "打开");
-                settings.Click += async (_, _) => await OpenSettingsAsync(area);
-                detailList.Children.Add(settings);
-            }
-        }
+        if (disposed || detailArea != area || revision != detailRevision) return;
+        await ReturnToWirelessListAsync(scan: enabled);
     }
 
     private Button DetailAction(string title, string subtitle) => DetailAction(title, subtitle, out _);
 
-    private Button DetailAction(string title, string subtitle, out TextBlock status)
+    private Button DetailAction(string title, string subtitle, out TextBlock status) =>
+        DetailAction(title, subtitle, out _, out status);
+
+    private Button DetailAction(string title, string subtitle, out TextBlock label, out TextBlock status)
     {
         var row = new Grid { ColumnSpacing = 8 };
         row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var label = Text(title, 13, ink);
+        label = Text(title, 13, ink);
         label.TextTrimming = TextTrimming.CharacterEllipsis;
         status = Text(subtitle, 12, subtle);
         row.Children.Add(label);
@@ -196,9 +127,12 @@ internal sealed partial class QuickControlPanel
 
     private async void ChooseNetwork(QuickControlRadios.Network network)
     {
-        if (networkBusy || detailArea != Area.Wifi) return;
+        if (networkBusy || radioBusy || detailArea != Area.Wifi) return;
         if (network.Secured)
         {
+            wirelessEditor = true;
+            detailRevision++;
+            ShowWirelessNotice(null);
             detailList.Children.Clear();
             listStatus.Text = network.Name;
             var password = new PasswordBox { PlaceholderText = "网络密码" };
@@ -208,37 +142,39 @@ internal sealed partial class QuickControlPanel
             {
                 if (string.IsNullOrWhiteSpace(password.Password))
                 {
-                    listStatus.Text = "请输入网络密码，或在 Windows 网络设置中连接。";
+                    ShowWirelessNotice("请输入网络密码，或在 Windows 网络设置中连接。");
                     return;
                 }
                 string value = password.Password;
                 password.Password = "";
-                await ChangeNetworkAsync(network, false, value);
+                await ChangeNetworkAsync(network.Name, network, value);
             };
             var back = DetailAction("返回网络列表", "");
-            back.Click += async (_, _) => { if (!networkBusy) await RefreshDetailsAsync(scan: false); };
+            back.Click += async (_, _) => { if (!networkBusy) await ReturnToWirelessListAsync(); };
             var settings = DetailAction("Windows 网络设置", "打开");
             settings.Click += async (_, _) => await OpenSettingsAsync(Area.Wifi);
             detailList.Children.Add(password);
             detailList.Children.Add(connect);
             detailList.Children.Add(back);
             detailList.Children.Add(settings);
+            ResetWirelessScroll();
             password.Focus(FocusState.Programmatic);
             return;
         }
-        await ChangeNetworkAsync(network, false, null);
+        await ChangeNetworkAsync(network.Name, network);
     }
 
-    private async Task ChangeNetworkAsync(QuickControlRadios.Network network, bool disconnect, string? password)
+    private async Task ChangeNetworkAsync(string name, QuickControlRadios.Network? network, string? password = null)
     {
-        if (networkBusy) return;
+        if (networkBusy || radioBusy) return;
+        bool disconnect = network is null;
         networkBusy = true;
         var revision = detailRevision;
-        listStatus.Text = disconnect ? "正在断开…" : "正在连接…";
+        ShowWirelessNotice(disconnect ? "正在断开…" : "正在连接…");
         bool requested = false, confirmed = false;
         try
         {
-            requested = disconnect ? await QuickControlRadios.DisconnectAsync(network.Name)
+            requested = network is null ? await QuickControlRadios.DisconnectAsync(name)
                 : await QuickControlRadios.ConnectAsync(network, password) == WiFiConnectionStatus.Success;
         }
         catch (Exception error) when (QuickControlRadios.IsUnavailable(error)) { }
@@ -251,35 +187,49 @@ internal sealed partial class QuickControlPanel
                 if (disposed) return;
                 if (state is not { } observed) continue;
                 UpdateWifi(observed);
-                bool connected = observed.Bars > 0 && observed.Name == network.Name;
+                bool connected = observed.Bars > 0 && observed.Name == name;
                 confirmed = requested && connected != disconnect;
                 if (confirmed) break;
             }
         }
         finally { networkBusy = false; }
         if (disposed || detailArea != Area.Wifi || revision != detailRevision) return;
-        if (confirmed) await RefreshDetailsAsync(scan: false);
+        if (confirmed)
+        {
+            ShowWirelessNotice(null);
+            await ReturnToWirelessListAsync();
+        }
         else if (requested)
         {
-            await RefreshDetailsAsync(scan: false);
-            if (detailArea == Area.Wifi && detailRevision == revision + 1)
-                listStatus.Text = "Windows 尚未确认连接状态，请查看当前网络。";
+            ShowWirelessNotice("Windows 尚未确认连接状态，请查看当前网络。");
+            await RefreshWirelessListAsync();
         }
-        else listStatus.Text = disconnect ? "未能断开，请查看 Windows 网络设置。"
-            : "连接失败，请核对密码或在 Windows 网络设置中连接。";
+        else
+        {
+            ShowWirelessNotice(disconnect ? "未能断开，请查看 Windows 网络设置。"
+                : "连接失败，请核对密码或在 Windows 网络设置中连接。");
+            await RefreshWirelessListAsync();
+        }
     }
 
     private async Task OpenSettingsAsync(Area area)
     {
         string address = area == Area.Wifi ? "ms-settings:network-wifi" : "ms-settings:bluetooth";
-        try { if (await Launcher.LaunchUriAsync(new Uri(address))) Hide(); }
+        int revision = detailRevision;
+        try { if (await Launcher.LaunchUriAsync(new Uri(address))) { Hide(); return; } }
         catch (Exception error) when (QuickControlRadios.IsUnavailable(error)) { }
+        if (!disposed && detailArea == area && detailRevision == revision)
+            ShowWirelessNotice("暂时无法打开 Windows 设置。");
     }
 
     private async Task DiscoverBluetoothAsync()
     {
+        if (networkBusy || radioBusy) return;
+        wirelessEditor = true;
+        ShowWirelessNotice(null);
         int revision = ++detailRevision;
         detailList.Children.Clear();
+        ResetWirelessScroll();
         listStatus.Text = "正在查找可配对设备…";
         bool Current() => !disposed && detailArea == Area.Bluetooth && detailRevision == revision;
         try
@@ -294,7 +244,7 @@ internal sealed partial class QuickControlPanel
                 {
                     if (!Current() || networkBusy) return;
                     networkBusy = true;
-                    listStatus.Text = "正在配对…";
+                    ShowWirelessNotice("正在配对…");
                     DevicePairingResultStatus? status = null;
                     try
                     {
@@ -305,14 +255,14 @@ internal sealed partial class QuickControlPanel
                     finally { networkBusy = false; }
                     if (!Current()) return;
                     if (status is DevicePairingResultStatus.Paired or DevicePairingResultStatus.AlreadyPaired)
-                        await RefreshDetailsAsync(scan: false);
-                    else listStatus.Text = status switch
+                        await ReturnToWirelessListAsync();
+                    else ShowWirelessNotice(status switch
                     {
                         DevicePairingResultStatus.PairingCanceled => "已取消配对。",
                         DevicePairingResultStatus.AuthenticationTimeout => "配对超时，请让设备保持配对模式后重试。",
                         DevicePairingResultStatus.AccessDenied => "Windows 未允许配对，可在蓝牙设置中重试。",
                         _ => "配对未完成，可在 Windows 蓝牙设备设置中重试。"
-                    };
+                    });
                 };
                 detailList.Children.Add(button);
             }
@@ -326,7 +276,7 @@ internal sealed partial class QuickControlPanel
             if (Current())
             {
                 var back = DetailAction("返回已配对设备", "");
-                back.Click += async (_, _) => await RefreshDetailsAsync(scan: false);
+                back.Click += async (_, _) => await ReturnToWirelessListAsync();
                 var settings = DetailAction("Windows 蓝牙设备设置", "打开");
                 settings.Click += async (_, _) => await OpenSettingsAsync(Area.Bluetooth);
                 detailList.Children.Add(back);
