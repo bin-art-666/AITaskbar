@@ -1,15 +1,17 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace AITaskbar;
 
-internal sealed class SystemTaskbarVisibility : IDisposable
+internal sealed class SystemTaskbarVisibility(string root) : IDisposable
 {
     private const uint GetState = 4, SetState = 10, AutoHide = 1;
     private const int HideWindow = 0, ShowWithoutActivating = 8;
     private EventWaitHandle? restored;
     private Snapshot? hidden;
     private bool toggling, disposed;
+    private readonly string restoreFile = Path.Combine(root, "system-taskbar-restore-state.txt");
 
     internal bool? Visible
     {
@@ -33,19 +35,35 @@ internal sealed class SystemTaskbarVisibility : IDisposable
     internal async Task<bool> SetVisibleAsync(bool visible)
     {
         if (!CanToggle) return false;
-        if (Visible == visible) return true;
         toggling = true;
         try
         {
             var primary = Primary();
             if (primary == 0) return false;
-            if (visible)
+            if (hidden is not null)
             {
-                if (hidden is not null) RestoreOwned();
-                else ShowWindowAsync(primary, ShowWithoutActivating);
+                if (visible) RestoreOwned();
                 return true;
             }
-            var snapshot = new Snapshot(State(primary), VisibleWindows().ToArray());
+            uint state = State(primary);
+            uint? pending = ReadPendingState();
+            // A journal is only relevant while the shell still has the state we applied.
+            if (pending.HasValue && state != (pending.Value | AutoHide))
+            {
+                File.Delete(restoreFile);
+                pending = null;
+            }
+            if (visible)
+            {
+                if (pending.HasValue)
+                {
+                    if (Restore(new Snapshot(pending.Value, [primary]))) File.Delete(restoreFile);
+                }
+                else if (!IsWindowVisible(primary)) ShowWindowAsync(primary, ShowWithoutActivating);
+                return true;
+            }
+            if (!pending.HasValue && !IsWindowVisible(primary)) return true;
+            var snapshot = new Snapshot(pending ?? state, VisibleWindows().Append(primary).Distinct().ToArray());
             string token = Guid.NewGuid().ToString("N");
             using var ready = OpenSignal(token, "Ready", create: true);
             restored = OpenSignal(token, "Restored", create: true);
@@ -60,8 +78,10 @@ internal sealed class SystemTaskbarVisibility : IDisposable
                     throw new InvalidOperationException("系统任务栏恢复进程未就绪。");
                 if (disposed) return false;
                 if (Primary() != primary) throw new InvalidOperationException("系统任务栏已重新启动，请重试。");
+                // Record the original state before changing a shell setting that can survive reboot.
+                if (!pending.HasValue && (snapshot.State & AutoHide) == 0) SavePendingState(snapshot.State);
                 hidden = snapshot;
-                if ((snapshot.State & AutoHide) == 0) UpdateState(primary, snapshot.State | AutoHide);
+                if ((state & AutoHide) == 0) UpdateState(primary, state | AutoHide);
                 foreach (var window in snapshot.Windows) ShowWindowAsync(window, HideWindow);
                 return true;
             }
@@ -76,9 +96,36 @@ internal sealed class SystemTaskbarVisibility : IDisposable
     private void RestoreOwned()
     {
         if (hidden is not { } snapshot) return;
-        Restore(snapshot);
+        bool restoredState = Restore(snapshot);
         hidden = null;
         EndWatch();
+        if (restoredState && (snapshot.State & AutoHide) == 0)
+        {
+            try { File.Delete(restoreFile); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private uint? ReadPendingState()
+    {
+        try
+        {
+            return uint.TryParse(File.ReadAllText(restoreFile), NumberStyles.None, CultureInfo.InvariantCulture, out uint state)
+                && state <= 3 && (state & AutoHide) == 0 ? state : null;
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return null; }
+    }
+
+    private void SavePendingState(uint state)
+    {
+        Directory.CreateDirectory(root);
+        string temporary = restoreFile + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, state.ToString(CultureInfo.InvariantCulture));
+            File.Move(temporary, restoreFile, overwrite: true);
+        }
+        finally { File.Delete(temporary); }
     }
 
     private void EndWatch()
@@ -123,13 +170,15 @@ internal sealed class SystemTaskbarVisibility : IDisposable
             System.ComponentModel.Win32Exception or WaitHandleCannotBeOpenedException) { }
     }
 
-    private static void Restore(Snapshot snapshot)
+    private static bool Restore(Snapshot snapshot)
     {
         var primary = Primary();
-        if (primary != 0 && (snapshot.State & AutoHide) == 0 && State(primary) == (snapshot.State | AutoHide))
+        if (primary == 0) return false;
+        if ((snapshot.State & AutoHide) == 0 && State(primary) == (snapshot.State | AutoHide))
             UpdateState(primary, snapshot.State);
         foreach (var window in VisibleOrHiddenWindows())
             if (snapshot.Windows.Contains(window)) ShowWindowAsync(window, ShowWithoutActivating);
+        return (snapshot.State & AutoHide) != 0 || State(primary) != (snapshot.State | AutoHide);
     }
 
     private static EventWaitHandle OpenSignal(string token, string name, bool create)

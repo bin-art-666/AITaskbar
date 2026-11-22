@@ -20,7 +20,7 @@ internal sealed class PreviewTaskbar : Window
     private readonly Grid strip = new() { Padding = new Thickness(10, 0, 10, 0) };
     private readonly ScaleTransform stripScale = new();
     private int naturalStripHeight;
-    private readonly SystemTaskbarVisibility systemTaskbar = new();
+    private readonly SystemTaskbarVisibility systemTaskbar;
     private readonly TextBlock feedback = new() { MaxWidth = 200, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
     private bool closed, menuOpen;
     internal PreviewModuleIcons ModuleIcons { get; }
@@ -30,6 +30,7 @@ internal sealed class PreviewTaskbar : Window
         Action<Exception> reportFailure)
     {
         Title = "AITaskbar 预览栏";
+        systemTaskbar = new(root);
         naturalStripHeight = HeightForIcons(iconSize);
         pins = new(Path.Combine(root, "preview-pins.json"));
         AppWindow.IsShownInSwitchers = false;
