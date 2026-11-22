@@ -90,6 +90,7 @@ internal sealed partial class PreviewApplicationStrip
 
     private void BeginAppDrag(AppDragPress press)
     {
+        StopMembershipAnimation();
         var views = press.Range.Buttons.ToArray();
         int source = Array.FindIndex(views, view => ReferenceEquals(view.Button, press.View.Button));
         if (source < 0) return;
@@ -97,7 +98,7 @@ internal sealed partial class PreviewApplicationStrip
         var start = slots[0];
         var bounds = new Rect(start.X, start.Y, slots[^1].X + iconSize - start.X, press.Range.Panel.ActualHeight);
         var transform = new CompositeTransform { CenterX = iconSize / 2d, CenterY = TaskbarAppFeedback.TopSpace + iconSize / 2d };
-        var floating = CreateDraggedIcon(press.View);
+        var floating = CreateFloatingIcon(press.View, foreground);
         floating.RenderTransform = transform;
         var origin = press.View.Button.TransformToVisual(AppDragSurface).TransformPoint(new Point());
         Canvas.SetLeft(floating, origin.X);
@@ -115,7 +116,7 @@ internal sealed partial class PreviewApplicationStrip
         if (drag.Animate) CompositionTarget.Rendering += AnimateAppDrag;
     }
 
-    private Canvas CreateDraggedIcon(AppButton view)
+    private Canvas CreateFloatingIcon(AppButton view, nint activeWindow)
     {
         var source = view.IconPlate;
         var plate = new Border
@@ -129,7 +130,7 @@ internal sealed partial class PreviewApplicationStrip
         var feedback = new TaskbarAppFeedback(plate, iconSize);
         feedback.ApplyStyle(feedbackStyle);
         var (active, background) = TaskbarAppFeedback.DotColors(feedbackStyle, system, accessibility.HighContrast);
-        feedback.ShowState(IndicatorState(view.Group.Windows.Count > 0, view.Group.Windows.Any(window => window.Handle == foreground)),
+        feedback.ShowState(IndicatorState(view.Group.Windows.Count > 0, view.Group.Windows.Any(window => window.Handle == activeWindow)),
             active, background, feedbackLight);
         return feedback.Surface;
     }

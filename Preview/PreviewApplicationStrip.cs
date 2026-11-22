@@ -60,7 +60,7 @@ internal sealed partial class PreviewApplicationStrip
     private PreviewIconLayout iconLayout;
     private int thumbnailWidth;
     private int thumbnailAnimationMs;
-    private bool feedbackLight;
+    private bool feedbackLight, pinRefreshPending;
     private double available = double.PositiveInfinity;
     private FlyoutBase? openFlyout;
     private readonly DispatcherQueueTimer hoverTimer;
@@ -152,13 +152,17 @@ internal sealed partial class PreviewApplicationStrip
     private void Refresh(bool preserveRangeStart)
     {
         if (openFlyout is not null || AppDragInteraction || windowMotion.HasRectangularRequest) return;
+        pinRefreshPending = false;
         var foregroundWindow = RunningWindows.Foreground();
-        groups = runningOrder.Apply(AppGroups.Build(pins.Items, RunningWindows.List()));
+        var nextGroups = runningOrder.Apply(AppGroups.Build(pins.Items, RunningWindows.List()));
+        var transition = CaptureMembershipChange(nextGroups);
+        groups = nextGroups;
         if (groups.Any(group => group.Windows.Any(window => window.Handle == foregroundWindow)))
             foreground = foregroundWindow;
         else if (!AIEnter.Native.PanelHasFocus(owner))
             foreground = 0;
-        Render(preserveRangeStart: preserveRangeStart);
+        Render(preserveRangeStart: preserveRangeStart, revealRunningKey: transition?.RevealRunningKey);
+        if (transition is not null) AnimateMembershipChange(transition);
         if (thumbnailGroup is { } key && thumbnailWindows is { } opened)
         {
             var current = groups.FirstOrDefault(group => StringComparer.OrdinalIgnoreCase.Equals(group.Key, key));
@@ -188,13 +192,16 @@ internal sealed partial class PreviewApplicationStrip
 
     public void SetAvailableWidth(double width)
     {
-        available = Math.Max(0, width);
+        width = Math.Max(0, width);
+        if (available != width) StopMembershipAnimation();
+        available = width;
         if (openFlyout is null && !AppDragInteraction) Render();
     }
 
     public void SetIconSize(int size)
     {
         if (iconSize == size) return;
+        StopMembershipAnimation();
         ResetAppDragInteraction();
         openFlyout?.Hide();
         iconSize = size;
@@ -219,7 +226,11 @@ internal sealed partial class PreviewApplicationStrip
     internal void SetIconLayout(PreviewIconLayout layout)
     {
         bool gapChanged = iconLayout.Gap != layout.Gap;
-        if (gapChanged) ResetAppDragInteraction();
+        if (gapChanged)
+        {
+            StopMembershipAnimation();
+            ResetAppDragInteraction();
+        }
         bool scrollChanged = iconLayout.Animation != layout.Animation;
         bool colorChanged = iconLayout.ColorMode != layout.ColorMode;
         bool menuColorChanged = iconLayout.MenuColorMode != layout.MenuColorMode;
@@ -272,11 +283,13 @@ internal sealed partial class PreviewApplicationStrip
         appCenterIcon.Apply(style);
         var visibility = style.ShowInTaskbar ? Visibility.Visible : Visibility.Collapsed;
         if (AppCenterButton.Visibility == visibility) return;
+        StopMembershipAnimation();
         AppCenterButton.Visibility = visibility;
         if (openFlyout is null && !AppDragInteraction) Render();
     }
 
-    private void Render(AppRange? scrolled = null, bool animateRunning = false, bool preserveRangeStart = false)
+    private void Render(AppRange? scrolled = null, bool animateRunning = false, bool preserveRangeStart = false,
+        string? revealRunningKey = null)
     {
         if (AppDragInteraction) return;
         int pinned = groups.TakeWhile(group => group.Pin is not null).Count();
@@ -288,14 +301,16 @@ internal sealed partial class PreviewApplicationStrip
         while (visibleRunning > 0 && RequiredWidth(visiblePins, visibleRunning) > available) visibleRunning--;
 
         RenderRange(pinnedApps, 0, pinned, visiblePins, keepAnchor: scrolled != pinnedApps && !preserveRangeStart);
-        RenderRange(runningApps, pinned, running, visibleRunning, keepAnchor: scrolled != runningApps && !preserveRangeStart, animateRunning);
+        RenderRange(runningApps, pinned, running, visibleRunning, keepAnchor: scrolled != runningApps && !preserveRangeStart,
+            animateRunning, revealRunningKey);
         separator.Visibility = visiblePins > 0 && visibleRunning > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (runningApps.LastStart == 0 || visibleRunning == 0) wheelRemainder = 0;
         RefreshTheme();
         UpdateIndicators();
     }
 
-    private void RenderRange(AppRange range, int first, int count, int visible, bool keepAnchor, bool animate = false)
+    private void RenderRange(AppRange range, int first, int count, int visible, bool keepAnchor, bool animate = false,
+        string? revealKey = null)
     {
         if (keepAnchor && range.Buttons.Count > 0)
         {
@@ -305,6 +320,15 @@ internal sealed partial class PreviewApplicationStrip
         }
         range.LastStart = visible > 0 ? count - visible : 0;
         range.Start = Math.Clamp(range.Start, 0, range.LastStart);
+        if (revealKey is not null && visible > 0)
+        {
+            int index = Array.FindIndex(groups, first, count, group => AppKeys.Equals(group.Key, revealKey));
+            if (index >= 0)
+            {
+                int slot = index - first;
+                range.Start = Math.Clamp(range.Start, Math.Max(0, slot - visible + 1), Math.Min(range.LastStart, slot));
+            }
+        }
         int start = first + range.Start;
         var order = groups.Skip(start).Take(visible).Select(LayoutKey).ToArray();
         bool running = range == runningApps;
@@ -476,6 +500,7 @@ internal sealed partial class PreviewApplicationStrip
 
         int next = Math.Clamp(runningApps.Start - steps, 0, runningApps.LastStart);
         if (next == runningApps.Start) return;
+        StopMembershipAnimation();
         runningApps.Start = next;
         DismissThumbnails();
         Render(scrolled: runningApps, animateRunning: true);
@@ -812,7 +837,9 @@ internal sealed partial class PreviewApplicationStrip
         menu.Opening += (_, _) => { DismissThumbnails(); openFlyout = menu; };
         menu.Closed += (_, _) =>
         {
-            if (ReferenceEquals(openFlyout, menu)) openFlyout = null;
+            if (!ReferenceEquals(openFlyout, menu)) return;
+            openFlyout = null;
+            if (pinRefreshPending) Surface.DispatcherQueue.TryEnqueue(Refresh);
         };
         return menu;
     }
@@ -934,6 +961,7 @@ internal sealed partial class PreviewApplicationStrip
 
     public void Close()
     {
+        StopMembershipAnimation();
         ResetAppDragInteraction();
         titleBarMinimize?.Dispose();
         windowAction?.Cancel();
@@ -1138,7 +1166,13 @@ internal sealed partial class PreviewApplicationStrip
 
     public void ChangePins(Action change)
     {
-        try { change(); report(""); Surface.DispatcherQueue.TryEnqueue(Refresh); }
+        try
+        {
+            change();
+            pinRefreshPending = true;
+            report("");
+            Surface.DispatcherQueue.TryEnqueue(Refresh);
+        }
         catch (Exception error) { report(error.Message); }
     }
 
