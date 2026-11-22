@@ -35,6 +35,7 @@ internal sealed class PreviewApplicationStrip
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
     private readonly AppMenuIcons appMenuIcons;
+    private readonly TaskbarIconHoverLayer iconHover;
     private readonly Dictionary<ElementTheme, Style> menuStyles = [];
     private readonly WindowMotion windowMotion;
     private TitleBarMinimizeHook? titleBarMinimize;
@@ -71,6 +72,7 @@ internal sealed class PreviewApplicationStrip
     private Border? dropMarker;
     private bool? dark, contrast;
     public StackPanel Surface => items;
+    internal Canvas HoverSurface => iconHover.Surface;
     internal Button AppCenterButton { get; }
     private IEnumerable<AppButton> Shown => pinnedApps.Buttons.Concat(runningApps.Buttons);
     private IEnumerable<AppButton> Rendered => pinnedApps.Buttons.Concat(runningTiles.Values.Select(tile => tile.View));
@@ -103,6 +105,7 @@ internal sealed class PreviewApplicationStrip
         this.report = report;
         windowMotion = new(items, owner);
         appMenuIcons = new(system, accessibility);
+        iconHover = new(system.AnimationsEnabled && !accessibility.HighContrast);
         appCenterIcon = new AppCenterIcon(iconSize);
         appCenterIcon.Apply(appCenterStyle);
         AppCenterButton = IconButton("应用中心", appCenterIcon);
@@ -192,7 +195,8 @@ internal sealed class PreviewApplicationStrip
     internal void SetAppFeedback(TaskbarAppFeedbackStyle style)
     {
         feedbackStyle = style;
-        foreach (var view in Rendered) ApplyFeedbackStyle(view.Feedback);
+        ApplyHoverStyle();
+        foreach (var view in Rendered) view.Feedback.ApplyStyle(style);
         UpdateIndicators();
     }
 
@@ -221,8 +225,7 @@ internal sealed class PreviewApplicationStrip
         SetAppFeedback(feedbackStyle);
     }
 
-    private void ApplyFeedbackStyle(TaskbarAppFeedback feedback) =>
-        feedback.ApplyStyle(feedbackStyle, feedbackLight, system, accessibility.HighContrast);
+    private void ApplyHoverStyle() => iconHover.ApplyStyle(feedbackStyle, feedbackLight, system, accessibility.HighContrast);
 
     internal void RefreshIconStyle(string executable)
     {
@@ -392,6 +395,7 @@ internal sealed class PreviewApplicationStrip
             tile.Transform.X = left;
             tile.View.Button.Opacity = PreviewIconLayout.EdgeOpacity(left, iconSize, width);
         }
+        iconHover.Reposition();
     }
 
     private void StopScrollAnimation()
@@ -506,8 +510,9 @@ internal sealed class PreviewApplicationStrip
             plate.Child = new Image { Stretch = Stretch.Uniform };
         else
             plate.Child = new FontIcon { Glyph = "\uE7C5", FontSize = Math.Round(iconSize * .7) };
-        var feedback = new TaskbarAppFeedback(plate, iconSize, system.AnimationsEnabled && !accessibility.HighContrast);
-        ApplyFeedbackStyle(feedback);
+        var feedback = new TaskbarAppFeedback(plate, iconSize);
+        feedback.ApplyStyle(feedbackStyle);
+        iconHover.Track(plate, group.Pin is null ? runningApps.Panel : null);
         var pinMarker = group.Pin is { } pin ? EnablePinReordering(button, feedback.Surface, pin) : null;
         button.Content = feedback.Surface;
         button.Click += (_, _) =>
@@ -646,10 +651,10 @@ internal sealed class PreviewApplicationStrip
         var edge = highContrast ? system.GetColorValue(UIColorType.Foreground)
             : useDark ? Color.FromArgb(48, 255, 255, 255) : Color.FromArgb(70, 35, 58, 84);
         separator.Background = new SolidColorBrush(edge);
+        ApplyHoverStyle();
         foreach (var view in Rendered)
         {
             UpdateIcon(view);
-            ApplyFeedbackStyle(view.Feedback);
             if (refreshMenus) SetAppMenu(view);
         }
     }

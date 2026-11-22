@@ -61,6 +61,7 @@ internal sealed class PreviewTaskbar : Window
         right.Children.Add(icons.AiEntrance);
 
         var strip = new Grid { Padding = new Thickness(10, 0, 10, 0) };
+        strip.Children.Add(tasks.HoverSurface);
         strip.Children.Add(tasks.Surface);
         strip.Children.Add(left);
         strip.Children.Add(right);

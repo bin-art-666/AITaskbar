@@ -14,6 +14,7 @@ internal sealed class IconSettingsPreview
     private readonly UISettings system;
     private readonly AccessibilitySettings accessibility;
     private readonly AppMenuIcons menuIcons;
+    private readonly TaskbarIconHoverLayer iconHover;
     private readonly StackPanel icons = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
     private readonly StackPanel menu = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Canvas running = new();
@@ -33,6 +34,7 @@ internal sealed class IconSettingsPreview
         this.system = system;
         this.accessibility = accessibility;
         menuIcons = new(system, accessibility);
+        iconHover = new(system.AnimationsEnabled && !accessibility.HighContrast);
         var play = new Button { Content = "试滚动", HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(play, "试滚动运行区");
@@ -40,6 +42,8 @@ internal sealed class IconSettingsPreview
         var row = new Grid { ColumnSpacing = 8 };
         row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        Grid.SetColumnSpan(iconHover.Surface, 2);
+        row.Children.Add(iconHover.Surface);
         row.Children.Add(icons);
         Grid.SetColumn(play, 1);
         row.Children.Add(play);
@@ -93,9 +97,10 @@ internal sealed class IconSettingsPreview
         Surface.Background = new SolidColorBrush(highContrast ? system.GetColorValue(UIColorType.Background)
             : light ? Color.FromArgb(255, 229, 235, 243) : Color.FromArgb(255, 38, 53, 75));
         var (active, background) = TaskbarAppFeedback.DotColors(style, system, highContrast);
+        iconHover.ApplyStyle(style, light, system, highContrast);
         foreach (var (state, visual) in examples)
         {
-            visual.ApplyStyle(style, light, system, highContrast);
+            visual.ApplyStyle(style);
             visual.ShowState(state, active, background, light);
         }
         ApplyIconColors();
@@ -140,7 +145,8 @@ internal sealed class IconSettingsPreview
         iconPlates.Add(icon);
         ToolTipService.SetToolTip(icon, label);
         AutomationProperties.SetName(icon, label);
-        var visual = new TaskbarAppFeedback(icon, iconSize, system.AnimationsEnabled && !accessibility.HighContrast);
+        var visual = new TaskbarAppFeedback(icon, iconSize);
+        iconHover.Track(icon, state == AppWindowState.Closed ? null : running);
         examples.Add((state, visual));
         return visual.Surface;
     }
@@ -200,5 +206,6 @@ internal sealed class IconSettingsPreview
             transform.X = left;
             icon.Opacity = PreviewIconLayout.EdgeOpacity(left, iconSize, running.Width);
         }
+        iconHover.Reposition();
     }
 }
