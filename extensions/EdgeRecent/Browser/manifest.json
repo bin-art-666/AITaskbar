@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "AITaskbar Edge 最近关闭",
+  "version": "0.1.0",
+  "description": "让 AITaskbar 在本地列出并恢复 Edge 最近关闭的网页标签。",
+  "incognito": "not_allowed",
+  "permissions": ["sessions", "tabs", "nativeMessaging", "alarms"],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu7k9cQVEJxEtW7kQ9NckAHTz9OlocRqHtOmFNkzc78cIBixwhDhhbr42PIvrYSsXxlpviZxBukdqdvx2Q6YwxCX+DdNTzGefLlss81GLQRRQUARB92Yc/MnnKeuxNsIE99Dqmiz1WGhgyd3T8muGcxb3flwTKI2RFqQygwP3wi4KLKw2iUvJL+wWsdfikJojxBcCxNllQmv8itl+h9ZPD7QWpxX9J0jklG1z1A7VvxH9wINGDGBrYk4yLFCvCkS6PrgwUKdVX1sDnB8UFhgGsYGwca4J5nUdPnwn3fvag9bsZjMzIPq2mydHC1Np4suoWqZ5f8VrYXAnIjU6ap0wlQIDAQAB",
+  "background": { "service_worker": "worker.js" }
+}

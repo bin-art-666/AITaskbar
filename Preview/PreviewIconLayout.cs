@@ -20,6 +20,7 @@ internal sealed record PreviewIconLayout
     public WindowAnimationStyle WindowAnimation { get; init; } = WindowAnimationStyle.WindowsDefault;
     public int WindowDurationMs { get; init; } = DefaultWindowDurationMs;
     public bool ShowRecentFiles { get; init; }
+    public bool ShowEdgeRecentlyClosed { get; init; }
     internal bool UsesPreviewWindowAnimation => WindowAnimation is WindowAnimationStyle.Curved or WindowAnimationStyle.WindowsStyle;
     internal int EffectiveWindowDurationMs => WindowAnimation == WindowAnimationStyle.WindowsStyle
         ? WindowsStyleDurationMs : WindowDurationMs;

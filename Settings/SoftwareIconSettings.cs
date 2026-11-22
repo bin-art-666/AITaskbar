@@ -42,6 +42,8 @@ internal sealed partial class TaskbarSettingsWindow
         var windowSpeedValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center, MinWidth = 72 };
         var recentFiles = new ToggleSwitch();
         AutomationProperties.SetName(recentFiles, "显示最近文件");
+        var edgeRecentlyClosed = new ToggleSwitch();
+        AutomationProperties.SetName(edgeRecentlyClosed, "显示 Edge 最近关闭");
 
         bool syncing = false;
         void Sync()
@@ -57,6 +59,7 @@ internal sealed partial class TaskbarSettingsWindow
             windowSpeed.Value = app.IconLayout.EffectiveWindowDurationMs;
             windowSpeedValue.Text = $"{app.IconLayout.EffectiveWindowDurationMs} 毫秒";
             recentFiles.IsOn = app.IconLayout.ShowRecentFiles;
+            edgeRecentlyClosed.IsOn = app.IconLayout.ShowEdgeRecentlyClosed;
             syncing = false;
             preview.ApplyLayout(app.IconSize, app.IconLayout);
         }
@@ -97,6 +100,12 @@ internal sealed partial class TaskbarSettingsWindow
             app.TrySetIconLayout(app.IconLayout with { ShowRecentFiles = recentFiles.IsOn });
             Sync();
         };
+        edgeRecentlyClosed.Toggled += (_, _) =>
+        {
+            if (syncing || edgeRecentlyClosed.IsOn == app.IconLayout.ShowEdgeRecentlyClosed) return;
+            app.TrySetIconLayout(app.IconLayout with { ShowEdgeRecentlyClosed = edgeRecentlyClosed.IsOn });
+            Sync();
+        };
 
         page.Children.Add(IconSettingsHeading("图标布局"));
         page.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
@@ -105,6 +114,7 @@ internal sealed partial class TaskbarSettingsWindow
         page.Children.Add(SettingRow("窗口开合动画", "适用于预览栏和窗口标题栏的开合操作。", windowAnimation));
         page.Children.Add(SettingRow("窗口开合速度", "曲面动画可调节为 200–1000 毫秒。Windows 风格使用 200 毫秒。", Actions(windowSpeed, windowSpeedValue)));
         page.Children.Add(SettingRow("显示最近文件", "在 Chrome 右键菜单中显示 Windows 提供的最近文件。", recentFiles));
+        page.Children.Add(SettingRow("显示 Edge 最近关闭", "连接 Edge 扩展后，在右键菜单显示最近关闭的网页。", edgeRecentlyClosed));
         BuildAppFeedbackSettings(page, preview.ApplyFeedback);
         page.Children.Add(IconSettingsHeading("单个应用的图标"));
         BuildSoftwareIconSettings(page);
