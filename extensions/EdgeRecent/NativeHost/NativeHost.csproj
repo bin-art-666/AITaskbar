@@ -9,6 +9,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../../Preview/EdgeRecentProtocol.cs" Link="EdgeRecentProtocol.cs" />
+    <Compile Include="../../../Preview/BrowserRecentProtocol.cs" Link="BrowserRecentProtocol.cs" />
   </ItemGroup>
 </Project>

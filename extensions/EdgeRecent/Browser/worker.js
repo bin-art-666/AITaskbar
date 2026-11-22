@@ -1,4 +1,4 @@
-const host = "com.aitaskbar.edge_recent";
+const host = globalThis.recentSessionsNativeHost ?? "com.aitaskbar.edge_recent";
 const reconnect = "reconnect";
 let connection;
 

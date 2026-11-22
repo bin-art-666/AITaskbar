@@ -3,7 +3,7 @@ using System.Text;
 
 namespace AITaskbar;
 
-internal static class ChromeRecentFiles
+internal static class BrowserRecentDocuments
 {
     private const int Limit = 5, Candidates = 24;
     private const uint Recent = 0, FileSystemPath = 0x80058000, RawLinkPath = 4;
@@ -14,24 +14,27 @@ internal static class ChromeRecentFiles
         ".pdf", ".html", ".htm", ".mhtml", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".webp"
     };
 
-    internal static string[] Read(AppGroup group)
+    internal static string[] Read(AppGroup group, RecentBrowser browser)
     {
+        string baseId = browser == RecentBrowser.Chrome ? "Chrome" : "MSEdge";
         string[] ids = group.Windows.Select(window => RunningWindows.WindowAppId(window.Handle))
-            .OfType<string>().Where(IsChromeId).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
+            .OfType<string>().Where(id => id.Equals(baseId, StringComparison.OrdinalIgnoreCase) ||
+                id.StartsWith(baseId + ".", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
         string? appId = ids.Length == 1 ? ids[0] : null;
-        if (ids.Length == 0 && IsMachineChrome(group.Executable)) appId = "Chrome";
+        if (ids.Length == 0 && IsMachineBrowser(group.Executable, browser)) appId = baseId;
         return appId is null ? [] : ReadLocalFiles(appId);
     }
 
-    private static bool IsChromeId(string appId) =>
-        appId.Equals("Chrome", StringComparison.OrdinalIgnoreCase) || appId.StartsWith("Chrome.", StringComparison.OrdinalIgnoreCase);
+    private static bool IsMachineBrowser(string? executable, RecentBrowser browser)
+    {
+        string relativePath = browser == RecentBrowser.Chrome
+            ? @"Google\Chrome\Application\chrome.exe" : @"Microsoft\Edge\Application\msedge.exe";
+        return IsUnder(Environment.SpecialFolder.ProgramFiles) || IsUnder(Environment.SpecialFolder.ProgramFilesX86);
 
-    private static bool IsMachineChrome(string? executable) =>
-        IsUnder(Environment.SpecialFolder.ProgramFiles, executable) || IsUnder(Environment.SpecialFolder.ProgramFilesX86, executable);
-
-    private static bool IsUnder(Environment.SpecialFolder folder, string? executable) =>
-        StringComparer.OrdinalIgnoreCase.Equals(executable,
-            Path.Combine(Environment.GetFolderPath(folder), "Google", "Chrome", "Application", "chrome.exe"));
+        bool IsUnder(Environment.SpecialFolder folder) => StringComparer.OrdinalIgnoreCase.Equals(executable,
+            Path.Combine(Environment.GetFolderPath(folder), relativePath));
+    }
 
     internal static bool IsAvailable(string path) =>
         path.Length > 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == '\\' &&

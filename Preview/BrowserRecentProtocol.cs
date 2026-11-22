@@ -3,24 +3,26 @@ using System.Text.Json;
 
 namespace AITaskbar;
 
-internal sealed record EdgeRecentEntry(string SessionId, string Title);
-internal sealed record EdgeRecentRequest(string Id, string Action, string? SessionId = null);
-internal sealed record EdgeRecentReply(string Id, bool Ok, EdgeRecentEntry[]? Items = null);
+internal enum RecentBrowser { Edge, Chrome }
 
-internal static class EdgeRecentProtocol
+internal sealed record BrowserRecentEntry(string SessionId, string Title);
+internal sealed record BrowserRecentRequest(string Id, string Action, string? SessionId = null);
+internal sealed record BrowserRecentReply(string Id, bool Ok, BrowserRecentEntry[]? Items = null);
+
+internal static class BrowserRecentProtocol
 {
     internal const int Limit = 5;
+    internal const string ChromeOrigin = "chrome-extension://ejgcgkmboopnpecjhmppoehaacinokeb/";
+    internal const string EdgeOrigin = "chrome-extension://ejfpgkpgggjobadkfedhkoimfedhggan/";
     private const int MaximumMessageBytes = 16 * 1024;
     private static readonly JsonSerializerOptions json = new(JsonSerializerDefaults.Web);
 
-    internal static string PipeName
+    internal static string PipeName(RecentBrowser browser)
     {
-        get
-        {
-            string? instance = Environment.GetEnvironmentVariable("AITASKBAR_EDGE_RECENT_INSTANCE");
-            return instance is { Length: > 0 and <= 40 } && instance.All(char.IsAsciiLetterOrDigit)
-                ? $"AITaskbar.EdgeRecent.v1.{instance}" : "AITaskbar.EdgeRecent.v1";
-        }
+        var name = $"AITaskbar.{browser}Recent.v1";
+        string? instance = Environment.GetEnvironmentVariable($"AITASKBAR_{browser.ToString().ToUpperInvariant()}_RECENT_INSTANCE");
+        return instance is { Length: > 0 and <= 40 } && instance.All(char.IsAsciiLetterOrDigit)
+            ? $"{name}.{instance}" : name;
     }
 
     internal static async Task<T?> ReadAsync<T>(Stream stream, CancellationToken token) where T : class

@@ -19,8 +19,10 @@ internal sealed record PreviewIconLayout
     [JsonConverter(typeof(JsonStringEnumConverter<WindowAnimationStyle>))]
     public WindowAnimationStyle WindowAnimation { get; init; } = WindowAnimationStyle.WindowsDefault;
     public int WindowDurationMs { get; init; } = DefaultWindowDurationMs;
-    public bool ShowRecentFiles { get; init; }
-    public bool ShowEdgeRecentlyClosed { get; init; }
+    public bool ShowRecentFiles { get; init; } = true;
+    public bool ShowEdgeRecentFiles { get; init; } = true;
+    public bool ShowEdgeRecentlyClosed { get; init; } = true;
+    public bool ShowChromeRecentlyClosed { get; init; } = true;
     internal bool UsesPreviewWindowAnimation => WindowAnimation is WindowAnimationStyle.Curved or WindowAnimationStyle.WindowsStyle;
     internal int EffectiveWindowDurationMs => WindowAnimation == WindowAnimationStyle.WindowsStyle
         ? WindowsStyleDurationMs : WindowDurationMs;

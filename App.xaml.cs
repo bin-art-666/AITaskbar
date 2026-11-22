@@ -16,6 +16,7 @@ public partial class App : Application
     private TaskbarSettingsWindow? settingsWindow;
     private PreviewTaskbar? preview;
     private bool shuttingDown, comparisonStarting;
+    private bool useDefaultRoot;
     private string root = "";
     private int iconSize;
     internal TaskbarAppFeedbackStyle AppFeedback { get; private set; } = TaskbarAppFeedbackStyle.Default;
@@ -43,14 +44,15 @@ public partial class App : Application
         IconLayout = PreviewIconLayout.Read(root);
         IconPreferences = new(Path.Combine(root, "preview-original-icons.json"));
         CurrentAppCenterAppearance = SavedAppCenterAppearance = AppCenterAppearance.Read(root);
+        useDefaultRoot = string.Equals(root, defaultRoot, StringComparison.OrdinalIgnoreCase);
         var verifying = arguments.Any(arg => arg.StartsWith("--verify-", StringComparison.Ordinal));
-        if (verifying && string.Equals(root, defaultRoot, StringComparison.OrdinalIgnoreCase))
+        if (verifying && useDefaultRoot)
         {
             Environment.ExitCode = 2;
             Exit();
             return;
         }
-        var useExistingProfiles = string.Equals(root, defaultRoot, StringComparison.OrdinalIgnoreCase)
+        var useExistingProfiles = useDefaultRoot
             && File.Exists(Path.Combine(root, "use-existing-profiles"));
         var profileRoot = useExistingProfiles ? Path.GetDirectoryName(defaultRoot)! : root;
         var aiDirectory = Path.Combine(profileRoot, "AIEnter");
@@ -103,6 +105,7 @@ public partial class App : Application
 
         var ai = arguments.Contains("--ai");
         var halo = arguments.Contains("--halo");
+        EnsureBrowserRecentHosts();
         AiModule.Start(ai ? arguments : ["--background"], aiDirectory);
         HaloModule.Start(halo ? arguments : ["--background"], haloDirectory);
         if (arguments.Contains("--compare")) StartComparison();
@@ -266,10 +269,30 @@ public partial class App : Application
             settingsWindow?.SetStatus("无法保存图标布局和动画设置。");
             return false;
         }
+        bool enableRecentHost = (layout.ShowChromeRecentlyClosed && !IconLayout.ShowChromeRecentlyClosed) ||
+            (layout.ShowEdgeRecentlyClosed && !IconLayout.ShowEdgeRecentlyClosed);
         IconLayout = layout;
+        if (enableRecentHost) EnsureBrowserRecentHosts();
         preview?.SetIconLayout(layout);
         settingsWindow?.SetStatus("");
         return true;
+    }
+
+    private void EnsureBrowserRecentHosts()
+    {
+        if (!useDefaultRoot) return;
+        EnsureBrowserRecentHost(RecentBrowser.Chrome, IconLayout.ShowChromeRecentlyClosed);
+        EnsureBrowserRecentHost(RecentBrowser.Edge, IconLayout.ShowEdgeRecentlyClosed);
+    }
+
+    private void EnsureBrowserRecentHost(RecentBrowser browser, bool enabled)
+    {
+        if (!enabled) return;
+        try { BrowserRecentHostRegistration.EnsureInstalled(root, browser); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            Log(error);
+        }
     }
 
     internal bool TrySetOriginalIcon(string executable, bool useOriginal)

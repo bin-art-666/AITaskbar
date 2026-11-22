@@ -926,7 +926,9 @@ internal sealed class PreviewApplicationStrip
             if (privateWindow is { } task)
                 menu.Items.Add(AppMenuItem(theme, task.Text, AppMenuIcon.PrivateWindow, () => Launch(group, task.Arguments)));
             if (readRecent && iconLayout.ShowRecentFiles && app == "chrome.exe")
-                AddChromeRecentFiles(menu, group, theme);
+                AddBrowserRecentFiles(menu, group, theme, RecentBrowser.Chrome);
+            if (readRecent && iconLayout.ShowEdgeRecentFiles && app == "msedge.exe")
+                AddBrowserRecentFiles(menu, group, theme, RecentBrowser.Edge);
             int recentPosition = menu.Items.Count;
             if (PinItem(group, theme) is { } pin) menu.Items.Add(pin);
             if (group.Windows.Count == 0) return recentPosition;
@@ -952,12 +954,11 @@ internal sealed class PreviewApplicationStrip
             var current = windowMotion.HasRectangularRequest ? groups : AppGroups.Build(pins.Items, RunningWindows.List());
             var group = FindApp(current, view.Group.Key) ?? view.Group;
             int recentPosition = Populate(group, current, readRecent: true);
-            if (!iconLayout.ShowEdgeRecentlyClosed || group.Windows.Count == 0 ||
-                !StringComparer.OrdinalIgnoreCase.Equals(Path.GetFileName(group.Executable), "msedge.exe")) return;
-            var tabs = await EdgeRecentFiles.ReadAsync();
+            if (group.Windows.Count == 0 || RecentBrowserFor(group.Executable) is not { } browser || !ShowsRecentSessions(browser)) return;
+            var tabs = await BrowserRecentSessions.ReadAsync(browser);
             if (tabs.Length == 0 || request != opening || !ReferenceEquals(openFlyout, menu) ||
-                !iconLayout.ShowEdgeRecentlyClosed || !group.Windows.Any(RunningWindows.IsCurrent)) return;
-            menu.Items.Insert(recentPosition, EdgeRecentMenu(view.Button.ActualTheme, tabs));
+                !ShowsRecentSessions(browser) || !group.Windows.Any(RunningWindows.IsCurrent)) return;
+            menu.Items.Insert(recentPosition, RecentSessionMenu(view.Button.ActualTheme, browser, tabs));
         };
         view.Button.ContextFlyout = menu;
     }
@@ -965,30 +966,40 @@ internal sealed class PreviewApplicationStrip
     private static AppGroup? FindApp(IEnumerable<AppGroup> apps, string key) =>
         apps.FirstOrDefault(app => StringComparer.OrdinalIgnoreCase.Equals(app.Key, key));
 
-    private MenuFlyoutSubItem EdgeRecentMenu(ElementTheme theme, IReadOnlyList<EdgeRecentEntry> tabs)
+    private static RecentBrowser? RecentBrowserFor(string? executable) => Path.GetFileName(executable)?.ToLowerInvariant() switch
+    {
+        "msedge.exe" => RecentBrowser.Edge,
+        "chrome.exe" => RecentBrowser.Chrome,
+        _ => null
+    };
+
+    private bool ShowsRecentSessions(RecentBrowser browser) =>
+        browser == RecentBrowser.Chrome ? iconLayout.ShowChromeRecentlyClosed : iconLayout.ShowEdgeRecentlyClosed;
+
+    private MenuFlyoutSubItem RecentSessionMenu(ElementTheme theme, RecentBrowser browser, IReadOnlyList<BrowserRecentEntry> tabs)
     {
         var recent = new MenuFlyoutSubItem { Text = "最近关闭", Icon = appMenuIcons.Create(AppMenuIcon.RecentFile, theme) };
         foreach (var tab in tabs)
-            recent.Items.Add(AppMenuItem(theme, tab.Title, AppMenuIcon.RecentFile, () => _ = RestoreEdgeTabAsync(tab.SessionId)));
+            recent.Items.Add(AppMenuItem(theme, tab.Title, AppMenuIcon.RecentFile, () => _ = RestoreBrowserTabAsync(browser, tab.SessionId)));
         return recent;
     }
 
-    private async Task RestoreEdgeTabAsync(string sessionId)
+    private async Task RestoreBrowserTabAsync(RecentBrowser browser, string sessionId)
     {
-        if (iconLayout.ShowEdgeRecentlyClosed && !await EdgeRecentFiles.RestoreAsync(sessionId))
-            report("Edge 未连接，或该页面已无法恢复。");
+        if (ShowsRecentSessions(browser) && !await BrowserRecentSessions.RestoreAsync(browser, sessionId))
+            report($"{browser} 未连接，或该页面已无法恢复。");
     }
 
-    private void AddChromeRecentFiles(MenuFlyout menu, AppGroup group, ElementTheme theme)
+    private void AddBrowserRecentFiles(MenuFlyout menu, AppGroup group, ElementTheme theme, RecentBrowser browser)
     {
-        var files = ChromeRecentFiles.Read(group);
+        var files = BrowserRecentDocuments.Read(group, browser);
         if (files.Length == 0) return;
         var recent = new MenuFlyoutSubItem { Text = "最近文件", Icon = appMenuIcons.Create(AppMenuIcon.RecentFile, theme) };
         foreach (string path in files)
         {
             recent.Items.Add(AppMenuItem(theme, Path.GetFileName(path), AppMenuIcon.RecentFile, () =>
             {
-                if (!ChromeRecentFiles.IsAvailable(path)) { report("文件已移动或无法访问。"); return; }
+                if (!BrowserRecentDocuments.IsAvailable(path)) { report("文件已移动或无法访问。"); return; }
                 Launch(group, new Uri(path).AbsoluteUri);
             }));
         }
