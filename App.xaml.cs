@@ -34,6 +34,11 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         var arguments = Environment.GetCommandLineArgs();
+        if (arguments.Length > 1 && arguments[1] == "--watch-system-taskbar")
+        {
+            _ = WatchSystemTaskbarAsync(arguments);
+            return;
+        }
         var customRoot = Array.IndexOf(arguments, "--data-dir");
         var defaultRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AITaskbar");
         root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(customRoot >= 0 && customRoot + 1 < arguments.Length
@@ -111,6 +116,12 @@ public partial class App : Application
         if (arguments.Contains("--compare")) StartComparison();
         else if (arguments.Contains("--startup")) ShowAppearance(hidden: true);
         else if (!ai && !halo && !arguments.Contains("--background")) ShowSettings();
+    }
+
+    private async Task WatchSystemTaskbarAsync(string[] arguments)
+    {
+        await SystemTaskbarVisibility.WatchAsync(arguments);
+        Exit();
     }
 
     private async Task VerifyAppearanceAsync()

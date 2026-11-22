@@ -2,6 +2,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Pickers;
@@ -15,6 +16,7 @@ internal sealed class PreviewTaskbar : Window
     private readonly PinnedApps pins;
     private readonly DispatcherQueueTimer refresh;
     private readonly PreviewApplicationStrip tasks;
+    private readonly SystemTaskbarVisibility systemTaskbar = new();
     private readonly TextBlock feedback = new() { MaxWidth = 200, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
     private bool closed, menuOpen;
     internal PreviewModuleIcons ModuleIcons { get; }
@@ -55,12 +57,9 @@ internal sealed class PreviewTaskbar : Window
         });
         var icons = ModuleIcons = new PreviewModuleIcons(halo, ai, DispatcherQueue);
         left.Children.Add(halo);
-        left.Children.Add(Button("\uE718", "固定应用", () => _ = PickPinAsync(), glyph: true));
 
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
         right.Children.Add(feedback);
-        right.Children.Add(Button("\uE713", "打开 AITaskbar 设置", app.ShowSettings, glyph: true));
-        right.Children.Add(Button("\uE8BB", "关闭预览栏", Close, glyph: true));
         right.Children.Add(icons.AiEntrance);
 
         var strip = new Grid { Padding = new Thickness(10, 0, 10, 0) };
@@ -75,6 +74,38 @@ internal sealed class PreviewTaskbar : Window
         left.SizeChanged += FitApps;
         right.SizeChanged += FitApps;
         var surface = new Border { CornerRadius = new CornerRadius(0) };
+        var taskbarMenu = NewBarMenu();
+        AddMenuAction(taskbarMenu, "固定应用", () => _ = PickPinAsync());
+        AddMenuAction(taskbarMenu, "AITaskbar 设置", app.ShowSettings);
+        var visibility = new MenuFlyoutItem();
+        visibility.Click += async (_, _) =>
+        {
+            try
+            {
+                await systemTaskbar.ToggleAsync();
+                if (!closed) bar.Reposition();
+            }
+            catch (Exception error) { Report(error.Message); }
+        };
+        taskbarMenu.Opening += (_, _) =>
+        {
+            visibility.Text = systemTaskbar.Visible == false ? "显示系统任务栏" : "隐藏系统任务栏";
+            visibility.IsEnabled = systemTaskbar.CanToggle;
+        };
+        taskbarMenu.Items.Add(visibility);
+        taskbarMenu.Items.Add(new MenuFlyoutSeparator());
+        AddMenuAction(taskbarMenu, "退出 AITaskbar", app.RequestExit);
+        surface.ContextRequested += (_, args) =>
+        {
+            if (args.Handled || !args.TryGetPosition(surface, out var point)) return;
+            for (var element = args.OriginalSource as DependencyObject; element is not null && element != surface;
+                element = VisualTreeHelper.GetParent(element))
+            {
+                if (element is ButtonBase) return;
+            }
+            args.Handled = true;
+            taskbarMenu.ShowAt(surface, point);
+        };
         var visual = new PreviewBarAppearance(this, surface, strip, appearance, light =>
         {
             icons.RefreshSystem(light);
@@ -92,6 +123,7 @@ internal sealed class PreviewTaskbar : Window
         Closed += (_, _) =>
         {
             closed = true;
+            systemTaskbar.Dispose();
             refresh.Stop();
             tasks.Close();
             icons.Dispose();
@@ -148,10 +180,9 @@ internal sealed class PreviewTaskbar : Window
         catch (Exception error) { if (!closed) Report(error.Message); }
     }
 
-    private static Button Button(string label, string name, Action click, bool glyph = false)
+    private static Button Button(string label, string name, Action click)
     {
         var button = new Button { Content = label, Height = 34, Padding = new Thickness(10, 0, 10, 0) };
-        if (glyph) button.FontFamily = new FontFamily("Segoe Fluent Icons");
         AutomationProperties.SetName(button, name);
         ToolTipService.SetToolTip(button, name);
         button.Click += (_, _) => click();
@@ -160,13 +191,28 @@ internal sealed class PreviewTaskbar : Window
 
     private void SetMenu(Button button, string label, Action click)
     {
+        var menu = NewBarMenu();
+        AddMenuAction(menu, label, click);
+        button.ContextFlyout = menu;
+    }
+
+    private MenuFlyout NewBarMenu()
+    {
         var menu = new MenuFlyout();
-        var action = new MenuFlyoutItem { Text = label };
-        menu.Opening += (_, _) => menuOpen = true;
+        menu.Opening += (_, _) =>
+        {
+            menuOpen = true;
+            tasks.DismissThumbnails();
+        };
         menu.Closed += (_, _) => menuOpen = false;
+        return menu;
+    }
+
+    private static void AddMenuAction(MenuFlyout menu, string label, Action click)
+    {
+        var action = new MenuFlyoutItem { Text = label };
         action.Click += (_, _) => click();
         menu.Items.Add(action);
-        button.ContextFlyout = menu;
     }
 
     private void AcceptDrop(Button button, Func<DataPackageView, bool> supports, Func<DataPackageView, Task<bool>> deliver)
