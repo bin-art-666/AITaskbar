@@ -5,6 +5,22 @@ namespace AITaskbar;
 
 internal static class BrowserRecentSessions
 {
+    internal static async Task<bool> IsConnectedAsync(RecentBrowser browser)
+    {
+        // The host listens only while the browser has an open native messaging port.
+        // Opening and closing a pipe without a request does not read any recent tabs.
+        using var pipe = CreatePipe(browser);
+        try
+        {
+            await pipe.ConnectAsync(120);
+            return true;
+        }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     internal static async Task<BrowserRecentEntry[]> ReadAsync(RecentBrowser browser)
     {
         var reply = await SendAsync(browser, "list");
@@ -18,8 +34,7 @@ internal static class BrowserRecentSessions
     private static async Task<BrowserRecentReply?> SendAsync(RecentBrowser browser, string action, string? sessionId = null)
     {
         using var timeout = new CancellationTokenSource(850);
-        using var pipe = new NamedPipeClientStream(".", BrowserRecentProtocol.PipeName(browser), PipeDirection.InOut,
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        using var pipe = CreatePipe(browser);
         try
         {
             await pipe.ConnectAsync(120, timeout.Token);
@@ -31,4 +46,8 @@ internal static class BrowserRecentSessions
         catch (Exception error) when (error is IOException or InvalidDataException or TimeoutException or OperationCanceledException or
                                       UnauthorizedAccessException or JsonException) { return null; }
     }
+
+    private static NamedPipeClientStream CreatePipe(RecentBrowser browser) =>
+        new(".", BrowserRecentProtocol.PipeName(browser), PipeDirection.InOut,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 }
