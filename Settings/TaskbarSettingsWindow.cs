@@ -204,6 +204,7 @@ internal sealed partial class TaskbarSettingsWindow : Window
     {
         previewToggle.Content = enabled ? "关闭预览栏" : "开启预览栏";
         RefreshNavigationIcons();
+        UpdateEffectiveTransparency();
     }
 
     private void RefreshNavigationIcons()

@@ -17,15 +17,18 @@ internal sealed class DesktopAppBar : IDisposable
     private readonly uint taskbarCreated = RegisterWindowMessage("TaskbarCreated");
     private Native.Rect? proposed, reserved;
     private int heightDip;
+    internal bool CoversWindows { get; private set; }
     private bool registered, disposed, queued, shellRestarted, fullscreen;
 
-    public DesktopAppBar(nint handle, DispatcherQueue dispatcher, int iconSize, Action beforeMouseActivation, Action<Exception> reportFailure)
+    public DesktopAppBar(nint handle, DispatcherQueue dispatcher, int iconSize, bool coversWindows,
+        Action beforeMouseActivation, Action<Exception> reportFailure)
     {
         this.handle = handle;
         this.dispatcher = dispatcher;
         this.reportFailure = reportFailure;
         this.beforeMouseActivation = beforeMouseActivation;
         heightDip = HeightFor(iconSize);
+        CoversWindows = coversWindows;
         callback = WndProc;
         if (notification == 0 || taskbarCreated == 0 || !SetWindowSubclass(handle, callback, 1, 0))
             throw new InvalidOperationException("无法初始化预览栏窗口。");
@@ -57,9 +60,11 @@ internal sealed class DesktopAppBar : IDisposable
         var height = (int)Math.Round(heightDip * monitor.Dpi / 96d);
         var data = Data();
         data.Rectangle = monitor.Bounds;
-        data.Rectangle.Top = data.Rectangle.Bottom - height;
+        // A zero-height reservation keeps the shell's position and fullscreen notifications.
+        int reservedHeight = CoversWindows ? 0 : height;
+        data.Rectangle.Top = data.Rectangle.Bottom - reservedHeight;
         SHAppBarMessage(QueryPosition, ref data);
-        data.Rectangle.Top = data.Rectangle.Bottom - height;
+        data.Rectangle.Top = data.Rectangle.Bottom - reservedHeight;
         if (proposed is not { } previous || !previous.Equals(data.Rectangle))
         {
             proposed = data.Rectangle;
@@ -68,6 +73,7 @@ internal sealed class DesktopAppBar : IDisposable
             reserved = data.Rectangle;
         }
         var bounds = reserved!.Value;
+        if (CoversWindows) bounds.Top = bounds.Bottom - height;
         if (GetWindowRect(handle, out var current) && current.Equals(bounds)) return;
         if (!SetWindowPos(handle, fullscreen ? new nint(1) : new nint(-1), bounds.Left, bounds.Top,
                 bounds.Right - bounds.Left, bounds.Bottom - bounds.Top, NoActivate))
@@ -75,6 +81,12 @@ internal sealed class DesktopAppBar : IDisposable
     }
 
     internal void Reposition() => QueuePosition();
+
+    internal void SetCoverWindows(bool coversWindows)
+    {
+        CoversWindows = coversWindows;
+        Reposition();
+    }
 
     internal void SetIconSize(int size)
     {

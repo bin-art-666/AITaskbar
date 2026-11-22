@@ -19,6 +19,8 @@ public partial class App : Application
     private bool useDefaultRoot;
     private string root = "";
     private int iconSize;
+    internal bool TaskbarCoversWindows { get; private set; }
+    private string TaskbarCoverFile => Path.Combine(root, "preview-cover-windows");
     internal TaskbarAppFeedbackStyle AppFeedback { get; private set; } = TaskbarAppFeedbackStyle.Default;
     internal PreviewIconLayout IconLayout { get; private set; } = PreviewIconLayout.Default;
     internal PreviewIconPreferences IconPreferences { get; private set; } = null!;
@@ -45,6 +47,7 @@ public partial class App : Application
             ? arguments[customRoot + 1]
             : defaultRoot));
         iconSize = PreviewIconSize.Read(root);
+        TaskbarCoversWindows = File.Exists(TaskbarCoverFile);
         AppFeedback = TaskbarAppFeedbackStyle.Read(root);
         IconLayout = PreviewIconLayout.Read(root);
         IconPreferences = new(Path.Combine(root, "preview-original-icons.json"));
@@ -221,6 +224,18 @@ public partial class App : Application
     }
 
     internal int IconSize => iconSize;
+
+    internal void SaveTaskbarCoverWindows(bool enabled)
+    {
+        if (enabled)
+        {
+            Directory.CreateDirectory(root);
+            using var marker = File.Create(TaskbarCoverFile);
+        }
+        else File.Delete(TaskbarCoverFile);
+        TaskbarCoversWindows = enabled;
+    }
+    internal bool PreviewVisible => preview is not null;
     internal IReadOnlyList<PinnedApp> PreviewPins => preview?.PinnedItems ?? new PinnedApps(Path.Combine(root, "preview-pins.json")).Items;
     internal PreviewModuleIcons? ModuleIcons => preview?.ModuleIcons;
     internal void FocusPreview() => preview?.Activate();

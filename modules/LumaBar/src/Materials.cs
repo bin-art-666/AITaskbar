@@ -14,6 +14,7 @@ namespace LumaBar
 
     public sealed class TaskbarAppearance
     {
+        internal const int MaximumBlurRadius = 200;
         public string Material = "blur";
         public bool AutomaticColor = true;
         public string Color = "#202630";
@@ -25,8 +26,8 @@ namespace LumaBar
         {
             if (Material != "normal" && Material != "clear" && Material != "blur" && Material != "acrylic" && Material != "opaque")
                 throw new ArgumentException("未知的任务栏材质。");
-            if (TintOpacity < 0 || TintOpacity > 100 || BlurRadius < 0 || BlurRadius > 100)
-                throw new ArgumentException("染色不透明度和模糊强度必须在 0–100 之间。");
+            if (TintOpacity < 0 || TintOpacity > 100 || BlurRadius < 0 || BlurRadius > MaximumBlurRadius)
+                throw new ArgumentException($"染色不透明度必须在 0–100 之间，模糊强度必须在 0–{MaximumBlurRadius} 之间。");
             if (Color == null || Color.Length != 7 || Color[0] != '#') throw new ArgumentException("颜色应为 #RRGGBB。");
             int rgb;
             if (!Int32.TryParse(Color.Substring(1), System.Globalization.NumberStyles.HexNumber,

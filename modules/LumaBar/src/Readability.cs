@@ -5,7 +5,7 @@ using System.Drawing;
 namespace LumaBar
 {
     internal sealed record BarAppearance(Tone Tone, string Material, uint Abgr, int Blur, bool ShowLine,
-        bool MouseGlow, int GlowRadius, int GlowStrength, int TransitionMilliseconds);
+        bool MouseGlow, int GlowRadius, int GlowStrength, int TransitionMilliseconds, bool ContrastProtected);
 
     internal sealed class BackdropReading
     {

@@ -62,6 +62,7 @@ namespace LumaBar
             opacity = Slider(190, 258, 385);
             blurText = AddLabel("模糊强度", 20, 311, 170);
             blur = Slider(190, 303, 385);
+            blur.Maximum = TaskbarAppearance.MaximumBlurRadius;
             color = new ModernButton { Tag = "Tint", Text = "自定义染色…", Location = new Point(20, 351), Size = new Size(160, 32) };
             Controls.Add(color);
             line = new ModernCheckBox { Text = "显示任务栏顶部分隔线", Location = new Point(205, 352), Size = new Size(350, 28) };

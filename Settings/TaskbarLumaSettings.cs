@@ -12,7 +12,6 @@ internal sealed partial class TaskbarSettingsWindow
     private static readonly string[] transitions = ["standard", "soft", "off"];
     private readonly ToggleSwitch glassEnabled = new();
     private readonly ToggleSwitch wallpaperRegion = new();
-    private readonly ToggleSwitch contrastProtection = new();
     private readonly ToggleSwitch primaryOverride = new();
     private readonly ToggleSwitch automaticTint = new();
     private readonly ToggleSwitch topLine = new();
@@ -30,8 +29,6 @@ internal sealed partial class TaskbarSettingsWindow
             draft => draft.Glass.Enabled = glassEnabled.IsOn);
         AddSwitch(advanced, "优先分析栏后壁纸", "用任务栏区域判断壁纸明暗。", wallpaperRegion,
             draft => draft.Glass.TaskbarRegion = wallpaperRegion.IsOn);
-        AddSwitch(advanced, "自动对比度保护", "复杂壁纸下自动提高背景遮盖程度。", contrastProtection,
-            draft => draft.Glass.AutoContrast = contrastProtection.IsOn);
         AddSwitch(advanced, "主屏单独设置", "为预览栏所在的主屏保存三套独立场景。", primaryOverride, UpdatePrimaryOverride);
         AddSwitch(advanced, "自动染色", "跟随当前场景的明暗判断。", automaticTint,
             _ => SelectedMaterial!.AutomaticColor = automaticTint.IsOn);
@@ -162,7 +159,7 @@ internal sealed partial class TaskbarSettingsWindow
         }
         glassEnabled.IsOn = draft.Glass.Enabled;
         wallpaperRegion.IsOn = draft.Glass.TaskbarRegion;
-        contrastProtection.IsOn = draft.Glass.AutoContrast;
+        contrastProtection.IsChecked = draft.Glass.AutoContrast;
         primaryOverride.IsOn = draft.Glass.PerMonitor && previewScreen is { } display &&
             draft.Glass.MonitorOverrides.TryGetValue(display, out var custom) && custom.Enabled;
         automaticTint.IsOn = material.AutomaticColor;

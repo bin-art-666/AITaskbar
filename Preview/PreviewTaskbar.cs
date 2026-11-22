@@ -87,12 +87,29 @@ internal sealed class PreviewTaskbar : Window
             }
             catch (Exception error) { Report(error.Message); }
         };
+        var coverWindows = new ToggleMenuFlyoutItem { Text = "覆盖窗口" };
+        coverWindows.Click += (_, _) =>
+        {
+            try
+            {
+                app.SaveTaskbarCoverWindows(coverWindows.IsChecked);
+                bar.SetCoverWindows(app.TaskbarCoversWindows);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                coverWindows.IsChecked = app.TaskbarCoversWindows;
+                reportFailure(error);
+                Report("无法保存覆盖窗口设置。");
+            }
+        };
         taskbarMenu.Opening += (_, _) =>
         {
             visibility.Text = systemTaskbar.Visible == false ? "显示系统任务栏" : "隐藏系统任务栏";
             visibility.IsEnabled = systemTaskbar.CanToggle;
+            coverWindows.IsChecked = app.TaskbarCoversWindows;
         };
         taskbarMenu.Items.Add(visibility);
+        taskbarMenu.Items.Add(coverWindows);
         taskbarMenu.Items.Add(new MenuFlyoutSeparator());
         AddMenuAction(taskbarMenu, "退出 AITaskbar", app.RequestExit);
         surface.ContextRequested += (_, args) =>
@@ -134,7 +151,8 @@ internal sealed class PreviewTaskbar : Window
         {
             Content = surface;
             visual.Refresh();
-            bar = new(handle, DispatcherQueue, iconSize, tasks.RememberForeground, error => { Close(); reportFailure(error); });
+            bar = new(handle, DispatcherQueue, iconSize, app.TaskbarCoversWindows,
+                tasks.RememberForeground, error => { Close(); reportFailure(error); });
             tasks.Refresh();
             refresh.Start();
         }

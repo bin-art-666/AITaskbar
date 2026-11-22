@@ -11,7 +11,9 @@ public sealed class GlassBackdrop : SystemBackdrop
 {
     MaterialOptions material;
     internal bool TransparentCanvas { get; init; }
+    internal bool KeepBlurBackdropAtZero { get; init; }
     internal float BlurScale { get; init; } = .18f;
+    internal int MaximumBlurStrength { get; init; } = 100;
     public GlassBackdrop(GlassStyle style) : this(MaterialOptions.ForPreset(style)) { }
     public GlassBackdrop(MaterialOptions material) => this.material = material;
 
@@ -34,7 +36,7 @@ public sealed class GlassBackdrop : SystemBackdrop
     internal int BlurStrength => blurStrength;
     internal void UpdateBlur(int value)
     {
-        value = Math.Clamp(value, 0, 100);
+        value = Math.Clamp(value, 0, MaximumBlurStrength);
         if (blurStrength == value) return;
         blurStrength = value;
         UpdatePalette();
@@ -85,7 +87,7 @@ public sealed class GlassBackdrop : SystemBackdrop
             var color = material.FlatColor(dark);
             transparentBrush ??= transparentCompositor.CreateColorBrush();
             transparentBrush.Color = Color.FromArgb(color.Alpha, (byte)(color.Rgb >> 16), (byte)(color.Rgb >> 8), (byte)color.Rgb);
-            if (TransparentCanvas && blurStrength > 0)
+            if (TransparentCanvas && (KeepBlurBackdropAtZero || blurStrength > 0))
             {
                 if (blurBrush == null)
                 {
@@ -101,7 +103,8 @@ public sealed class GlassBackdrop : SystemBackdrop
                     blurBrush.SetSourceParameter("desktop", desktopSource);
                 }
                 blurBrush.Properties.InsertScalar("DesktopBlur.BlurAmount", blurStrength * BlurScale);
-                connectedTarget.SystemBackdrop = blurBrush;
+                if (!ReferenceEquals(connectedTarget.SystemBackdrop, blurBrush))
+                    connectedTarget.SystemBackdrop = blurBrush;
             }
             else connectedTarget.SystemBackdrop = transparentBrush;
             return;

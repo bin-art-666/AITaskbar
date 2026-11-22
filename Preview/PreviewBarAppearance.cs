@@ -105,7 +105,9 @@ internal sealed class PreviewBarAppearance : IDisposable
         }
         else
         {
-            SetBackdrop("desktop");
+            // At full transparency and zero blur, let DWM composite the live windows directly.
+            bool useBlurBackdrop = kind == "blur" && (appearance!.Blur > 0 || tint.A != 0);
+            SetBackdrop(useBlurBackdrop ? "blur" : "desktop");
             backdrop!.UpdateBlur(kind == "blur" ? appearance!.Blur : kind == "acrylic" ? 30 : 0);
             surface.Background = new SolidColorBrush(tint);
         }
@@ -143,8 +145,9 @@ internal sealed class PreviewBarAppearance : IDisposable
         backdropKind = kind;
         backdrop = kind switch
         {
-            "desktop" => new Halo.GlassBackdrop(new Halo.MaterialOptions(TintOpacity: 0, LuminosityOpacity: 0, NoBase: true))
-                { TransparentCanvas = true, BlurScale = 1f / 3 },
+            "desktop" or "blur" => new Halo.GlassBackdrop(new Halo.MaterialOptions(TintOpacity: 0, LuminosityOpacity: 0, NoBase: true))
+                { TransparentCanvas = true, BlurScale = 1f / 3, KeepBlurBackdropAtZero = kind == "blur",
+                    MaximumBlurStrength = LumaBar.TaskbarAppearance.MaximumBlurRadius },
             "acrylic" => new Halo.GlassBackdrop(Halo.GlassStyle.Acrylic),
             _ => null
         };

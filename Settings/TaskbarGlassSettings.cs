@@ -11,11 +11,13 @@ internal sealed partial class TaskbarSettingsWindow
     private static readonly MaterialScene[] scenes = [MaterialScene.Desktop, MaterialScene.Window, MaterialScene.Maximized];
     private readonly ComboBox materialChoice = new() { Width = 156 };
     private readonly ComboBox sceneChoice = new() { Width = 156 };
-    private readonly Slider transparency = new() { Minimum = 0, Maximum = 100, StepFrequency = 1, Width = 136 };
-    private readonly Slider blur = new() { Minimum = 0, Maximum = 100, StepFrequency = 1, Width = 136 };
+    private readonly Slider transparency = new() { Minimum = 0, Maximum = 100, StepFrequency = 1 };
+    private readonly Slider blur = new() { Minimum = 0, Maximum = 100, StepFrequency = .1, SmallChange = .1,
+        IsThumbToolTipEnabled = false };
+    private readonly CheckBox contrastProtection = new() { Content = "自动对比度保护", MinWidth = 0 };
     private readonly TextBlock transparencyValue = new() { MinWidth = 44, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock blurValue = new() { MinWidth = 44, VerticalAlignment = VerticalAlignment.Center };
-    private readonly TextBlock effectiveTransparency = new() { TextWrapping = TextWrapping.Wrap, Opacity = .75 };
+    private readonly TextBlock effectiveTransparency = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = .75 };
     private readonly TextBlock sceneHint = new() { Opacity = .75 };
     private readonly StackPanel glassFields = new() { Spacing = 6 };
     private readonly StackPanel glassActions = Actions();
@@ -38,11 +40,15 @@ internal sealed partial class TaskbarSettingsWindow
         AutomationProperties.SetName(sceneChoice, "任务栏场景");
         AutomationProperties.SetName(transparency, "任务栏透明度");
         AutomationProperties.SetName(blur, "任务栏模糊强度");
+        AutomationProperties.SetHelpText(blur, "低强度占更多滑块行程。右侧显示实际模糊强度。");
+        ToolTipService.SetToolTip(contrastProtection, "复杂壁纸下自动增加染色，以保持图标和文字清晰。");
+        contrastProtection.Checked += (_, _) => ChangeLuma(draft => draft.Glass.AutoContrast = true);
+        contrastProtection.Unchecked += (_, _) => ChangeLuma(draft => draft.Glass.AutoContrast = false);
         glassFields.Children.Add(sceneHint);
         glassFields.Children.Add(SettingRow("材质", "", materialChoice));
-        glassFields.Children.Add(SettingRow("透明度", "数值越高，任务栏背景越通透。", Actions(transparency, transparencyValue)));
-        glassFields.Children.Add(SettingRow("模糊强度", "选择模糊玻璃后可调节背景虚化。", Actions(blur, blurValue)));
-        glassFields.Children.Add(effectiveTransparency);
+        glassFields.Children.Add(GlassSliderRow("透明度", transparency, transparencyValue,
+            Actions(effectiveTransparency, contrastProtection)));
+        glassFields.Children.Add(GlassSliderRow("模糊强度", blur, blurValue));
         var advanced = new Expander { Header = "场景设置", HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch };
         var scope = new StackPanel { Spacing = 8 };
@@ -58,7 +64,11 @@ internal sealed partial class TaskbarSettingsWindow
         page.Children.Add(glassFields);
         materialChoice.SelectionChanged += (_, _) => EditGlass(item => item.Material = materials[materialChoice.SelectedIndex]);
         transparency.ValueChanged += (_, _) => EditGlass(item => item.TintOpacity = 100 - (int)transparency.Value);
-        blur.ValueChanged += (_, _) => EditGlass(item => item.BlurRadius = (int)blur.Value);
+        blur.ValueChanged += (_, _) =>
+        {
+            int radius = BlurAtPosition(blur.Value);
+            if (SelectedMaterial?.BlurRadius != radius) EditGlass(item => item.BlurRadius = radius);
+        };
         sceneChoice.SelectionChanged += (_, _) =>
         {
             if (syncingGlass) return;
@@ -66,6 +76,22 @@ internal sealed partial class TaskbarSettingsWindow
             if (glassDirty) _ = PublishGlassDraft();
         };
         SyncGlassControls();
+    }
+
+    private static StackPanel GlassSliderRow(string title, Slider slider, TextBlock value, UIElement? details = null)
+    {
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        header.Children.Add(new TextBlock { Text = title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        value.TextAlignment = TextAlignment.Right;
+        Grid.SetColumn(value, 1);
+        header.Children.Add(value);
+        var section = new StackPanel { Spacing = 3, Margin = new Thickness(0, 4, 0, 6) };
+        section.Children.Add(header);
+        section.Children.Add(slider);
+        if (details is not null) section.Children.Add(details);
+        return section;
     }
 
     internal async Task ResetGlassAsync(bool keepScene = false)
@@ -171,14 +197,15 @@ internal sealed partial class TaskbarSettingsWindow
         {
             materialChoice.SelectedIndex = Array.IndexOf(materials, item.Material);
             transparency.Value = 100 - item.TintOpacity;
-            blur.Value = item.BlurRadius;
+            if (BlurAtPosition(blur.Value) != item.BlurRadius) blur.Value = PositionForBlur(item.BlurRadius);
         }
         bool available = item is not null && !glassSaving;
         sceneChoice.IsEnabled = materialChoice.IsEnabled = available;
         transparency.IsEnabled = available && item!.Material is "clear" or "blur" or "acrylic";
         blur.IsEnabled = available && item!.Material == "blur";
         transparencyValue.Text = transparency.IsEnabled ? $"{transparency.Value:0}%" : "—";
-        blurValue.Text = blur.IsEnabled ? $"{blur.Value:0}" : "—";
+        blurValue.Text = blur.IsEnabled ? $"{item!.BlurRadius}" : "—";
+        AutomationProperties.SetItemStatus(blur, blur.IsEnabled ? $"模糊强度 {item!.BlurRadius}" : "");
         sceneHint.Text = item is null ? "正在读取外观…" : $"编辑场景 · {MaterialNames.Scene(SelectedScene)}";
         saveGlass.IsEnabled = cancelGlass.IsEnabled = available && glassDirty;
         SyncLumaControls(available, item);
@@ -191,10 +218,33 @@ internal sealed partial class TaskbarSettingsWindow
     private void UpdateEffectiveTransparency()
     {
         var effective = app.BarAppearance;
-        effectiveTransparency.Text = glassDirty && transparency.IsEnabled && effective is not null
-            ? $"预览栏当前透明度 {Math.Round(100 - (effective.Abgr >> 24) * 100d / 255)}%" +
-                (effective.Material == "blur" ? $"，模糊强度 {effective.Blur}" : "")
-            : "";
-        effectiveTransparency.Visibility = effectiveTransparency.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (!app.PreviewVisible || effective is null)
+        {
+            effectiveTransparency.Text = app.PreviewVisible ? "实际透明度 —" : "开启预览栏后显示实际透明度";
+            return;
+        }
+
+        bool solid = accessibility.HighContrast || !colors.AdvancedEffectsEnabled || effective.Material is "normal" or "opaque";
+        int value = solid ? 0 : 100 - (int)Math.Round((effective.Abgr >> 24) * 100d / 255);
+        string label = !solid && effective.Material == "acrylic" && Microsoft.UI.Composition.SystemBackdrops.DesktopAcrylicController.IsSupported()
+            ? "实际染色透明度" : "实际透明度";
+        effectiveTransparency.Text = $"{label} {value}%" + (!solid && effective.ContrastProtected ? " · 保护中" : "");
     }
+
+    // The stored value remains the actual radius, including values saved with the old range.
+    internal static int BlurAtPosition(double position) => (int)Math.Round(position switch
+    {
+        <= 35 => position * 15 / 35,
+        <= 60 => 15 + (position - 35),
+        <= 80 => 40 + (position - 60) * 3,
+        _ => 100 + (position - 80) * (TaskbarAppearance.MaximumBlurRadius - 100) / 20
+    });
+
+    internal static double PositionForBlur(int radius) => radius switch
+    {
+        <= 15 => radius * 35d / 15,
+        <= 40 => 35 + (radius - 15),
+        <= 100 => 60 + (radius - 40) / 3d,
+        _ => 80 + (radius - 100) * 20d / (TaskbarAppearance.MaximumBlurRadius - 100)
+    };
 }

@@ -260,7 +260,7 @@ namespace LumaBar
                 previewGlowEnabled ?? settings.MouseGlow,
                 previewGlowEnabled.HasValue ? previewGlowRadius : settings.MouseGlowRadius,
                 previewGlowEnabled.HasValue ? previewGlowStrength : settings.MouseGlowStrength,
-                previewScene.HasValue ? 0 : settings.TransitionMilliseconds));
+                previewScene.HasValue ? 0 : settings.TransitionMilliseconds, plan.Enabled && target?.Protected == true));
         }
         private void ResetDecisions() { engine.Reset(); sceneCoordinator.ResetPending(); visualTransition.Reset(); }
         private void SetPaused(bool value)
