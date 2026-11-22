@@ -253,8 +253,10 @@ namespace LumaBar
             var primary = Screen.PrimaryScreen?.DeviceName;
             var target = plan.Targets.FirstOrDefault(item => item.DeviceName == primary);
             var material = plan.Enabled ? target?.Appearance : null;
+            var glass = previewGlass ?? settings.Glass;
+            bool showLine = glass.For(plan.Scene, glass.PerMonitor ? primary : null).ShowLine;
             publishBarAppearance(new BarAppearance(plan.Tone, material?.Material ?? "normal",
-                material?.Abgr(plan.Tone) ?? 0, material?.BlurRadius ?? 0, material?.ShowLine ?? true,
+                material?.Abgr(plan.Tone) ?? 0, material?.BlurRadius ?? 0, showLine,
                 previewGlowEnabled ?? settings.MouseGlow,
                 previewGlowEnabled.HasValue ? previewGlowRadius : settings.MouseGlowRadius,
                 previewGlowEnabled.HasValue ? previewGlowStrength : settings.MouseGlowStrength,

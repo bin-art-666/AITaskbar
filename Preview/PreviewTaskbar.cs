@@ -33,6 +33,9 @@ internal sealed class PreviewTaskbar : Window
         tasks = new(pins, app.IconPreferences,
             iconSize, app.AppFeedback, app.IconLayout, app.CurrentAppCenterAppearance.Icon, app.ShowAppCenterSettings, handle, Report);
         AIEnter.Native.RemoveWindowFrame(handle);
+        const int cornerPreferenceAttribute = 33; // DWMWA_WINDOW_CORNER_PREFERENCE
+        int doNotRound = 1; // DWMWCP_DONOTROUND
+        AIEnter.Native.DwmSetWindowAttribute(handle, cornerPreferenceAttribute, ref doNotRound, sizeof(int));
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
         var halo = Button("Halo", "Halo 中转站", () => app.HaloModule.Handle("Toggle"));
@@ -71,7 +74,7 @@ internal sealed class PreviewTaskbar : Window
         strip.SizeChanged += FitApps;
         left.SizeChanged += FitApps;
         right.SizeChanged += FitApps;
-        var surface = new Border();
+        var surface = new Border { CornerRadius = new CornerRadius(0) };
         var visual = new PreviewBarAppearance(this, surface, strip, appearance, light =>
         {
             icons.RefreshSystem(light);

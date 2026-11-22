@@ -19,6 +19,8 @@ internal sealed class PreviewBarAppearance : IDisposable
     private readonly Border surface;
     private readonly Canvas lightLayer = new() { IsHitTestVisible = false };
     private readonly Border fadingTint = new() { IsHitTestVisible = false, Opacity = 0 };
+    private readonly Border topLine = new() { IsHitTestVisible = false, VerticalAlignment = VerticalAlignment.Top,
+        Visibility = Visibility.Collapsed };
     private readonly Image cursorLight = new() { Visibility = Visibility.Collapsed };
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
@@ -27,6 +29,7 @@ internal sealed class PreviewBarAppearance : IDisposable
     private string? backdropKind;
     private LumaBar.BarAppearance? last;
     private bool? lastContrast, lastEffects, lastLight;
+    private double lastScale;
     private (int Diameter, bool Light, int Strength) sprite;
     private Color? previousTint;
     private Storyboard? tintTransition;
@@ -45,9 +48,11 @@ internal sealed class PreviewBarAppearance : IDisposable
         layers.Children.Add(fadingTint);
         layers.Children.Add(lightLayer);
         layers.Children.Add(content);
+        layers.Children.Add(topLine);
         surface.Child = layers;
         surface.SizeChanged += (_, _) => lightLayer.Clip = new RectangleGeometry { Rect = new(0, 0, surface.ActualWidth, surface.ActualHeight) };
         surface.ActualThemeChanged += (_, _) => Refresh();
+        surface.Loaded += (_, _) => Refresh();
         surface.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(PointerMoved), true);
         surface.PointerExited += (_, _) => cursorLight.Visibility = Visibility.Collapsed;
         host.BarAppearanceChanged += OnAppearanceChanged;
@@ -63,23 +68,28 @@ internal sealed class PreviewBarAppearance : IDisposable
         bool effects = system.AdvancedEffectsEnabled;
         bool light = contrast || appearance is null
             ? surface.ActualTheme != ElementTheme.Dark : appearance.Tone == LumaBar.Tone.Light;
-        if (last == appearance && lastContrast == contrast && lastEffects == effects && lastLight == light) return;
+        double scale = surface.XamlRoot?.RasterizationScale ?? 1;
+        if (last == appearance && lastContrast == contrast && lastEffects == effects && lastLight == light && lastScale == scale) return;
         last = appearance;
         lastContrast = contrast;
         lastEffects = effects;
         lastLight = light;
+        lastScale = scale;
         surface.RequestedTheme = contrast || appearance is null
             ? ElementTheme.Default : light ? ElementTheme.Light : ElementTheme.Dark;
         updateIconTone(light);
 
         var normal = light ? Color.FromArgb(255, 243, 246, 250) : Color.FromArgb(255, 30, 34, 42);
         string kind = appearance?.Material ?? "normal";
-        bool showLine = kind == "normal" || appearance?.ShowLine == true;
-        surface.BorderThickness = new Thickness(0, showLine ? 1 : 0, 0, 0);
-        surface.BorderBrush = new SolidColorBrush(contrast ? system.GetColorValue(UIColorType.Foreground)
-            : Color.FromArgb(90, light ? (byte)93 : (byte)180, light ? (byte)110 : (byte)195, light ? (byte)138 : (byte)217));
         var tint = appearance is null ? normal : FromAbgr(appearance.Abgr);
         var displayTint = kind == "normal" ? normal : kind == "opaque" || !effects ? SolidTint(tint, normal) : tint;
+        topLine.Visibility = appearance?.ShowLine == true ? Visibility.Visible : Visibility.Collapsed;
+        if (topLine.Visibility == Visibility.Visible)
+        {
+            topLine.Height = light && !contrast ? 1 : 1 / scale;
+            topLine.Background = new SolidColorBrush(contrast ? system.GetColorValue(UIColorType.Foreground) :
+                light ? Color.FromArgb(90, 93, 110, 138) : DarkLine(displayTint, normal, kind is "normal" or "opaque" || !effects));
+        }
         if (contrast || kind is "normal" or "opaque" || !effects)
         {
             SetBackdrop(null);
@@ -168,6 +178,14 @@ internal sealed class PreviewBarAppearance : IDisposable
     }
 
     internal static Color FromAbgr(uint value) => Color.FromArgb((byte)(value >> 24), (byte)value, (byte)(value >> 8), (byte)(value >> 16));
+
+    private static Color DarkLine(Color tint, Color normal, bool solid)
+    {
+        var background = SolidTint(tint, normal);
+        byte Lift(byte channel) => (byte)(channel + (255 - channel) * .08);
+        byte alpha = solid ? (byte)255 : (byte)Math.Clamp(tint.A / 2, 24, 140);
+        return Color.FromArgb(alpha, Lift(background.R), Lift(background.G), Lift(background.B));
+    }
 
     private static Color SolidTint(Color tint, Color normal)
     {
