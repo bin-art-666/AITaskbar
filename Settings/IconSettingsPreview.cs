@@ -20,7 +20,7 @@ internal sealed class IconSettingsPreview
     private readonly TaskViewIcon? taskViewIcon;
     private readonly Canvas running = new();
     private readonly List<(AppWindowState State, TaskbarAppFeedback Visual)> examples = [];
-    private readonly List<Border> iconPlates = [];
+    private readonly List<TaskbarIconPlate> iconPlates = [];
     private TaskbarAppFeedbackStyle feedback = TaskbarAppFeedbackStyle.Default;
     private PreviewIconLayout layout = PreviewIconLayout.Default;
     private int iconSize;
@@ -80,7 +80,7 @@ internal sealed class IconSettingsPreview
     {
         bool newSize = iconSize != size;
         bool geometryChanged = newSize || layout.Gap != next.Gap || layout.Animation != next.Animation;
-        bool recolor = newSize || layout.ColorMode != next.ColorMode;
+        bool recolor = newSize || layout.ColorMode != next.ColorMode || layout.ShowIconOutline != next.ShowIconOutline;
         iconSize = size;
         layout = next;
         if (newSize)
@@ -156,20 +156,19 @@ internal sealed class IconSettingsPreview
             : AppIconArtwork.BackplateColor(layout.ColorMode));
         var ink = new SolidColorBrush(highContrast ? system.GetColorValue(UIColorType.Foreground)
             : AppIconArtwork.FallbackColor(layout.ColorMode));
+        appCenterIcon?.SetOutlineVisible(layout.ShowIconOutline);
+        taskViewIcon?.ApplyOutline(layout, highContrast);
         foreach (var icon in iconPlates)
         {
-            icon.Background = plate;
-            ((FontIcon)icon.Child).Foreground = ink;
+            icon.Artwork.Background = plate;
+            ((FontIcon)icon.Artwork.Child).Foreground = ink;
+            TaskbarIconOutline.Apply(icon.Outline, layout, highContrast);
         }
     }
 
     private Canvas AddExample(string label, string glyph, AppWindowState state)
     {
-        var icon = new Border
-        {
-            Width = iconSize, Height = iconSize, CornerRadius = new CornerRadius(iconSize * (6d / 26)),
-            Child = new FontIcon { Glyph = glyph, FontSize = iconSize * .6 }
-        };
+        var icon = new TaskbarIconPlate(iconSize, new FontIcon { Glyph = glyph, FontSize = iconSize * .6 });
         iconPlates.Add(icon);
         ToolTipService.SetToolTip(icon, label);
         AutomationProperties.SetName(icon, label);

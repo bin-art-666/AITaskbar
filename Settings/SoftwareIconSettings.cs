@@ -32,6 +32,8 @@ internal sealed partial class TaskbarSettingsWindow
         iconColors.Items.Add("亮色");
         iconColors.Items.Add("暗色");
         AutomationProperties.SetName(iconColors, "图标配色");
+        var iconOutline = new ToggleSwitch();
+        AutomationProperties.SetName(iconOutline, "图标描边");
         var menuColors = new ComboBox { MinWidth = 118 };
         AutomationProperties.SetName(menuColors, "右键菜单配色");
         (AppMenuColorMode Value, string Label)[] menuModes =
@@ -81,6 +83,7 @@ internal sealed partial class TaskbarSettingsWindow
             gap.Value = app.IconLayout.Gap;
             gapValue.Text = $"{app.IconLayout.Gap} DIP";
             iconColors.SelectedIndex = app.IconLayout.ColorMode == IconColorMode.Dark ? 1 : 0;
+            iconOutline.IsOn = app.IconLayout.ShowIconOutline;
             menuColors.SelectedIndex = Array.FindIndex(menuModes, mode => mode.Value == app.IconLayout.MenuColorMode);
             animation.SelectedIndex = Array.FindIndex(modes, mode => mode.Value == app.IconLayout.Animation);
             windowAnimation.SelectedIndex = Array.FindIndex(windowModes, mode => mode.Value == app.IconLayout.WindowAnimation);
@@ -125,6 +128,12 @@ internal sealed partial class TaskbarSettingsWindow
             var mode = menuModes[menuColors.SelectedIndex].Value;
             if (mode == app.IconLayout.MenuColorMode) return;
             app.TrySetIconLayout(app.IconLayout with { MenuColorMode = mode });
+            Sync();
+        };
+        iconOutline.Toggled += (_, _) =>
+        {
+            if (syncing || iconOutline.IsOn == app.IconLayout.ShowIconOutline) return;
+            app.TrySetIconLayout(app.IconLayout with { ShowIconOutline = iconOutline.IsOn });
             Sync();
         };
         animation.SelectionChanged += (_, _) =>
@@ -172,6 +181,7 @@ internal sealed partial class TaskbarSettingsWindow
 
         appearance.Children.Add(appearancePreview.Surface);
         appearance.Children.Add(SettingRow("图标配色", "同时应用于任务栏图标背板和右键菜单圆环。", iconColors));
+        appearance.Children.Add(SettingRow("图标描边", "在任务栏应用图标和入口图标外沿显示浅蓝细线。", iconOutline));
         appearance.Children.Add(SettingRow("应用图标大小", "统一调整应用中心、任务视图和中间软件图标的大小。", Actions(size, sizeValue)));
         appearance.Children.Add(SettingRow("图标间距", "统一调整应用中心、任务视图和中间软件图标之间的间隔。", Actions(gap, gapValue)));
         BuildAppFeedbackSettings(appearance, style =>

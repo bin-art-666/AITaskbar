@@ -32,7 +32,8 @@ internal sealed partial class WindowThumbnailPopup : Window
     {
         this.dismissed = dismissed;
         Title = "AITaskbar 窗口缩略图";
-        AppWindow.IsShownInSwitchers = false;
+        try { AppWindow.IsShownInSwitchers = false; }
+        catch (NotImplementedException) { }
         var presenter = (OverlappedPresenter)AppWindow.Presenter;
         presenter.SetBorderAndTitleBar(false, false);
         presenter.IsResizable = presenter.IsMinimizable = presenter.IsMaximizable = false;

@@ -33,7 +33,9 @@ internal sealed class PreviewTaskbar : Window
         systemTaskbar = new(root);
         naturalStripHeight = HeightForIcons(iconSize);
         pins = new(Path.Combine(root, "preview-pins.json"));
-        AppWindow.IsShownInSwitchers = false;
+        // Some shell configurations do not implement switcher registration for this window.
+        try { AppWindow.IsShownInSwitchers = false; }
+        catch (NotImplementedException) { }
         var presenter = (Microsoft.UI.Windowing.OverlappedPresenter)AppWindow.Presenter;
         presenter.SetBorderAndTitleBar(false, false);
         presenter.IsResizable = presenter.IsMinimizable = presenter.IsMaximizable = false;
@@ -62,6 +64,7 @@ internal sealed class PreviewTaskbar : Window
             return await AIEnter.App.Ai.ReceiveDrop(view);
         });
         var icons = ModuleIcons = new PreviewModuleIcons(halo, ai, DispatcherQueue);
+        icons.SetIconLayout(app.IconLayout);
         left.Children.Add(halo);
 
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
@@ -219,7 +222,11 @@ internal sealed class PreviewTaskbar : Window
     internal void RefreshIconStyle(string executable) => tasks.RefreshIconStyle(executable);
     internal void SetAppCenterIcon(AppCenterIconStyle style) => tasks.SetAppCenterIcon(style);
     internal void SetAppFeedback(TaskbarAppFeedbackStyle style) => tasks.SetAppFeedback(style);
-    internal void SetIconLayout(PreviewIconLayout layout) => tasks.SetIconLayout(layout);
+    internal void SetIconLayout(PreviewIconLayout layout)
+    {
+        tasks.SetIconLayout(layout);
+        ModuleIcons.SetIconLayout(layout);
+    }
     internal void SetThumbnailWidth(int width) => tasks.SetThumbnailWidth(width);
     internal void SetThumbnailAnimation(int durationMs) => tasks.SetThumbnailAnimation(durationMs);
 

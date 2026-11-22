@@ -46,7 +46,9 @@ public partial class App
         var dispatcher = DispatcherQueue.GetForCurrentThread();
         // A hidden window keeps the WinUI lifetime independent of the toolbar.
         aiLifetimeWindow = new Window { Title = "AIEnter 后台" };
-        aiLifetimeWindow.AppWindow.IsShownInSwitchers = false;
+        // The window can still be hidden when the shell does not support switcher registration.
+        try { aiLifetimeWindow.AppWindow.IsShownInSwitchers = false; }
+        catch (NotImplementedException) { }
         aiLifetimeWindow.AppWindow.Hide();
         nint lifetimeHandle = WinRT.Interop.WindowNative.GetWindowHandle(aiLifetimeWindow);
         try { globalHotkey = GlobalHotkey.Replace(lifetimeHandle, Ai.Options.Data.Hotkey, () => dispatcher.TryEnqueue(() => _ = ToggleAiWindow(false))); }

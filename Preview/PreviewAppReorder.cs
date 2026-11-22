@@ -119,14 +119,13 @@ internal sealed partial class PreviewApplicationStrip
     private Canvas CreateFloatingIcon(AppButton view, nint activeWindow)
     {
         var source = view.IconPlate;
-        var plate = new Border
-        {
-            Width = source.Width, Height = source.Height, CornerRadius = source.CornerRadius, Background = source.Background,
-            Child = source.Child is Image image
-                ? new Image { Source = image.Source, Width = image.Width, Height = image.Height, Stretch = image.Stretch }
-                : new FontIcon { Glyph = ((FontIcon)source.Child).Glyph, FontSize = ((FontIcon)source.Child).FontSize,
-                    Foreground = ((FontIcon)source.Child).Foreground }
-        };
+        var graphic = source.Artwork.Child;
+        var plate = new TaskbarIconPlate(iconSize, graphic is Image image
+            ? new Image { Source = image.Source, Width = image.Width, Height = image.Height, Stretch = image.Stretch }
+            : new FontIcon { Glyph = ((FontIcon)graphic).Glyph, FontSize = ((FontIcon)graphic).FontSize,
+                Foreground = ((FontIcon)graphic).Foreground });
+        plate.Artwork.Background = source.Artwork.Background;
+        TaskbarIconOutline.Apply(plate.Outline, iconLayout, accessibility.HighContrast);
         var feedback = new TaskbarAppFeedback(plate, iconSize);
         feedback.ApplyStyle(feedbackStyle);
         var (active, background) = TaskbarAppFeedback.DotColors(feedbackStyle, system, accessibility.HighContrast);

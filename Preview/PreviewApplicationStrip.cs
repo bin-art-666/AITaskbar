@@ -77,7 +77,7 @@ internal sealed partial class PreviewApplicationStrip
     private IEnumerable<AppButton> Shown => pinnedApps.Buttons.Concat(runningApps.Buttons);
     private IEnumerable<AppButton> Rendered => pinnedApps.Buttons.Concat(runningTiles.Values.Select(tile => tile.View));
 
-    private sealed record AppButton(AppGroup Group, Button Button, TaskbarAppFeedback Feedback, Border IconPlate, AppIconArtwork? Icon);
+    private sealed record AppButton(AppGroup Group, Button Button, TaskbarAppFeedback Feedback, TaskbarIconPlate IconPlate, AppIconArtwork? Icon);
     private sealed record RunningTile(string Key, AppButton View, TranslateTransform Transform);
 
     private sealed class AppRange(Panel panel)
@@ -107,6 +107,7 @@ internal sealed partial class PreviewApplicationStrip
         appMenuIcons = new(system, accessibility);
         iconHover = new(system.AnimationsEnabled && !accessibility.HighContrast);
         appCenterIcon = new AppCenterIcon(iconSize);
+        appCenterIcon.SetOutlineVisible(iconLayout.ShowIconOutline);
         appCenterIcon.Apply(appCenterStyle);
         iconHover.Track(appCenterIcon);
         AppCenterButton = IconButton("应用中心", appCenterIcon);
@@ -120,6 +121,7 @@ internal sealed partial class PreviewApplicationStrip
         };
         items.Children.Add(AppCenterButton);
         taskViewIcon = new TaskViewIcon(iconSize);
+        taskViewIcon.ApplyOutline(iconLayout, accessibility.HighContrast);
         taskViewButton = IconButton("任务视图", taskViewIcon);
         TrackIconHover(taskViewButton, taskViewIcon);
         taskViewButton.VerticalContentAlignment = VerticalAlignment.Top;
@@ -241,13 +243,18 @@ internal sealed partial class PreviewApplicationStrip
         }
         bool scrollChanged = iconLayout.Animation != layout.Animation;
         bool colorChanged = iconLayout.ColorMode != layout.ColorMode;
+        bool outlineChanged = iconLayout.ShowIconOutline != layout.ShowIconOutline;
         bool menuColorChanged = iconLayout.MenuColorMode != layout.MenuColorMode;
         iconLayout = layout;
         SetThumbnailWidth(layout.ThumbnailWidth);
         SetThumbnailAnimation(layout.ThumbnailAnimationMs);
         if (colorChanged || menuColorChanged) openFlyout?.Hide();
-        if (colorChanged)
+        if (colorChanged || outlineChanged)
+        {
+            appCenterIcon.SetOutlineVisible(layout.ShowIconOutline);
+            taskViewIcon.ApplyOutline(layout, accessibility.HighContrast);
             foreach (var view in Rendered) UpdateIcon(view);
+        }
         if (menuColorChanged)
         {
             UpdateThumbnailTheme(Surface.ActualTheme);
@@ -579,15 +586,12 @@ internal sealed partial class PreviewApplicationStrip
             if (ReferenceEquals(thumbnailSuppressedUntilExit, button)) thumbnailSuppressedUntilExit = null;
         };
         var icon = ProgramIcon(group.IconExecutable, group.IconAppId);
-        var plate = new Border
+        FrameworkElement graphic = icon is not null ? new Image { Stretch = Stretch.Uniform }
+            : new FontIcon { Glyph = "\uE7C5", FontSize = Math.Round(iconSize * .7) };
+        var plate = new TaskbarIconPlate(iconSize, graphic)
         {
-            Width = iconSize, Height = iconSize, CornerRadius = new CornerRadius(iconSize * (6d / 26)),
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top
         };
-        if (icon is not null)
-            plate.Child = new Image { Stretch = Stretch.Uniform };
-        else
-            plate.Child = new FontIcon { Glyph = "\uE7C5", FontSize = Math.Round(iconSize * .7) };
         var feedback = new TaskbarAppFeedback(plate, iconSize);
         feedback.ApplyStyle(feedbackStyle);
         TrackIconHover(button, plate, group.Pin is null ? runningApps.Panel : null);
@@ -645,6 +649,7 @@ internal sealed partial class PreviewApplicationStrip
             iconLayout.MenuColorMode != AppMenuColorMode.FollowTaskbar;
         dark = useDark;
         contrast = highContrast;
+        taskViewIcon.ApplyOutline(iconLayout, highContrast);
         UpdateThumbnailTheme(Surface.ActualTheme);
         var edge = highContrast ? system.GetColorValue(UIColorType.Foreground)
             : useDark ? Color.FromArgb(48, 255, 255, 255) : Color.FromArgb(70, 35, 58, 84);
@@ -661,23 +666,20 @@ internal sealed partial class PreviewApplicationStrip
     {
         bool highContrast = contrast == true;
         bool original = highContrast || (view.Group.IconExecutable is { } path && iconPreferences.UsesOriginal(path));
-        if (view.Icon is { } icon && view.IconPlate.Child is Image image)
+        var plate = view.IconPlate;
+        TaskbarIconOutline.Apply(plate.Outline, iconLayout, highContrast);
+        if (view.Icon is { } icon && plate.Artwork.Child is Image image)
         {
             image.Source = original ? icon.Original : icon.Graphic(iconLayout.ColorMode);
             image.Width = image.Height = original || icon.HasPlate ? iconSize : Math.Round(iconSize * (20d / 26));
         }
-        if (view.IconPlate.Child is FontIcon fallback)
+        if (plate.Artwork.Child is FontIcon fallback)
         {
             if (original) fallback.ClearValue(IconElement.ForegroundProperty);
             else fallback.Foreground = new SolidColorBrush(AppIconArtwork.FallbackColor(iconLayout.ColorMode));
         }
-        if (original || view.Icon?.HasPlate == true)
-        {
-            view.IconPlate.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            return;
-        }
-
-        view.IconPlate.Background = new SolidColorBrush(AppIconArtwork.BackplateColor(iconLayout.ColorMode));
+        plate.Artwork.Background = new SolidColorBrush(original || view.Icon?.HasPlate == true
+            ? Microsoft.UI.Colors.Transparent : AppIconArtwork.BackplateColor(iconLayout.ColorMode));
     }
 
     private void UpdateIndicators()

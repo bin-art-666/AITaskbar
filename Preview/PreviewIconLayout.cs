@@ -24,6 +24,7 @@ internal sealed record PreviewIconLayout
     public int Gap { get; init; } = DefaultGap;
     public int ThumbnailWidth { get; init; } = DefaultThumbnailWidth;
     public int ThumbnailAnimationMs { get; init; } = DefaultThumbnailAnimationMs;
+    public bool ShowIconOutline { get; init; } = true;
     [JsonConverter(typeof(JsonStringEnumConverter<IconColorMode>))]
     public IconColorMode ColorMode { get; init; } = IconColorMode.Light;
     [JsonConverter(typeof(JsonStringEnumConverter<AppMenuColorMode>))]

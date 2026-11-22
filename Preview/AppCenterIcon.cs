@@ -21,7 +21,7 @@ internal sealed class AppCenterIcon : Grid
     private CompositionColorBrush? stroke;
     private ShapeVisual? visual;
     private int size;
-    private bool expanded, loaded;
+    private bool expanded, loaded, showOutline = true;
 
     internal AppCenterIcon(int size)
     {
@@ -70,10 +70,18 @@ internal sealed class AppCenterIcon : Grid
         RefreshEdge();
     }
 
+    internal void SetOutlineVisible(bool visible)
+    {
+        if (showOutline == visible) return;
+        showOutline = visible;
+        RefreshColors();
+    }
+
     private void RefreshColors()
     {
         bool contrast = accessibility.HighContrast;
         var foreground = contrast ? ui.GetColorValue(UIColorType.Foreground) : Microsoft.UI.Colors.White;
+        plate.BorderThickness = new Thickness(showOutline || contrast ? 1 : 0);
         plate.BorderBrush = new SolidColorBrush(contrast ? foreground : Color.FromArgb(142, 116, 195, 255));
         plate.Background = contrast ? new SolidColorBrush(ui.GetColorValue(UIColorType.Background)) : BluePlate();
         var brush = new SolidColorBrush(foreground);

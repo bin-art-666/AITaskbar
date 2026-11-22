@@ -18,6 +18,7 @@ internal sealed class PreviewModuleIcons : IDisposable
     private readonly Halo.RingAppearanceBridge? ringBridge = Halo.App.RingBridge;
     private readonly Image ai = new() { Stretch = Stretch.Uniform };
     private readonly Image halo = new() { Stretch = Stretch.Uniform };
+    private readonly Border aiOutline = TaskbarIconOutline.Create(), haloOutline = TaskbarIconOutline.Create();
     private readonly ImageSource staticAi = CreateStaticAiIcon();
     private readonly WriteableBitmap flow = new(Side, Side), ring = new(Side, Side);
     private readonly byte[] aiPixels = new byte[Side * Side * 4], ringPixels = new byte[Side * Side * 4];
@@ -27,6 +28,7 @@ internal sealed class PreviewModuleIcons : IDisposable
     private AIEnter.UiAppearance? lastAi;
     private Halo.UiAppearance? lastHalo;
     private bool hover, light, animations, highContrast;
+    private PreviewIconLayout iconLayout = PreviewIconLayout.Default;
     private double time, angle, hoverOpacity;
     private long lastTick;
 
@@ -48,8 +50,8 @@ internal sealed class PreviewModuleIcons : IDisposable
     {
         this.aiButton = aiButton;
         this.haloButton = haloButton;
-        Prepare(haloButton, halo);
-        Prepare(aiButton, ai);
+        Prepare(haloButton, halo, haloOutline);
+        Prepare(aiButton, ai, aiOutline);
         halo.Source = ring;
         ai.Source = staticAi;
         aiHost = new Grid { Height = 48, VerticalAlignment = VerticalAlignment.Center };
@@ -70,7 +72,20 @@ internal sealed class PreviewModuleIcons : IDisposable
         light = lightTheme ?? (system.GetColorValue(UIColorType.Background).R >= 128);
         animations = system.AnimationsEnabled;
         highContrast = new AccessibilitySettings().HighContrast;
+        ApplyOutlines();
         Refresh();
+    }
+
+    internal void SetIconLayout(PreviewIconLayout layout)
+    {
+        iconLayout = layout;
+        ApplyOutlines();
+    }
+
+    private void ApplyOutlines()
+    {
+        TaskbarIconOutline.Apply(aiOutline, iconLayout, highContrast);
+        TaskbarIconOutline.Apply(haloOutline, iconLayout, highContrast);
     }
 
     private void Refresh()
@@ -79,6 +94,7 @@ internal sealed class PreviewModuleIcons : IDisposable
         if (lastAi != nextAi)
         {
             ai.Width = ai.Height = nextAi.TaskbarIconSize;
+            SizeOutline(aiOutline, ai.Width);
             aiButton.Width = aiButton.Height = Math.Max(32, nextAi.TaskbarIconSize + 4);
             aiButton.CornerRadius = new CornerRadius(aiButton.Width / 2);
             aiHost.Width = Math.Max(aiButton.Width, nextAi.TaskbarIconSize + 2 * nextAi.GlowRange);
@@ -101,6 +117,7 @@ internal sealed class PreviewModuleIcons : IDisposable
         if (lastHalo != nextHalo)
         {
             halo.Width = halo.Height = nextHalo.TaskbarIconSize;
+            SizeOutline(haloOutline, halo.Width);
             haloButton.Width = haloButton.Height = Math.Max(36, nextHalo.TaskbarIconSize + 8);
             haloButton.CornerRadius = new CornerRadius(haloButton.Width / 2);
         }
@@ -243,7 +260,13 @@ internal sealed class PreviewModuleIcons : IDisposable
         bitmap.Invalidate();
     }
 
-    private static void Prepare(Button button, Image image)
+    private static void SizeOutline(Border outline, double size)
+    {
+        outline.Width = outline.Height = size;
+        outline.CornerRadius = new CornerRadius(size / 2);
+    }
+
+    private static void Prepare(Button button, Image image, Border outline)
     {
         var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         button.Background = button.BorderBrush = clear;
@@ -256,7 +279,10 @@ internal sealed class PreviewModuleIcons : IDisposable
             button.Resources["ButtonBackground" + state] = clear;
             button.Resources["ButtonBorderBrush" + state] = clear;
         }
-        button.Content = image;
+        var graphic = new Grid();
+        graphic.Children.Add(image);
+        graphic.Children.Add(outline);
+        button.Content = graphic;
     }
 
     public void Dispose()
