@@ -5,8 +5,16 @@ using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace AITaskbar;
 
-internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage Graphic, bool HasPlate, double Luminance)
+internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage LightGraphic, BitmapImage DarkGraphic, bool HasPlate)
 {
+    internal BitmapImage Graphic(IconColorMode mode) => mode == IconColorMode.Dark ? DarkGraphic : LightGraphic;
+
+    internal static Windows.UI.Color BackplateColor(IconColorMode mode) =>
+        mode == IconColorMode.Dark ? Microsoft.UI.Colors.Black : Microsoft.UI.Colors.White;
+
+    internal static Windows.UI.Color FallbackColor(IconColorMode mode) => mode == IconColorMode.Dark
+        ? Windows.UI.Color.FromArgb(255, 234, 240, 248) : Windows.UI.Color.FromArgb(255, 39, 46, 56);
+
     public static AppIconArtwork? Load(string? executable, string? appId = null)
     {
         using var bitmap = LoadArtwork(executable, appId);
@@ -19,9 +27,35 @@ internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage Graphic,
         if (bounds.IsEmpty) return null;
         if (hasPlate && executable is not null) bounds = RemoveTtCloudFrame(executable, artwork, bounds);
         using var foreground = artwork.Clone(bounds, PixelFormat.Format32bppArgb);
-        if (!hasPlate) return new(original, ToImage(foreground), false, luminance);
-        using var plate = RoundedPlate(foreground);
-        return new(original, ToImage(plate), true, luminance);
+        if (hasPlate)
+        {
+            using var plate = RoundedPlate(foreground);
+            var image = ToImage(plate);
+            return new(original, image, image, true);
+        }
+
+        var graphic = ToImage(foreground);
+        bool chatGpt = StringComparer.OrdinalIgnoreCase.Equals(appId, PackagedAppPin.ChatGptId);
+        var light = luminance >= .8 ? ContrastGraphic(foreground, darkPlate: false, chatGpt) : graphic;
+        var dark = luminance <= .30 ? ContrastGraphic(foreground, darkPlate: true, chatGpt) : graphic;
+        return new(original, light, dark, false);
+    }
+
+    private static BitmapImage ContrastGraphic(Bitmap foreground, bool darkPlate, bool monochrome)
+    {
+        using var adjusted = new Bitmap(foreground.Width, foreground.Height, PixelFormat.Format32bppArgb);
+        for (int y = 0; y < foreground.Height; y++)
+        for (int x = 0; x < foreground.Width; x++)
+        {
+            var pixel = foreground.GetPixel(x, y);
+            if (pixel.A == 0) continue;
+            adjusted.SetPixel(x, y, Color.FromArgb(pixel.A, Adjust(pixel.R), Adjust(pixel.G), Adjust(pixel.B)));
+        }
+        return ToImage(adjusted);
+
+        // The ChatGPT mark is monochrome. For colored marks keep the hue and shift only toward the contrasting shade.
+        int Adjust(byte channel) => monochrome ? 255 - channel :
+            darkPlate ? (255 + channel) / 2 : channel / 2;
     }
 
     private static Bitmap? LoadArtwork(string? executable, string? appId)

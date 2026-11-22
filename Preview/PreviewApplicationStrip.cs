@@ -199,7 +199,13 @@ internal sealed class PreviewApplicationStrip
     {
         bool gapChanged = iconLayout.Gap != layout.Gap;
         bool scrollChanged = iconLayout.Animation != layout.Animation;
+        bool colorChanged = iconLayout.ColorMode != layout.ColorMode;
         iconLayout = layout;
+        if (colorChanged)
+        {
+            openFlyout?.Hide();
+            foreach (var view in Rendered) UpdateIcon(view);
+        }
         if (!gapChanged && (!scrollChanged || scrollStarted is null)) return;
         pinnedPanel.Spacing = layout.Gap;
         runningApps.Layout = null;
@@ -649,13 +655,13 @@ internal sealed class PreviewApplicationStrip
         bool original = highContrast || (view.Group.IconExecutable is { } path && iconPreferences.UsesOriginal(path));
         if (view.Icon is { } icon && view.IconPlate.Child is Image image)
         {
-            image.Source = original ? icon.Original : icon.Graphic;
+            image.Source = original ? icon.Original : icon.Graphic(iconLayout.ColorMode);
             image.Width = image.Height = original || icon.HasPlate ? iconSize : Math.Round(iconSize * (20d / 26));
         }
         if (view.IconPlate.Child is FontIcon fallback)
         {
             if (original) fallback.ClearValue(IconElement.ForegroundProperty);
-            else fallback.Foreground = new SolidColorBrush(Color.FromArgb(255, 39, 46, 56));
+            else fallback.Foreground = new SolidColorBrush(AppIconArtwork.FallbackColor(iconLayout.ColorMode));
         }
         if (original || view.Icon?.HasPlate == true)
         {
@@ -663,9 +669,7 @@ internal sealed class PreviewApplicationStrip
             return;
         }
 
-        // Very light artwork needs a dark plate to stay legible against its background.
-        var color = view.Icon?.Luminance >= .8 ? Color.FromArgb(255, 52, 58, 68) : Microsoft.UI.Colors.White;
-        view.IconPlate.Background = new SolidColorBrush(color);
+        view.IconPlate.Background = new SolidColorBrush(AppIconArtwork.BackplateColor(iconLayout.ColorMode));
     }
 
     private void UpdateIndicators()
@@ -911,7 +915,6 @@ internal sealed class PreviewApplicationStrip
         int Populate(AppGroup group, IReadOnlyList<AppGroup> current, bool readRecent = false)
         {
             menu.Items.Clear();
-            var theme = view.Button.ActualTheme;
             var app = RunningWindows.CanPin(group.Executable) ? Path.GetFileName(group.Executable)?.ToLowerInvariant() : null;
             (string Text, string Arguments)? privateWindow = app switch
             {
@@ -920,29 +923,30 @@ internal sealed class PreviewApplicationStrip
                 _ => null
             };
             if (group.Windows.Count == 0 && privateWindow is null)
-                menu.Items.Add(AppMenuItem(theme, "打开", AppMenuIcon.Open, () => Open(group, view.Button, view.IconPlate)));
+                menu.Items.Add(AppMenuItem("打开", AppMenuIcon.Open, () => Open(group, view.Button, view.IconPlate)));
             else if (NewWindowArguments(app) is { } arguments)
-                menu.Items.Add(AppMenuItem(theme, "新建窗口", AppMenuIcon.NewWindow, () => Launch(group, arguments)));
+                menu.Items.Add(AppMenuItem("新建窗口", AppMenuIcon.NewWindow, () => Launch(group, arguments)));
             if (privateWindow is { } task)
-                menu.Items.Add(AppMenuItem(theme, task.Text, AppMenuIcon.PrivateWindow, () => Launch(group, task.Arguments)));
+                menu.Items.Add(AppMenuItem(task.Text, AppMenuIcon.PrivateWindow, () => Launch(group, task.Arguments)));
             if (readRecent && iconLayout.ShowRecentFiles && app == "chrome.exe")
-                AddBrowserRecentFiles(menu, group, theme, RecentBrowser.Chrome);
+                AddBrowserRecentFiles(menu, group, RecentBrowser.Chrome);
             if (readRecent && iconLayout.ShowEdgeRecentFiles && app == "msedge.exe")
-                AddBrowserRecentFiles(menu, group, theme, RecentBrowser.Edge);
+                AddBrowserRecentFiles(menu, group, RecentBrowser.Edge);
             int recentPosition = menu.Items.Count;
-            if (PinItem(group, theme) is { } pin) menu.Items.Add(pin);
+            if (PinItem(group) is { } pin) menu.Items.Add(pin);
             if (group.Windows.Count == 0) return recentPosition;
 
             if (menu.Items.Count != 0) menu.Items.Add(new MenuFlyoutSeparator());
             bool singleWindow = group.Windows.Count == 1;
-            menu.Items.Add(AppMenuItem(theme, singleWindow ? "关闭窗口" : "关闭所有窗口",
+            menu.Items.Add(AppMenuItem(singleWindow ? "关闭窗口" : "关闭所有窗口",
                 singleWindow ? AppMenuIcon.CloseWindow : AppMenuIcon.CloseAllWindows, () => CloseWindows(group.Windows)));
             var reason = EndTaskUnavailable(group, current);
-            var end = AppMenuItem(theme, "结束任务", AppMenuIcon.EndTask, () => EndAppTask(group), enabled: reason is null);
+            var end = AppMenuItem("结束任务", AppMenuIcon.EndTask, () => EndAppTask(group), enabled: reason is null);
             menu.Items.Add(end);
             if (reason is not null)
             {
-                menu.Items.Add(new AppMenuFlyoutItem { Text = reason, Icon = appMenuIcons.Create(AppMenuIcon.Empty, theme), IsEnabled = false });
+                menu.Items.Add(new AppMenuFlyoutItem { Text = reason,
+                    Icon = appMenuIcons.Create(AppMenuIcon.Empty, iconLayout.ColorMode), IsEnabled = false });
                 AutomationProperties.SetHelpText(end, reason);
             }
             return recentPosition;
@@ -958,7 +962,7 @@ internal sealed class PreviewApplicationStrip
             var tabs = await BrowserRecentSessions.ReadAsync(browser);
             if (tabs.Length == 0 || request != opening || !ReferenceEquals(openFlyout, menu) ||
                 !ShowsRecentSessions(browser) || !group.Windows.Any(RunningWindows.IsCurrent)) return;
-            menu.Items.Insert(recentPosition, RecentSessionMenu(view.Button.ActualTheme, browser, tabs));
+            menu.Items.Insert(recentPosition, RecentSessionMenu(browser, tabs));
         };
         view.Button.ContextFlyout = menu;
     }
@@ -976,11 +980,11 @@ internal sealed class PreviewApplicationStrip
     private bool ShowsRecentSessions(RecentBrowser browser) =>
         browser == RecentBrowser.Chrome ? iconLayout.ShowChromeRecentlyClosed : iconLayout.ShowEdgeRecentlyClosed;
 
-    private MenuFlyoutSubItem RecentSessionMenu(ElementTheme theme, RecentBrowser browser, IReadOnlyList<BrowserRecentEntry> tabs)
+    private MenuFlyoutSubItem RecentSessionMenu(RecentBrowser browser, IReadOnlyList<BrowserRecentEntry> tabs)
     {
-        var recent = new MenuFlyoutSubItem { Text = "最近关闭", Icon = appMenuIcons.Create(AppMenuIcon.RecentFile, theme) };
+        var recent = new MenuFlyoutSubItem { Text = "最近关闭", Icon = appMenuIcons.Create(AppMenuIcon.RecentFile, iconLayout.ColorMode) };
         foreach (var tab in tabs)
-            recent.Items.Add(AppMenuItem(theme, tab.Title, AppMenuIcon.RecentFile, () => _ = RestoreBrowserTabAsync(browser, tab.SessionId)));
+            recent.Items.Add(AppMenuItem(tab.Title, AppMenuIcon.RecentFile, () => _ = RestoreBrowserTabAsync(browser, tab.SessionId)));
         return recent;
     }
 
@@ -990,14 +994,14 @@ internal sealed class PreviewApplicationStrip
             report($"{browser} 未连接，或该页面已无法恢复。");
     }
 
-    private void AddBrowserRecentFiles(MenuFlyout menu, AppGroup group, ElementTheme theme, RecentBrowser browser)
+    private void AddBrowserRecentFiles(MenuFlyout menu, AppGroup group, RecentBrowser browser)
     {
         var files = BrowserRecentDocuments.Read(group, browser);
         if (files.Length == 0) return;
-        var recent = new MenuFlyoutSubItem { Text = "最近文件", Icon = appMenuIcons.Create(AppMenuIcon.RecentFile, theme) };
+        var recent = new MenuFlyoutSubItem { Text = "最近文件", Icon = appMenuIcons.Create(AppMenuIcon.RecentFile, iconLayout.ColorMode) };
         foreach (string path in files)
         {
-            recent.Items.Add(AppMenuItem(theme, Path.GetFileName(path), AppMenuIcon.RecentFile, () =>
+            recent.Items.Add(AppMenuItem(Path.GetFileName(path), AppMenuIcon.RecentFile, () =>
             {
                 if (!BrowserRecentDocuments.IsAvailable(path)) { report("文件已移动或无法访问。"); return; }
                 Launch(group, new Uri(path).AbsoluteUri);
@@ -1006,9 +1010,9 @@ internal sealed class PreviewApplicationStrip
         menu.Items.Add(recent);
     }
 
-    private MenuFlyoutItem AppMenuItem(ElementTheme theme, string text, AppMenuIcon icon, Action action, bool enabled = true)
+    private MenuFlyoutItem AppMenuItem(string text, AppMenuIcon icon, Action action, bool enabled = true)
     {
-        var item = new AppMenuFlyoutItem { Text = text, Icon = appMenuIcons.Create(icon, theme, enabled), IsEnabled = enabled };
+        var item = new AppMenuFlyoutItem { Text = text, Icon = appMenuIcons.Create(icon, iconLayout.ColorMode, enabled), IsEnabled = enabled };
         item.Click += (_, _) => action();
         return item;
     }
@@ -1057,11 +1061,11 @@ internal sealed class PreviewApplicationStrip
         Surface.DispatcherQueue.TryEnqueue(Refresh);
     }
 
-    private MenuFlyoutItem? PinItem(AppGroup group, ElementTheme theme)
+    private MenuFlyoutItem? PinItem(AppGroup group)
     {
         if (group.Pin is null && group.PinAppId is null && !RunningWindows.CanPin(group.Executable)) return null;
         bool pinned = group.Pin is not null;
-        return AppMenuItem(theme, pinned ? "取消固定" : "固定到预览栏", pinned ? AppMenuIcon.Unpin : AppMenuIcon.Pin, () =>
+        return AppMenuItem(pinned ? "取消固定" : "固定到预览栏", pinned ? AppMenuIcon.Unpin : AppMenuIcon.Pin, () =>
         {
             if (group.Pin is { } pin) ChangePins(() => pins.Remove(pin));
             else if (group.PinAppId is { } appId) ChangePins(() => pins.Add(appId, group.IconExecutable));

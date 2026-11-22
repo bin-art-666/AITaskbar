@@ -13,9 +13,12 @@ internal sealed class IconSettingsPreview
 {
     private readonly UISettings system;
     private readonly AccessibilitySettings accessibility;
+    private readonly AppMenuIcons menuIcons;
     private readonly StackPanel icons = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
+    private readonly StackPanel menu = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Canvas running = new();
     private readonly List<(AppWindowState State, TaskbarAppFeedback Visual)> examples = [];
+    private readonly List<Border> iconPlates = [];
     private TaskbarAppFeedbackStyle feedback = TaskbarAppFeedbackStyle.Default;
     private PreviewIconLayout layout = PreviewIconLayout.Default;
     private int iconSize;
@@ -29,6 +32,7 @@ internal sealed class IconSettingsPreview
     {
         this.system = system;
         this.accessibility = accessibility;
+        menuIcons = new(system, accessibility);
         var play = new Button { Content = "试滚动", HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(play, "试滚动运行区");
@@ -39,15 +43,21 @@ internal sealed class IconSettingsPreview
         row.Children.Add(icons);
         Grid.SetColumn(play, 1);
         row.Children.Add(play);
-        Surface.Child = row;
+        var groups = new StackPanel { Spacing = 5 };
+        groups.Children.Add(PreviewLabel("应用图标预览"));
+        groups.Children.Add(row);
+        groups.Children.Add(PreviewLabel("右键菜单图标预览"));
+        groups.Children.Add(menu);
+        Surface.Child = groups;
         Surface.ActualThemeChanged += (_, _) => ApplyFeedback(feedback);
         Surface.Unloaded += (_, _) => FinishScroll();
     }
 
     internal void ApplyLayout(int size, PreviewIconLayout next)
     {
-        if (iconSize == size && layout.Gap == next.Gap && layout.Animation == next.Animation) return;
         bool newSize = iconSize != size;
+        bool geometryChanged = newSize || layout.Gap != next.Gap || layout.Animation != next.Animation;
+        bool recolor = newSize || layout.ColorMode != next.ColorMode;
         iconSize = size;
         layout = next;
         if (newSize)
@@ -55,6 +65,7 @@ internal sealed class IconSettingsPreview
             icons.Children.Clear();
             running.Children.Clear();
             examples.Clear();
+            iconPlates.Clear();
             icons.Children.Add(AddExample("未打开", "\uE8A5", AppWindowState.Closed));
             icons.Children.Add(new Border { Width = 1, Height = 18, Opacity = .5,
                 Background = new SolidColorBrush(Microsoft.UI.Colors.Gray),
@@ -64,10 +75,14 @@ internal sealed class IconSettingsPreview
             running.Children.Add(AddExample("前台", "\uE8B7", AppWindowState.Foreground));
             running.Children.Add(AddExample("后台", "\uE7C5", AppWindowState.Background));
         }
-        running.Width = 2 * iconSize + layout.Gap;
-        running.Height = iconSize + TaskbarAppFeedback.ExtraHeight;
-        FinishScroll();
-        ApplyFeedback(feedback);
+        if (geometryChanged)
+        {
+            running.Width = 2 * iconSize + layout.Gap;
+            running.Height = iconSize + TaskbarAppFeedback.ExtraHeight;
+            FinishScroll();
+        }
+        if (newSize) ApplyFeedback(feedback);
+        else if (recolor) ApplyIconColors();
     }
 
     internal void ApplyFeedback(TaskbarAppFeedbackStyle style)
@@ -83,6 +98,36 @@ internal sealed class IconSettingsPreview
             visual.ApplyStyle(style, light, system, highContrast);
             visual.ShowState(state, active, background, light);
         }
+        ApplyIconColors();
+    }
+
+    private static TextBlock PreviewLabel(string text) => new() { Text = text, FontSize = 12, Opacity = .76 };
+
+    private void ApplyIconColors()
+    {
+        bool highContrast = accessibility.HighContrast;
+        var plate = new SolidColorBrush(highContrast ? system.GetColorValue(UIColorType.Background)
+            : AppIconArtwork.BackplateColor(layout.ColorMode));
+        var ink = new SolidColorBrush(highContrast ? system.GetColorValue(UIColorType.Foreground)
+            : AppIconArtwork.FallbackColor(layout.ColorMode));
+        foreach (var icon in iconPlates)
+        {
+            icon.Background = plate;
+            ((FontIcon)icon.Child).Foreground = ink;
+        }
+        menu.Children.Clear();
+        AddMenuExample(AppMenuIcon.Open, "打开");
+        AddMenuExample(AppMenuIcon.Pin, "固定到预览栏");
+        AddMenuExample(AppMenuIcon.CloseWindow, "关闭窗口");
+        AddMenuExample(AppMenuIcon.EndTask, "结束任务（不可用）", enabled: false);
+    }
+
+    private void AddMenuExample(AppMenuIcon symbol, string label, bool enabled = true)
+    {
+        var icon = menuIcons.Create(symbol, layout.ColorMode, enabled);
+        ToolTipService.SetToolTip(icon, label);
+        AutomationProperties.SetName(icon, label);
+        menu.Children.Add(icon);
     }
 
     private Canvas AddExample(string label, string glyph, AppWindowState state)
@@ -90,10 +135,9 @@ internal sealed class IconSettingsPreview
         var icon = new Border
         {
             Width = iconSize, Height = iconSize, CornerRadius = new CornerRadius(iconSize * (6d / 26)),
-            Background = new SolidColorBrush(Microsoft.UI.Colors.White),
-            Child = new FontIcon { Glyph = glyph, FontSize = iconSize * .6,
-                Foreground = new SolidColorBrush(Color.FromArgb(255, 36, 57, 79)) }
+            Child = new FontIcon { Glyph = glyph, FontSize = iconSize * .6 }
         };
+        iconPlates.Add(icon);
         ToolTipService.SetToolTip(icon, label);
         AutomationProperties.SetName(icon, label);
         var visual = new TaskbarAppFeedback(icon, iconSize, system.AnimationsEnabled && !accessibility.HighContrast);

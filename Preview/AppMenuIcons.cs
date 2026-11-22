@@ -2,7 +2,6 @@ using System.Numerics;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Geometry;
-using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.UI;
@@ -29,13 +28,13 @@ internal sealed class AppMenuIcons(UISettings system, AccessibilitySettings acce
     private const float Center = Size / 2f, LineWidth = 1.15f;
     private readonly Dictionary<(AppMenuIcon, Palette), WriteableBitmap> bitmaps = [];
 
-    private readonly record struct Palette(Color Ink, Color Ring);
+    private readonly record struct Palette(Color Ink, Color Ring, Color Base);
 
-    internal IconElement Create(AppMenuIcon icon, ElementTheme theme, bool enabled = true)
+    internal IconElement Create(AppMenuIcon icon, IconColorMode mode, bool enabled = true)
     {
         var element = new ImageIcon { Width = Size, Height = Size };
         if (icon == AppMenuIcon.Empty) return element;
-        var key = (icon, Colors(theme, enabled));
+        var key = (icon, Colors(mode, enabled));
         if (!bitmaps.TryGetValue(key, out var bitmap))
         {
             bitmap = Draw(icon, key.Item2);
@@ -45,22 +44,23 @@ internal sealed class AppMenuIcons(UISettings system, AccessibilitySettings acce
         return element;
     }
 
-    private Palette Colors(ElementTheme theme, bool enabled)
+    private Palette Colors(IconColorMode mode, bool enabled)
     {
         if (accessibility.HighContrast)
         {
             var ink = enabled ? system.GetColorValue(UIColorType.Foreground) : system.UIElementColor(UIElementType.GrayText);
-            return new(ink, ink);
+            return new(ink, ink, Microsoft.UI.Colors.Transparent);
         }
-        bool dark = theme == ElementTheme.Dark;
+        bool dark = mode == IconColorMode.Dark;
+        var baseColor = dark ? Color.FromArgb(222, 29, 37, 49) : Color.FromArgb(224, 249, 252, 255);
         if (!enabled)
         {
             var gray = dark ? Rgb(157, 169, 183) : Rgb(107, 118, 132);
-            return new(gray, gray);
+            return new(gray, gray, baseColor);
         }
         return dark
-            ? new(Rgb(231, 240, 251), Rgb(125, 143, 165))
-            : new(Rgb(38, 59, 85), Rgb(157, 174, 194));
+            ? new(Rgb(231, 240, 251), Rgb(125, 143, 165), baseColor)
+            : new(Rgb(38, 59, 85), Rgb(124, 143, 164), baseColor);
     }
 
     private static Color Rgb(byte r, byte g, byte b) => Color.FromArgb(255, r, g, b);
@@ -73,6 +73,7 @@ internal sealed class AppMenuIcons(UISettings system, AccessibilitySettings acce
         using (var caps = new CanvasStrokeStyle { StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round })
         {
             drawing.Clear(Microsoft.UI.Colors.Transparent);
+            drawing.FillCircle(Center, Center, 8.35f, palette.Base);
             drawing.DrawCircle(Center, Center, 8.35f, palette.Ring, 1);
             drawing.Transform = Matrix3x2.CreateScale(.92f, new Vector2(Center, Center));
 
@@ -113,9 +114,9 @@ internal sealed class AppMenuIcons(UISettings system, AccessibilitySettings acce
                     DrawPin(drawing, caps, palette.Ink);
                     if (icon == AppMenuIcon.Unpin)
                     {
-                        // Clear the space around the slash so the menu shows through.
+                        // Restore the base around the slash to separate it from the pin outline.
                         drawing.Blend = CanvasBlend.Copy;
-                        drawing.DrawLine(5.05f, 5.05f, 12.95f, 12.95f, Microsoft.UI.Colors.Transparent, 2.5f, caps);
+                        drawing.DrawLine(5.05f, 5.05f, 12.95f, 12.95f, palette.Base, 2.5f, caps);
                         drawing.Blend = CanvasBlend.SourceOver;
                         Line(5.05f, 5.05f, 12.95f, 12.95f);
                     }

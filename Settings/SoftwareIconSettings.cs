@@ -18,6 +18,10 @@ internal sealed partial class TaskbarSettingsWindow
         var sizeValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
         var gap = FeedbackSlider("图标间距", PreviewIconLayout.MinGap, PreviewIconLayout.MaxGap);
         var gapValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+        var colors = new ComboBox { MinWidth = 118 };
+        colors.Items.Add("亮色");
+        colors.Items.Add("暗色");
+        AutomationProperties.SetName(colors, "图标配色");
         var animation = new ComboBox { MinWidth = 118 };
         AutomationProperties.SetName(animation, "滚动动画");
         (IconScrollAnimation Value, string Label)[] modes =
@@ -57,6 +61,7 @@ internal sealed partial class TaskbarSettingsWindow
             sizeValue.Text = $"{app.IconSize} DIP";
             gap.Value = app.IconLayout.Gap;
             gapValue.Text = $"{app.IconLayout.Gap} DIP";
+            colors.SelectedIndex = app.IconLayout.ColorMode == IconColorMode.Dark ? 1 : 0;
             animation.SelectedIndex = Array.FindIndex(modes, mode => mode.Value == app.IconLayout.Animation);
             windowAnimation.SelectedIndex = Array.FindIndex(windowModes, mode => mode.Value == app.IconLayout.WindowAnimation);
             windowSpeed.IsEnabled = app.IconLayout.WindowAnimation == WindowAnimationStyle.Curved;
@@ -81,6 +86,16 @@ internal sealed partial class TaskbarSettingsWindow
             if (syncing) return;
             app.TrySetIconLayout(app.IconLayout with { Gap = (int)Math.Round(args.NewValue) });
             Sync();
+        };
+        colors.SelectionChanged += (_, _) =>
+        {
+            if (syncing || colors.SelectedIndex < 0) return;
+            var mode = colors.SelectedIndex == 1 ? IconColorMode.Dark : IconColorMode.Light;
+            if (mode != app.IconLayout.ColorMode)
+            {
+                app.TrySetIconLayout(app.IconLayout with { ColorMode = mode });
+                Sync();
+            }
         };
         animation.SelectionChanged += (_, _) =>
         {
@@ -125,6 +140,7 @@ internal sealed partial class TaskbarSettingsWindow
             Sync();
         };
 
+        page.Children.Add(SettingRow("图标配色", "同时应用于任务栏背板和右键菜单图标。", colors));
         page.Children.Add(IconSettingsHeading("图标布局"));
         page.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
         page.Children.Add(SettingRow("图标间距", "分别调整固定区和运行区内相邻图标的间隔。", Actions(gap, gapValue)));

@@ -5,6 +5,7 @@ namespace AITaskbar;
 
 internal enum IconScrollAnimation { Off, Fast, Standard, Relaxed }
 internal enum WindowAnimationStyle { Curved, WindowsDefault, WindowsStyle }
+internal enum IconColorMode { Light, Dark }
 
 internal sealed record PreviewIconLayout
 {
@@ -14,6 +15,8 @@ internal sealed record PreviewIconLayout
     internal static PreviewIconLayout Default { get; } = new();
 
     public int Gap { get; init; } = DefaultGap;
+    [JsonConverter(typeof(JsonStringEnumConverter<IconColorMode>))]
+    public IconColorMode ColorMode { get; init; } = IconColorMode.Light;
     [JsonConverter(typeof(JsonStringEnumConverter<IconScrollAnimation>))]
     public IconScrollAnimation Animation { get; init; } = IconScrollAnimation.Standard;
     [JsonConverter(typeof(JsonStringEnumConverter<WindowAnimationStyle>))]
@@ -49,6 +52,7 @@ internal sealed record PreviewIconLayout
                 return value with
                 {
                     Gap = Math.Clamp(value.Gap, MinGap, MaxGap),
+                    ColorMode = Enum.IsDefined(value.ColorMode) ? value.ColorMode : Default.ColorMode,
                     Animation = Enum.IsDefined(value.Animation) ? value.Animation : Default.Animation,
                     WindowAnimation = Enum.IsDefined(value.WindowAnimation) ? value.WindowAnimation : Default.WindowAnimation,
                     WindowDurationMs = Math.Clamp(duration, MinWindowDurationMs, MaxWindowDurationMs)
