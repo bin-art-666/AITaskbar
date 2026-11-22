@@ -4,7 +4,8 @@ namespace AITaskbar;
 
 internal static class TaskbarCalendarNotes
 {
-    internal readonly record struct Note(string Label, string Details, bool Emphasized);
+    internal readonly record struct Note(string Label, string Details, bool Emphasized,
+        string? LunarDate, string? SolarTerm, string? Festivals, string? ScheduleText);
 
     private enum Schedule { None, Rest, Work }
 
@@ -26,7 +27,7 @@ internal static class TaskbarCalendarNotes
             (10, 1) => "国庆节",
             _ => null,
         };
-        string? lunarFestival = null, lunarLabel = null, lunarDetails = null;
+        string? lunarFestival = null, lunarLabel = null, lunarDate = null;
         if (date >= Lunar.MinSupportedDateTime && date <= Lunar.MaxSupportedDateTime)
         {
             int year = Lunar.GetYear(date), month = Lunar.GetMonth(date), day = Lunar.GetDayOfMonth(date);
@@ -35,7 +36,7 @@ internal static class TaskbarCalendarNotes
             int monthNumber = leapMonth > 0 && month >= leapMonth ? month - 1 : month;
             string monthName = (isLeap ? "闰" : "") + Months[monthNumber - 1];
             lunarLabel = day == 1 ? monthName : Days[day - 1];
-            lunarDetails = $"农历{monthName}{Days[day - 1]}";
+            lunarDate = monthName + Days[day - 1];
 
             if (month == Lunar.GetMonthsInYear(year) && day == Lunar.GetDaysInMonth(year, month))
                 lunarFestival = "除夕";
@@ -52,11 +53,13 @@ internal static class TaskbarCalendarNotes
         string? mark = schedule switch { Schedule.Rest => "休", Schedule.Work => "班", _ => null };
         string? festivalLabel = mark is not null && festival is { Length: > 2 } && festival.EndsWith('节')
             ? festival[..^1] : festival;
+        string? festivals = solarFestival is not null && lunarFestival is not null
+            ? $"{solarFestival}、{lunarFestival}" : festival;
+        string? scheduleText = schedule switch { Schedule.Rest => "放假", Schedule.Work => "调休上班", _ => null };
         string label = string.Join(" ", new[] { festivalLabel ?? solarTerm ?? lunarLabel, mark }.OfType<string>());
-        string details = string.Join(" · ", new[] { lunarDetails, solarFestival, lunarFestival,
-            solarTerm is null ? null : $"节气 {solarTerm}",
-            schedule switch { Schedule.Rest => "放假", Schedule.Work => "调休上班", _ => null } }.OfType<string>());
-        return new(label, details, festival is not null || mark is not null);
+        string details = string.Join(" · ", new[] { lunarDate is null ? null : $"农历{lunarDate}", solarFestival, lunarFestival,
+            solarTerm is null ? null : $"节气 {solarTerm}", scheduleText }.OfType<string>());
+        return new(label, details, festival is not null || mark is not null, lunarDate, solarTerm, festivals, scheduleText);
     }
 
     // Annual schedules are published separately from festival dates.
