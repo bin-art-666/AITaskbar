@@ -22,6 +22,15 @@ internal sealed partial class TaskbarSettingsWindow
         colors.Items.Add("亮色");
         colors.Items.Add("暗色");
         AutomationProperties.SetName(colors, "图标配色");
+        var menuColors = new ComboBox { MinWidth = 118 };
+        AutomationProperties.SetName(menuColors, "右键菜单配色");
+        (AppMenuColorMode Value, string Label)[] menuModes =
+        [
+            (AppMenuColorMode.FollowTaskbar, "跟随任务栏"),
+            (AppMenuColorMode.Light, "亮色"),
+            (AppMenuColorMode.Dark, "暗色")
+        ];
+        foreach (var mode in menuModes) menuColors.Items.Add(mode.Label);
         var animation = new ComboBox { MinWidth = 118 };
         AutomationProperties.SetName(animation, "滚动动画");
         (IconScrollAnimation Value, string Label)[] modes =
@@ -62,6 +71,7 @@ internal sealed partial class TaskbarSettingsWindow
             gap.Value = app.IconLayout.Gap;
             gapValue.Text = $"{app.IconLayout.Gap} DIP";
             colors.SelectedIndex = app.IconLayout.ColorMode == IconColorMode.Dark ? 1 : 0;
+            menuColors.SelectedIndex = Array.FindIndex(menuModes, mode => mode.Value == app.IconLayout.MenuColorMode);
             animation.SelectedIndex = Array.FindIndex(modes, mode => mode.Value == app.IconLayout.Animation);
             windowAnimation.SelectedIndex = Array.FindIndex(windowModes, mode => mode.Value == app.IconLayout.WindowAnimation);
             windowSpeed.IsEnabled = app.IconLayout.WindowAnimation == WindowAnimationStyle.Curved;
@@ -96,6 +106,14 @@ internal sealed partial class TaskbarSettingsWindow
                 app.TrySetIconLayout(app.IconLayout with { ColorMode = mode });
                 Sync();
             }
+        };
+        menuColors.SelectionChanged += (_, _) =>
+        {
+            if (syncing || menuColors.SelectedIndex < 0) return;
+            var mode = menuModes[menuColors.SelectedIndex].Value;
+            if (mode == app.IconLayout.MenuColorMode) return;
+            app.TrySetIconLayout(app.IconLayout with { MenuColorMode = mode });
+            Sync();
         };
         animation.SelectionChanged += (_, _) =>
         {
@@ -141,6 +159,7 @@ internal sealed partial class TaskbarSettingsWindow
         };
 
         page.Children.Add(SettingRow("图标配色", "同时应用于任务栏背板和右键菜单图标。", colors));
+        page.Children.Add(SettingRow("右键菜单配色", "调整应用右键菜单和子菜单的背景与文字。", menuColors));
         page.Children.Add(IconSettingsHeading("图标布局"));
         page.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
         page.Children.Add(SettingRow("图标间距", "分别调整固定区和运行区内相邻图标的间隔。", Actions(gap, gapValue)));
