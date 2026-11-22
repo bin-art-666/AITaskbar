@@ -42,6 +42,8 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
     private readonly TaskbarStatusIcon wifiIcon, audioIcon;
     private readonly Button wifi, volume;
     private readonly QuickControlPanel quickControls;
+    private readonly TaskbarCalendar calendar;
+    private readonly Button clockButton;
     private readonly TextBlock time = new() { FontSize = 17, TextAlignment = TextAlignment.Right };
     private readonly TextBlock date = new() { FontSize = 12, TextAlignment = TextAlignment.Right };
     private readonly RotateTransform direction = new() { CenterX = 6, CenterY = 4 };
@@ -103,6 +105,7 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
         {
             HideVolumeFeedback();
             quickControls?.Hide();
+            calendar?.Hide();
             trayOpen = true;
             RefreshAppIcons();
             SetArrow(180);
@@ -138,7 +141,7 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
             () => { audio.ToggleMute(); RefreshAudio(); },
             audio.ReadOutputs, id => { bool switched = audio.SwitchOutput(id); RefreshAudio(); return switched; },
             saveQuickAppearance, showQuickAppearance,
-            () => { HideVolumeFeedback(); trayFlyout.Hide(); dismissThumbnails(); RefreshAudio(); });
+            () => { HideVolumeFeedback(); trayFlyout.Hide(); calendar?.Hide(); dismissThumbnails(); RefreshAudio(); });
         wifi.Click += (_, _) => quickControls.Toggle(wifi: true);
         volume.Click += (_, _) => quickControls.Toggle(wifi: false);
         QuickControlWheel.Attach(volume, change =>
@@ -160,13 +163,19 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
         Children.Add(capsule);
 
         var clock = new StackPanel { MinWidth = 66, MinHeight = TaskbarBatteryBorder.CapsuleHeight,
-            Margin = new Thickness(2, 0, 3, 0), VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
+            VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
         time.Foreground = date.Foreground = foreground;
         Typography.SetNumeralAlignment(time, FontNumeralAlignment.Tabular);
         Typography.SetNumeralAlignment(date, FontNumeralAlignment.Tabular);
         clock.Children.Add(time);
         clock.Children.Add(date);
-        Children.Add(clock);
+        clockButton = TrayButton("日历", clock, double.NaN);
+        clockButton.Height = double.NaN;
+        clockButton.Margin = new Thickness(2, 0, 3, 0);
+        ToolTipService.SetToolTip(clockButton, null);
+        calendar = new(clockButton, quickAppearance,
+            () => { HideVolumeFeedback(); trayFlyout.Hide(); quickControls.Hide(); dismissThumbnails(); });
+        Children.Add(clockButton);
         SetClockStyle(clockStyle);
 
         timer = dispatcher.CreateTimer();
@@ -322,11 +331,16 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
         date.FontWeight = new Windows.UI.Text.FontWeight { Weight = (ushort)style.DateWeight };
     }
 
-    internal void SetQuickAppearance(QuickControlAppearance appearance) => quickControls.SetAppearance(appearance);
+    internal void SetQuickAppearance(QuickControlAppearance appearance)
+    {
+        quickControls.SetAppearance(appearance);
+        calendar.SetAppearance(appearance);
+    }
 
     internal void ApplyTone(bool light, LumaBar.BarAppearance? appearance = null)
     {
         quickControls.SetTaskbarAppearance(light, appearance);
+        calendar.SetTaskbarAppearance(light, appearance);
         bool contrast = accessibility.HighContrast;
         var text = contrast ? ui.GetColorValue(UIColorType.Foreground)
             : light ? Color.FromArgb(255, 24, 39, 57) : Color.FromArgb(255, 239, 247, 255);
@@ -355,8 +369,12 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
         var now = DateTime.Now;
         string clock = now.ToString("HH:mm", CultureInfo.InvariantCulture);
         string today = now.ToString("yyyy/MM/dd", CultureInfo.InvariantCulture);
-        if (time.Text != clock) time.Text = clock;
-        if (date.Text != today) date.Text = today;
+        if (time.Text != clock || date.Text != today)
+        {
+            time.Text = clock;
+            date.Text = today;
+            AutomationProperties.SetName(clockButton, $"日历，{today} {clock}");
+        }
         RefreshAudio();
         quickControls.Pulse();
         var battery = SystemTrayStatus.ReadBattery();
@@ -454,6 +472,7 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
         notificationArea.Dispose();
         trayFlyout.Hide();
         quickControls.Dispose();
+        calendar.Dispose();
         arrowTransition?.Stop();
         batteryBorder.Dispose();
         audio.Dispose();

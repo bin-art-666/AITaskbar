@@ -77,7 +77,7 @@ internal sealed partial class QuickControlPanel
             detailArea is not (Area.Wifi or Area.Bluetooth)) return;
         var area = detailArea.Value;
         int revision = detailRevision;
-        bool Current() => !disposed && !closing && !radioBusy && !networkBusy && detailArea == area && revision == detailRevision;
+        bool Current() => !disposed && !panel.IsClosing && !radioBusy && !networkBusy && detailArea == area && revision == detailRevision;
         wirelessReading = true;
         try
         {

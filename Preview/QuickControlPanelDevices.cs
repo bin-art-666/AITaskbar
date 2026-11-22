@@ -36,7 +36,7 @@ internal sealed partial class QuickControlPanel
 
     internal void Pulse()
     {
-        if (!opened || closing || disposed || Environment.TickCount64 < nextPoll) return;
+        if (!panel.IsOpen || panel.IsClosing || disposed || Environment.TickCount64 < nextPoll) return;
         nextPoll = Environment.TickCount64 + 2000;
         if (detailArea == Area.Audio) RefreshOutputs();
         if (detailArea is Area.Wifi or Area.Bluetooth && !wirelessEditor) _ = RefreshWirelessListAsync();
@@ -227,7 +227,7 @@ internal sealed partial class QuickControlPanel
 
     private async Task ChangeBluetoothAudioAsync(QuickControlRadios.BluetoothEntry device, bool connect)
     {
-        if (disposed || closing || detailArea != Area.Bluetooth || wirelessEditor || networkBusy || radioBusy) return;
+        if (disposed || panel.IsClosing || detailArea != Area.Bluetooth || wirelessEditor || networkBusy || radioBusy) return;
         string action = connect ? "连接" : "断开";
         if (bluetoothRadio?.State is RadioState.Off or RadioState.Disabled)
         {
@@ -235,7 +235,7 @@ internal sealed partial class QuickControlPanel
             return;
         }
         int revision = detailRevision;
-        bool Current() => !disposed && !closing && detailArea == Area.Bluetooth && detailRevision == revision;
+        bool Current() => !disposed && !panel.IsClosing && detailArea == Area.Bluetooth && detailRevision == revision;
         networkBusy = true;
         UpdateRadioSwitch();
         ShowWirelessNotice($"正在{action}「{device.Device.Name}」…");
@@ -371,7 +371,7 @@ internal sealed partial class QuickControlPanel
         if (Motion)
         {
             sunAnimation = new Storyboard();
-            AddAnimation(sunAnimation, sun, "Angle", displayedAngle, sunAngle, 170);
+            TaskbarPanelFlyout.AddAnimation(sunAnimation, sun, "Angle", displayedAngle, sunAngle, 170);
             sunAnimation.Begin();
         }
         pendingBrightness = value;

@@ -1,16 +1,15 @@
-using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.System;
 using Windows.UI;
 using Windows.UI.ViewManagement;
+using static AITaskbar.TaskbarPanelFlyout;
 
 namespace AITaskbar;
 
@@ -18,12 +17,10 @@ internal sealed partial class QuickControlPanel : IDisposable
 {
     private enum Area { Wifi, Bluetooth, Audio, Appearance }
 
-    private const double Radius = 23;
     private const double WirelessBodySize = 14, WirelessHeadingSize = 16, WirelessRowHeight = 29;
     private const string SunGlyph = "\uE706";
     private readonly nint owner;
-    private readonly FrameworkElement anchor;
-    private readonly Flyout flyout;
+    private readonly TaskbarPanelFlyout panel;
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
     private readonly Grid scene = new() { Width = 358, Height = 254 };
@@ -33,7 +30,7 @@ internal sealed partial class QuickControlPanel : IDisposable
         Visibility = Visibility.Collapsed, Background = new SolidColorBrush(Color.FromArgb(50, 0, 0, 0)) };
     private readonly Border detail = new() { Margin = new Thickness(8, 35, 8, 8), CornerRadius = new CornerRadius(Radius),
         BorderThickness = new Thickness(1), Visibility = Visibility.Collapsed };
-    private readonly CompositeTransform panelMotion = new(), detailMotion = new();
+    private readonly CompositeTransform detailMotion = new();
     private readonly SolidColorBrush ink = new(), subtle = new(), idle = new(), tile = new(), edge = new();
     private readonly SolidColorBrush wifiFill = new(), bluetoothFill = new(), volumeFill = new();
     private readonly SolidColorBrush wifiGlyph = new(), bluetoothGlyph = new(), volumeGlyph = new();
@@ -53,11 +50,9 @@ internal sealed partial class QuickControlPanel : IDisposable
     private readonly RotateTransform sun = new();
     private QuickControlAppearance style;
     private LumaBar.BarAppearance? taskbar;
-    private Halo.GlassBackdrop? desktopBackdrop;
-    private string? backdropKind;
-    private Storyboard? panelAnimation, detailAnimation, sunAnimation;
+    private Storyboard? detailAnimation, sunAnimation;
     private Area? selected, detailArea;
-    private bool opened, closing, finishClose, disposed, applyingAudio, light;
+    private bool disposed, applyingAudio, light;
     private SystemVolume.State? audioState;
     private Action? afterClose;
 
@@ -66,7 +61,6 @@ internal sealed partial class QuickControlPanel : IDisposable
         Func<QuickControlAppearance, bool> saveAppearance, Action showAppearance, Action opening)
     {
         this.owner = owner;
-        this.anchor = anchor;
         this.readOutputs = readOutputs;
         this.switchOutput = switchOutput;
         this.saveAppearance = saveAppearance;
@@ -165,7 +159,6 @@ internal sealed partial class QuickControlPanel : IDisposable
         scene.Children.Add(main);
         scene.Children.Add(shade);
         scene.Children.Add(detail);
-        scene.RenderTransform = panelMotion;
         scene.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, args) =>
         {
             if (args.Key != VirtualKey.Escape) return;
@@ -174,31 +167,11 @@ internal sealed partial class QuickControlPanel : IDisposable
             else Hide();
         }), true);
 
-        var presenter = new Style(typeof(FlyoutPresenter));
-        presenter.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
-        presenter.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
-        presenter.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(Radius)));
-        presenter.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Microsoft.UI.Colors.Transparent)));
-        presenter.Setters.Add(new Setter(FlyoutPresenter.IsDefaultShadowEnabledProperty, false));
-        flyout = new() { Content = scene, Placement = FlyoutPlacementMode.Top, ShouldConstrainToRootBounds = false,
-            AreOpenCloseAnimationsEnabled = false, FlyoutPresenterStyle = presenter,
-            OverlayInputPassThroughElement = anchor };
-        flyout.Opening += (_, _) => { opened = true; opening(); ApplyPalette(); };
-        flyout.Opened += (_, _) =>
+        panel = new(anchor, scene, backplate);
+        panel.Opening += () => { opening(); ApplyPalette(); };
+        panel.Opened += () => { FocusSelected(); Pulse(); };
+        panel.Closed += () =>
         {
-            FocusSelected();
-            AnimatePanel(show: true);
-            Pulse();
-        };
-        flyout.Closing += (_, args) =>
-        {
-            if (finishClose || disposed || !Motion) return;
-            args.Cancel = true;
-            if (!closing) AnimatePanel(show: false);
-        };
-        flyout.Closed += (_, _) =>
-        {
-            opened = closing = finishClose = false;
             selected = null;
             ResetDetails();
             var action = afterClose;
@@ -213,16 +186,10 @@ internal sealed partial class QuickControlPanel : IDisposable
     internal void Toggle(bool wifi)
     {
         var area = wifi ? Area.Wifi : Area.Audio;
-        if (opened)
+        if (panel.IsOpen)
         {
             if (area == selected) { Hide(); return; }
-            if (closing)
-            {
-                panelAnimation?.Stop();
-                closing = false;
-                scene.Opacity = 1;
-                panelMotion.TranslateY = 0;
-            }
+            panel.CancelClosing();
             ResetDetails();
             selected = area;
             FocusSelected();
@@ -230,43 +197,17 @@ internal sealed partial class QuickControlPanel : IDisposable
         }
         selected = area;
         nextPoll = 0;
-        flyout.ShowAt(anchor);
+        panel.Show();
     }
 
-    internal void Hide() { if (opened) flyout.Hide(); }
+    internal void Hide() => panel.Hide();
 
-    private bool Motion => system.AnimationsEnabled && !accessibility.HighContrast;
+    private bool Motion => panel.CanAnimate;
 
     private void FocusSelected()
     {
         if (selected == Area.Wifi) wifiCapsule.Focus(FocusState.Programmatic);
         else (volumeSlider.IsEnabled ? (Control)volumeSlider : wifiCapsule).Focus(FocusState.Programmatic);
-    }
-
-    private void AnimatePanel(bool show)
-    {
-        double opacity = show ? 0 : scene.Opacity;
-        double offset = show ? 12 : panelMotion.TranslateY;
-        panelAnimation?.Stop();
-        closing = !show;
-        if (!Motion)
-        {
-            scene.Opacity = 1;
-            panelMotion.TranslateY = 0;
-            return;
-        }
-        scene.Opacity = show ? 1 : 0;
-        panelMotion.TranslateY = show ? 0 : 12;
-        panelAnimation = new();
-        AddAnimation(panelAnimation, scene, "Opacity", opacity, scene.Opacity, show ? 180 : 140);
-        AddAnimation(panelAnimation, panelMotion, "TranslateY", offset, panelMotion.TranslateY, show ? 180 : 140);
-        panelAnimation.Completed += (_, _) =>
-        {
-            if (show) return;
-            finishClose = true;
-            flyout.Hide();
-        };
-        panelAnimation.Begin();
     }
 
     private void OpenDetails(Area area)
@@ -358,15 +299,6 @@ internal sealed partial class QuickControlPanel : IDisposable
         Area.Audio => outputButton,
         _ => appearanceButton
     };
-
-    private static void AddAnimation(Storyboard storyboard, DependencyObject target, string property, double from, double to, int milliseconds)
-    {
-        var animation = new DoubleAnimation { From = from, To = to, EnableDependentAnimation = true,
-            Duration = new Duration(TimeSpan.FromMilliseconds(milliseconds)), EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-        Storyboard.SetTarget(animation, target);
-        Storyboard.SetTargetProperty(animation, property);
-        storyboard.Children.Add(animation);
-    }
 
     private (Button Button, Border Disc, TextBlock Status) Connection(string label, FrameworkElement icon, Action open)
     {
@@ -504,59 +436,18 @@ internal sealed partial class QuickControlPanel : IDisposable
     private void ApplyPalette()
     {
         bool highContrast = accessibility.HighContrast;
-        bool followsBar = style.Backdrop == QuickBackdrop.FollowTaskbar;
-        bool isLight = style.Backdrop switch { QuickBackdrop.Light => true, QuickBackdrop.Dark => false,
-            QuickBackdrop.Custom => IsLight(FromRgb(style.Tint)), _ => light };
-        var neutral = isLight ? Color.FromArgb(255, 243, 246, 250) : Color.FromArgb(255, 30, 34, 42);
-        string material = followsBar ? taskbar?.Material ?? "normal" : "blur";
-        Color tint = style.Backdrop == QuickBackdrop.Custom ? FromRgb(style.Tint)
-            : followsBar && material != "normal" && taskbar is { } bar ? PreviewBarAppearance.FromAbgr(bar.Abgr) : neutral;
-        double opacity = style.Backdrop == QuickBackdrop.Custom ? 1 - style.Transparency / 100d
-            : followsBar ? tint.A / 255d : .86;
-        var solid = Blend(neutral, tint, opacity);
-        var text = highContrast ? system.GetColorValue(UIColorType.Foreground)
-            : isLight ? Color.FromArgb(255, 24, 39, 57) : Color.FromArgb(255, 242, 247, 255);
+        var (text, raised) = panel.ApplyPalette(style, light, taskbar);
         ink.Color = text;
         subtle.Color = text;
         idle.Color = Alpha(text, 28);
         tile.Color = Alpha(text, 17);
         edge.Color = Alpha(text, 54);
-        scene.RequestedTheme = highContrast ? ElementTheme.Default : isLight ? ElementTheme.Light : ElementTheme.Dark;
-        bool glass = !highContrast && system.AdvancedEffectsEnabled && material is not ("normal" or "opaque");
-        bool acrylic = glass && material == "acrylic" && DesktopAcrylicController.IsSupported();
-        int blur = followsBar ? material == "acrylic" ? 30 : taskbar?.Blur ?? 0 : 34;
-        SetBackdrop(!glass ? null : acrylic ? "acrylic" : material is "blur" or "acrylic" ? "blur" : "desktop");
-        if (acrylic)
-            desktopBackdrop!.Update(new Halo.MaterialOptions(Thin: true, TintOpacity: (float)opacity, LuminosityOpacity: .65f,
-                FollowTheme: false, TintHex: $"#{tint.R:X2}{tint.G:X2}{tint.B:X2}"));
-        else desktopBackdrop?.UpdateBlur(blur);
-        backplate.Background = new SolidColorBrush(highContrast ? system.GetColorValue(UIColorType.Background)
-            : !glass ? solid : acrylic ? Microsoft.UI.Colors.Transparent : Alpha(tint, (byte)Math.Round(opacity * 255)));
-        var raised = Blend(solid, text, .045);
-        detail.Background = new SolidColorBrush(highContrast ? system.GetColorValue(UIColorType.Background)
-            : glass ? Alpha(raised, 72) : raised);
+        detail.Background = new SolidColorBrush(raised);
         detail.BorderBrush = edge;
         wifiFill.Color = highContrast ? system.GetColorValue(UIColorType.Accent) : FromRgb(style.Wifi);
         bluetoothFill.Color = highContrast ? system.GetColorValue(UIColorType.Accent) : FromRgb(style.Bluetooth);
         volumeFill.Color = highContrast ? system.GetColorValue(UIColorType.Accent) : FromRgb(style.Volume);
         ApplyAccents();
-    }
-
-    private void SetBackdrop(string? kind)
-    {
-        if (kind == backdropKind) return;
-        backdropKind = kind;
-        desktopBackdrop = kind switch
-        {
-            "blur" or "desktop" => new Halo.GlassBackdrop(new Halo.MaterialOptions(TintOpacity: 0, LuminosityOpacity: 0, NoBase: true))
-            {
-                TransparentCanvas = true, ConfigureWindowFrame = false, BlurScale = 1f / 3,
-                KeepBlurBackdropAtZero = kind == "blur", MaximumBlurStrength = LumaBar.TaskbarAppearance.MaximumBlurRadius
-            },
-            "acrylic" => new Halo.GlassBackdrop(Halo.GlassStyle.Acrylic),
-            _ => null
-        };
-        flyout.SystemBackdrop = desktopBackdrop;
     }
 
     private void ApplyAccents()
@@ -573,18 +464,10 @@ internal sealed partial class QuickControlPanel : IDisposable
     }
 
     private static Color AccentInk(Color color) => IsLight(color) ? Color.FromArgb(255, 15, 22, 31) : Microsoft.UI.Colors.White;
-    private static bool IsLight(Color color) => (color.R * 299 + color.G * 587 + color.B * 114) >= 155000;
-    private static Color Alpha(Color color, byte alpha) => Color.FromArgb(alpha, color.R, color.G, color.B);
-    private static Color FromRgb(uint rgb) => Color.FromArgb(255, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
-    private static Color Blend(Color first, Color second, double fraction) => Color.FromArgb(255,
-        (byte)Math.Round(first.R + (second.R - first.R) * fraction), (byte)Math.Round(first.G + (second.G - first.G) * fraction),
-        (byte)Math.Round(first.B + (second.B - first.B) * fraction));
-
     public void Dispose()
     {
         disposed = true;
-        flyout.Hide();
-        panelAnimation?.Stop();
+        panel.Dispose();
         detailAnimation?.Stop();
         sunAnimation?.Stop();
     }
