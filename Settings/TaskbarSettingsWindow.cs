@@ -16,6 +16,8 @@ internal enum SettingsSection { Taskbar, Halo, AIEnter, AppCenter, TaskbarSubpag
 internal sealed partial class TaskbarSettingsWindow : Window
 {
     private readonly App app;
+    private readonly NavigationView taskbarNav;
+    private readonly NavigationViewItem taskbarAppearanceItem;
     private readonly Button previewToggle = new();
     private readonly Slider heightSlider = new() { Minimum = PreviewHeight.Minimum, Maximum = PreviewHeight.Maximum,
         StepFrequency = 1, Width = 132 };
@@ -66,10 +68,11 @@ internal sealed partial class TaskbarSettingsWindow : Window
         var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
 
         var widths = new SettingsPaneWidths(profileDirectory, SetStatus);
-        var taskbarNav = SettingsNavigation.Sidebar(144);
+        taskbarNav = SettingsNavigation.Sidebar(144);
         var appearanceBody = new StackPanel();
         BuildPreview(appearanceBody);
         var appearanceItem = AddSubpage("任务栏外观设置", SettingsNavigation.Subpage("任务栏外观设置", appearanceBody));
+        taskbarAppearanceItem = appearanceItem;
         AddSubpage("图标设置", BuildIconSettings());
         var compactSubpages = SettingsNavigation.ConnectSubpages(taskbarNav, item => item.Tag);
         var taskbarPages = new SettingsSplitView(taskbarNav, widths, SettingsSection.TaskbarSubpages,
@@ -262,11 +265,36 @@ internal sealed partial class TaskbarSettingsWindow : Window
         page.Children.Add(SettingRow("任务栏高度", "拖动即时生效。栏较矮时，图标会随之缩小。",
             Actions(heightSlider, heightValue, resetHeight)));
         UpdateHeightControl();
+        AddClockWeightSettings(page);
+        AddQuickControlSettings(page);
         BuildGlassSettings(page);
         previewToggle.Click += (_, _) => app.TogglePreview();
         page.Children.Add(SettingRow("AITaskbar 任务栏", "在栏上右键可显示 Windows 原生任务栏，开启双栏对照。", previewToggle));
 
         BuildLumaPreferences(page);
+    }
+
+    private void AddClockWeightSettings(StackPanel page)
+    {
+        int[] weights = [400, 500, 600];
+        AddPicker("时间字重", "调整任务栏时钟上方时间的粗细。", time: true);
+        AddPicker("日期字重", "调整任务栏时钟下方日期的粗细。", time: false);
+
+        void AddPicker(string title, string help, bool time)
+        {
+            int CurrentWeight() => time ? app.ClockStyle.TimeWeight : app.ClockStyle.DateWeight;
+            var picker = new ComboBox { Width = 110, ItemsSource = new[] { "常规", "中等", "半粗" },
+                SelectedIndex = Array.IndexOf(weights, CurrentWeight()) };
+            AutomationProperties.SetName(picker, title);
+            picker.SelectionChanged += (_, _) =>
+            {
+                if (picker.SelectedIndex < 0) return;
+                int weight = weights[picker.SelectedIndex];
+                var next = time ? app.ClockStyle with { TimeWeight = weight } : app.ClockStyle with { DateWeight = weight };
+                if (!app.TrySetClockStyle(next)) picker.SelectedIndex = Array.IndexOf(weights, CurrentWeight());
+            };
+            page.Children.Add(SettingRow(title, help, picker));
+        }
     }
 
     internal void UpdateHeightControl()

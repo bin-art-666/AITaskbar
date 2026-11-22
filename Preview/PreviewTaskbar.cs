@@ -16,6 +16,7 @@ internal sealed class PreviewTaskbar : Window
     private readonly PinnedApps pins;
     private readonly DispatcherQueueTimer refresh;
     private readonly PreviewApplicationStrip tasks;
+    private readonly TaskbarSystemTray tray;
     private readonly Border surface = new() { CornerRadius = new CornerRadius(0) };
     private readonly Grid strip = new() { Padding = new Thickness(10, 0, 10, 0) };
     private readonly ScaleTransform stripScale = new();
@@ -69,6 +70,10 @@ internal sealed class PreviewTaskbar : Window
 
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
         right.Children.Add(feedback);
+        tray = new(DispatcherQueue, handle, root, app.ClockStyle, app.QuickAppearance,
+            app.ShowSettings, app.ShowAppearanceSettings, app.ShowQuickControlSettings, app.TrySetQuickAppearance,
+            tasks.DismissThumbnails, Report);
+        right.Children.Add(tray);
         right.Children.Add(icons.AiEntrance);
 
         strip.Children.Add(tasks.HoverSurface);
@@ -138,6 +143,7 @@ internal sealed class PreviewTaskbar : Window
         {
             icons.RefreshSystem(light);
             tasks.SetFeedbackLight(light);
+            tray.ApplyTone(light, app.BarAppearance);
         });
 
         refresh = DispatcherQueue.CreateTimer();
@@ -152,6 +158,7 @@ internal sealed class PreviewTaskbar : Window
         Closed += (_, _) =>
         {
             closed = true;
+            tray.Dispose();
             systemTaskbar.Dispose();
             refresh.Stop();
             tasks.Close();
@@ -193,6 +200,8 @@ internal sealed class PreviewTaskbar : Window
     }
 
     internal void SetHeight(int height) => bar.SetHeight(height);
+    internal void SetClockStyle(TaskbarClockStyle style) => tray.SetClockStyle(style);
+    internal void SetQuickAppearance(QuickControlAppearance appearance) => tray.SetQuickAppearance(appearance);
 
     internal async Task SetSystemTaskbarVisibilityAsync(bool visible, Action<bool>? save = null)
     {
@@ -201,10 +210,17 @@ internal sealed class PreviewTaskbar : Window
             if (!await systemTaskbar.SetVisibleAsync(visible) || closed) return;
             bar.Reposition();
             save?.Invoke(visible);
+            // Explorer applies the taskbar state and updates the work area asynchronously.
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            if (!closed) bar.RefreshReservation();
         }
         catch (Exception error)
         {
             if (!closed) Report(error.Message);
+        }
+        finally
+        {
+            if (!closed) tray.EnableNotificationReceiver();
         }
     }
 

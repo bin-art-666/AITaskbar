@@ -82,6 +82,13 @@ internal sealed class DesktopAppBar : IDisposable
 
     internal void Reposition() => QueuePosition();
 
+    internal void RefreshReservation()
+    {
+        // Explorer can retain the old work area even when the AppBar rectangle is unchanged.
+        proposed = null;
+        Position();
+    }
+
     internal void SetCoverWindows(bool coversWindows)
     {
         CoversWindows = coversWindows;

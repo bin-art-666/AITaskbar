@@ -45,12 +45,14 @@ internal static class PanelToggleTargets
     }
     static bool IsTaskbarEntry(Native.Point point)
     {
-        var tray = FindWindow("Shell_TrayWnd", null);
-        if (tray == IntPtr.Zero || GetAncestor(WindowFromPoint(point), 2) != tray || !GetWindowRect(tray, out var rect)) return false;
+        var tray = GetAncestor(WindowFromPoint(point), 2);
+        var windowClass = new System.Text.StringBuilder(32);
+        if (tray == IntPtr.Zero || GetClassName(tray, windowClass, windowClass.Capacity) == 0 ||
+            windowClass.ToString() != "Shell_TrayWnd" || !GetWindowRect(tray, out var rect)) return false;
         double scale = Native.GetDpiForWindow(tray) / 96d;
         return point.X >= rect.Left && point.X < rect.Left + 44 * scale && point.Y >= rect.Top && point.Y < rect.Bottom;
     }
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string name, string? title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, System.Text.StringBuilder name, int length);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Native.Rect rect);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr window, ref Native.Point point);

@@ -11,6 +11,7 @@ public sealed class GlassBackdrop : SystemBackdrop
 {
     MaterialOptions material;
     internal bool TransparentCanvas { get; init; }
+    internal bool ConfigureWindowFrame { get; init; } = true;
     internal bool KeepBlurBackdropAtZero { get; init; }
     internal float BlurScale { get; init; } = .18f;
     internal int MaximumBlurStrength { get; init; } = 100;
@@ -82,7 +83,8 @@ public sealed class GlassBackdrop : SystemBackdrop
             {
                 controller.RemoveSystemBackdropTarget(connectedTarget); controller.Dispose(); controller = null;
             }
-            transparentFrame ??= new TransparentWindowFrame(handle);
+            if (ConfigureWindowFrame)
+                transparentFrame ??= new TransparentWindowFrame(handle);
             transparentCompositor ??= new Windows.UI.Composition.Compositor();
             var color = material.FlatColor(dark);
             transparentBrush ??= transparentCompositor.CreateColorBrush();

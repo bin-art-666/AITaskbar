@@ -25,6 +25,8 @@ public partial class App : Application
     private string ShowSystemTaskbarFile => Path.Combine(root, "show-system-taskbar");
     internal TaskbarAppFeedbackStyle AppFeedback { get; private set; } = TaskbarAppFeedbackStyle.Default;
     internal PreviewIconLayout IconLayout { get; private set; } = PreviewIconLayout.Default;
+    internal TaskbarClockStyle ClockStyle { get; private set; } = TaskbarClockStyle.Default;
+    internal QuickControlAppearance QuickAppearance { get; private set; } = new();
     internal PreviewIconPreferences IconPreferences { get; private set; } = null!;
     internal AppCenterAppearance SavedAppCenterAppearance { get; private set; } = new();
     internal AppCenterAppearance CurrentAppCenterAppearance { get; private set; } = new();
@@ -53,6 +55,8 @@ public partial class App : Application
         TaskbarCoversWindows = File.Exists(TaskbarCoverFile);
         AppFeedback = TaskbarAppFeedbackStyle.Read(root);
         IconLayout = PreviewIconLayout.Read(root);
+        ClockStyle = TaskbarClockStyle.Read(root);
+        QuickAppearance = QuickControlAppearance.Read(root);
         IconPreferences = new(Path.Combine(root, "preview-original-icons.json"));
         CurrentAppCenterAppearance = SavedAppCenterAppearance = AppCenterAppearance.Read(root);
         useDefaultRoot = string.Equals(root, defaultRoot, StringComparison.OrdinalIgnoreCase);
@@ -198,6 +202,12 @@ public partial class App : Application
     }
 
     internal void HideSettings() => settingsWindow?.HideSettings();
+    internal void ShowQuickControlSettings()
+    {
+        ShowSettings(SettingsSection.Taskbar);
+        if (!shuttingDown) settingsWindow?.ShowQuickControlAppearance();
+    }
+
     internal void ShowAppCenterSettings()
     {
         ShowSettings(SettingsSection.AppCenter);
@@ -281,6 +291,39 @@ public partial class App : Application
         }
         iconSize = size;
         preview?.SetIconSize(size);
+        settingsWindow?.SetStatus("");
+        return true;
+    }
+
+    internal bool TrySetClockStyle(TaskbarClockStyle style)
+    {
+        if (ClockStyle == style) return true;
+        try { style.Save(root); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Log(error);
+            settingsWindow?.SetStatus("无法保存任务栏时钟字重。");
+            return false;
+        }
+        ClockStyle = style;
+        preview?.SetClockStyle(style);
+        settingsWindow?.SetStatus("");
+        return true;
+    }
+
+    internal bool TrySetQuickAppearance(QuickControlAppearance appearance)
+    {
+        if (QuickAppearance == appearance) return true;
+        try { appearance.Save(root); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Log(error);
+            settingsWindow?.SetStatus("无法保存快捷控制外观。");
+            return false;
+        }
+        QuickAppearance = appearance;
+        preview?.SetQuickAppearance(appearance);
+        settingsWindow?.UpdateQuickControlAppearance();
         settingsWindow?.SetStatus("");
         return true;
     }
@@ -393,7 +436,7 @@ public partial class App : Application
             // At sign-in, Explorer may still be creating the native taskbar.
             for (var attempt = 0; attempt < 40 && !shuttingDown && preview is null; attempt++)
             {
-                if (LumaBar.Native.FindWindow("Shell_TrayWnd", null) != IntPtr.Zero)
+                if (WindowsNotificationArea.FindExplorerTray() != 0)
                 {
                     await OpenPreviewAsync(activate: false, comparison: comparisonRequested);
                     break;
@@ -440,6 +483,8 @@ public partial class App : Application
         Log(error);
         settingsWindow?.SetStatus("任务栏预览未能继续。" + error.Message);
     }
+
+    internal void ShowAppearanceSettings() => ShowAppearance(hidden: false);
 
     private async void ShowAppearance(bool hidden)
     {

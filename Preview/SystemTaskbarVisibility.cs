@@ -187,7 +187,7 @@ internal sealed class SystemTaskbarVisibility(string root) : IDisposable
         return create ? new(false, EventResetMode.ManualReset, path) : EventWaitHandle.OpenExisting(path);
     }
 
-    private static nint Primary() => FindWindowEx(0, 0, "Shell_TrayWnd", null);
+    private static nint Primary() => WindowsNotificationArea.FindExplorerTray();
     private static IEnumerable<nint> VisibleWindows() => VisibleOrHiddenWindows().Where(IsWindowVisible);
 
     private static IEnumerable<nint> VisibleOrHiddenWindows()

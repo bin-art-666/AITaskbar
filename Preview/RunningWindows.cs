@@ -154,7 +154,7 @@ internal static class RunningWindows
         finally { Marshal.ReleaseComObject(store); }
     }
 
-    private static (string? Executable, string? AppId) DescribeProcess(uint processId)
+    internal static (string? Executable, string? AppId) DescribeProcess(uint processId)
     {
         using var process = OpenProcess(QueryProcess, false, processId);
         if (process.IsInvalid || ProcessImage(process) is not { } executable) return default;
