@@ -851,7 +851,7 @@ internal sealed partial class PreviewApplicationStrip
         _ => ElementTheme.Default
     };
 
-    private static SolidColorBrush MenuBackground(ElementTheme theme) => new(theme == ElementTheme.Dark
+    internal static SolidColorBrush MenuBackground(ElementTheme theme) => new(theme == ElementTheme.Dark
         ? Color.FromArgb(255, 37, 44, 57) : Color.FromArgb(255, 245, 248, 252));
 
     private void UpdateThumbnailTheme(ElementTheme taskbarTheme)

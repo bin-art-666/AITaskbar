@@ -1,5 +1,6 @@
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 
@@ -29,18 +30,48 @@ internal static class SettingsNavigation
         return ScrollContent(content, new Thickness(16));
     }
 
-    internal static Grid Subpage(string title, StackPanel content, FrameworkElement preview)
+    internal static Grid TabbedSubpage(string title, params (string Label, StackPanel Content)[] sections)
     {
-        var header = new StackPanel { Padding = new Thickness(16, 16, 16, 8), Spacing = 12 };
+        var header = new StackPanel { Padding = new Thickness(16, 16, 16, 4), Spacing = 8 };
         header.Children.Add(PageTitle(title));
-        header.Children.Add(preview);
-        var scroll = ScrollContent(content, new Thickness(16, 0, 16, 16));
+        var tabs = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetName(tabs, title + "页签");
+        var bodies = new Dictionary<SelectorBarItem, ScrollViewer>();
+        foreach (var (label, content) in sections)
+        {
+            var tab = new SelectorBarItem { Text = label };
+            tabs.Items.Add(tab);
+            var scroll = ScrollContent(content, new Thickness(16, 8, 16, 16));
+            AutomationProperties.SetName(scroll, label);
+            bodies.Add(tab, scroll);
+        }
+        var strip = new ScrollViewer
+        {
+            Content = tabs, HorizontalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
+        header.Children.Add(strip);
+        var body = new Border();
+        void RevealSelection() =>
+            tabs.SelectedItem?.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        tabs.SelectionChanged += (_, _) =>
+        {
+            if (tabs.SelectedItem is not { } selected) return;
+            body.Child = bodies[selected];
+            RevealSelection();
+        };
+        strip.SizeChanged += (_, args) =>
+        {
+            if (args.PreviousSize.Width != args.NewSize.Width) strip.DispatcherQueue.TryEnqueue(RevealSelection);
+        };
+        tabs.SelectedItem = tabs.Items[0];
+        body.Child ??= bodies[tabs.Items[0]];
         var page = new Grid();
         page.RowDefinitions.Add(new() { Height = GridLength.Auto });
         page.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         page.Children.Add(header);
-        Grid.SetRow(scroll, 1);
-        page.Children.Add(scroll);
+        Grid.SetRow(body, 1);
+        page.Children.Add(body);
         return page;
     }
 

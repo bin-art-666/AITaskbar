@@ -3,25 +3,33 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Windows.UI.ViewManagement;
 
 namespace AITaskbar;
 
 internal sealed partial class TaskbarSettingsWindow
 {
-    private void BuildIconSettings(StackPanel page, IconSettingsPreview preview)
+    private FrameworkElement BuildIconSettings()
     {
-        preview.ApplyLayout(app.IconSize, app.IconLayout);
-        preview.ApplyFeedback(app.AppFeedback);
+        var appearance = new StackPanel();
+        var motion = new StackPanel();
+        var thumbnails = new StackPanel();
+        var menu = new StackPanel();
+        var individual = new StackPanel();
+        var appearancePreview = new IconSettingsPreview(colors, accessibility);
+        var scrollPreview = new IconSettingsPreview(colors, accessibility, scrollDemo: true);
+        var menuPreview = BuildMenuIconPreview();
 
         var size = FeedbackSlider("应用图标大小", PreviewIconSize.Minimum, PreviewIconSize.Maximum);
         size.StepFrequency = 2;
         var sizeValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
         var gap = FeedbackSlider("图标间距", PreviewIconLayout.MinGap, PreviewIconLayout.MaxGap);
         var gapValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
-        var colors = new ComboBox { MinWidth = 118 };
-        colors.Items.Add("亮色");
-        colors.Items.Add("暗色");
-        AutomationProperties.SetName(colors, "图标配色");
+        var iconColors = new ComboBox { MinWidth = 118 };
+        iconColors.Items.Add("亮色");
+        iconColors.Items.Add("暗色");
+        AutomationProperties.SetName(iconColors, "图标配色");
         var menuColors = new ComboBox { MinWidth = 118 };
         AutomationProperties.SetName(menuColors, "右键菜单配色");
         (AppMenuColorMode Value, string Label)[] menuModes =
@@ -54,7 +62,7 @@ internal sealed partial class TaskbarSettingsWindow
         windowSpeed.LargeChange = 50;
         var windowSpeedValue = new TextBlock { VerticalAlignment = VerticalAlignment.Center, MinWidth = 72 };
         var recentFiles = new ToggleSwitch();
-        AutomationProperties.SetName(recentFiles, "显示最近文件");
+        AutomationProperties.SetName(recentFiles, "显示 Chrome 最近文件");
         var edgeRecentFiles = new ToggleSwitch();
         AutomationProperties.SetName(edgeRecentFiles, "显示 Edge 最近文件");
         var edgeRecentlyClosed = new ToggleSwitch();
@@ -70,7 +78,7 @@ internal sealed partial class TaskbarSettingsWindow
             sizeValue.Text = $"{app.IconSize} DIP";
             gap.Value = app.IconLayout.Gap;
             gapValue.Text = $"{app.IconLayout.Gap} DIP";
-            colors.SelectedIndex = app.IconLayout.ColorMode == IconColorMode.Dark ? 1 : 0;
+            iconColors.SelectedIndex = app.IconLayout.ColorMode == IconColorMode.Dark ? 1 : 0;
             menuColors.SelectedIndex = Array.FindIndex(menuModes, mode => mode.Value == app.IconLayout.MenuColorMode);
             animation.SelectedIndex = Array.FindIndex(modes, mode => mode.Value == app.IconLayout.Animation);
             windowAnimation.SelectedIndex = Array.FindIndex(windowModes, mode => mode.Value == app.IconLayout.WindowAnimation);
@@ -82,7 +90,9 @@ internal sealed partial class TaskbarSettingsWindow
             edgeRecentlyClosed.IsOn = app.IconLayout.ShowEdgeRecentlyClosed;
             chromeRecentlyClosed.IsOn = app.IconLayout.ShowChromeRecentlyClosed;
             syncing = false;
-            preview.ApplyLayout(app.IconSize, app.IconLayout);
+            appearancePreview.ApplyLayout(app.IconSize, app.IconLayout);
+            scrollPreview.ApplyLayout(app.IconSize, app.IconLayout);
+            UpdateMenuIconPreview(menuPreview);
         }
 
         size.ValueChanged += (_, args) =>
@@ -97,10 +107,10 @@ internal sealed partial class TaskbarSettingsWindow
             app.TrySetIconLayout(app.IconLayout with { Gap = (int)Math.Round(args.NewValue) });
             Sync();
         };
-        colors.SelectionChanged += (_, _) =>
+        iconColors.SelectionChanged += (_, _) =>
         {
-            if (syncing || colors.SelectedIndex < 0) return;
-            var mode = colors.SelectedIndex == 1 ? IconColorMode.Dark : IconColorMode.Light;
+            if (syncing || iconColors.SelectedIndex < 0) return;
+            var mode = iconColors.SelectedIndex == 1 ? IconColorMode.Dark : IconColorMode.Light;
             if (mode != app.IconLayout.ColorMode)
             {
                 app.TrySetIconLayout(app.IconLayout with { ColorMode = mode });
@@ -158,24 +168,81 @@ internal sealed partial class TaskbarSettingsWindow
             Sync();
         };
 
-        page.Children.Add(SettingRow("图标配色", "同时应用于任务栏背板和右键菜单图标。", colors));
-        page.Children.Add(SettingRow("右键菜单配色", "同时应用于右键菜单和悬停窗口预览。", menuColors));
-        page.Children.Add(IconSettingsHeading("图标布局"));
-        page.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
-        page.Children.Add(SettingRow("图标间距", "分别调整固定区和运行区内相邻图标的间隔。", Actions(gap, gapValue)));
-        page.Children.Add(SettingRow("滚动动画", "运行区图标溢出时生效。关闭后仍可用滚轮切换。", animation));
-        page.Children.Add(SettingRow("窗口开合动画", "适用于预览栏和窗口标题栏的开合操作。", windowAnimation));
-        page.Children.Add(SettingRow("窗口开合速度", "曲面动画可调节为 200–1000 毫秒。Windows 风格使用 200 毫秒。", Actions(windowSpeed, windowSpeedValue)));
-        BuildWindowThumbnailSettings(page);
-        page.Children.Add(SettingRow("显示最近文件", "在 Chrome 右键菜单中显示 Windows 提供的最近文件。", recentFiles));
-        page.Children.Add(SettingRow("显示 Edge 最近文件", "在 Edge 右键菜单中显示 Windows 提供的最近文件。", edgeRecentFiles));
-        BuildBrowserRecentConnection(page, RecentBrowser.Edge, edgeRecentlyClosed);
-        BuildBrowserRecentConnection(page, RecentBrowser.Chrome, chromeRecentlyClosed);
-        BuildAppFeedbackSettings(page, preview.ApplyFeedback);
-        page.Children.Add(IconSettingsHeading("单个应用的图标"));
-        BuildSoftwareIconSettings(page);
+        appearance.Children.Add(appearancePreview.Surface);
+        appearance.Children.Add(SettingRow("图标配色", "同时应用于任务栏图标背板和右键菜单圆环。", iconColors));
+        appearance.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
+        appearance.Children.Add(SettingRow("图标间距", "调整固定区与运行区内相邻图标的间隔。", Actions(gap, gapValue)));
+        BuildAppFeedbackSettings(appearance, style =>
+        {
+            appearancePreview.ApplyFeedback(style);
+            scrollPreview.ApplyFeedback(style);
+        });
+
+        motion.Children.Add(SettingRow("滚动动画", "运行区图标溢出时生效。关闭后仍可用滚轮切换。", animation));
+        motion.Children.Add(scrollPreview.Surface);
+        motion.Children.Add(SettingRow("窗口开合动画", "适用于预览栏和窗口标题栏的开合操作。", windowAnimation));
+        motion.Children.Add(SettingRow("窗口开合速度", "曲面动画可调节为 200–1000 毫秒。Windows 风格使用 200 毫秒。", Actions(windowSpeed, windowSpeedValue)));
+
+        BuildWindowThumbnailSettings(thumbnails);
+
+        menu.Children.Add(menuPreview.Surface);
+        menu.Children.Add(SettingRow("右键菜单配色", "同时应用于右键菜单和悬停窗口预览。", menuColors));
+        menu.Children.Add(IconSettingsHeading("Chrome"));
+        menu.Children.Add(SettingRow("显示 Chrome 最近文件", "在右键菜单中显示 Windows 提供的最近文件。", recentFiles));
+        BuildBrowserRecentConnection(menu, RecentBrowser.Chrome, chromeRecentlyClosed);
+        menu.Children.Add(IconSettingsHeading("Edge"));
+        menu.Children.Add(SettingRow("显示 Edge 最近文件", "在右键菜单中显示 Windows 提供的最近文件。", edgeRecentFiles));
+        BuildBrowserRecentConnection(menu, RecentBrowser.Edge, edgeRecentlyClosed);
+
+        BuildSoftwareIconSettings(individual);
         Sync();
+        return SettingsNavigation.TabbedSubpage("图标设置", ("外观", appearance), ("动效", motion),
+            ("窗口预览", thumbnails), ("右键菜单", menu), ("单应用", individual));
     }
+
+    private sealed record MenuIconPreview(Border Surface, StackPanel Icons, AppMenuIcons Artwork);
+
+    private MenuIconPreview BuildMenuIconPreview()
+    {
+        var surface = IconSettingsPreview.CreateCard();
+        var icons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var content = new StackPanel { Spacing = 6 };
+        content.Children.Add(IconSettingsPreview.PreviewLabel("右键菜单图标预览"));
+        content.Children.Add(icons);
+        surface.Child = content;
+        var preview = new MenuIconPreview(surface, icons, new AppMenuIcons(colors, accessibility));
+        surface.ActualThemeChanged += (_, _) => UpdateMenuIconPreview(preview);
+        return preview;
+    }
+
+    private void UpdateMenuIconPreview(MenuIconPreview preview)
+    {
+        var theme = MenuPreviewTheme(preview.Surface.ActualTheme);
+        preview.Surface.Background = accessibility.HighContrast ? new SolidColorBrush(colors.GetColorValue(UIColorType.Background))
+            : PreviewApplicationStrip.MenuBackground(theme);
+        ((StackPanel)preview.Surface.Child).RequestedTheme = theme;
+        preview.Icons.Children.Clear();
+        AddIcon(AppMenuIcon.Open, "打开");
+        AddIcon(AppMenuIcon.Pin, "固定到预览栏");
+        AddIcon(AppMenuIcon.CloseWindow, "关闭窗口");
+        AddIcon(AppMenuIcon.EndTask, "结束任务（不可用）", enabled: false);
+
+        void AddIcon(AppMenuIcon symbol, string label, bool enabled = true)
+        {
+            var icon = preview.Artwork.Create(symbol, app.IconLayout.ColorMode, enabled);
+            ToolTipService.SetToolTip(icon, label);
+            AutomationProperties.SetName(icon, label);
+            preview.Icons.Children.Add(icon);
+        }
+    }
+
+    private ElementTheme MenuPreviewTheme(ElementTheme fallback) =>
+        accessibility.HighContrast ? ElementTheme.Default : app.IconLayout.MenuColorMode switch
+        {
+            AppMenuColorMode.Light => ElementTheme.Light,
+            AppMenuColorMode.Dark => ElementTheme.Dark,
+            _ => fallback
+        };
 
     private static TextBlock IconSettingsHeading(string text) =>
         new() { Text = text, FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 0) };

@@ -62,9 +62,10 @@ internal sealed partial class TaskbarSettingsWindow : Window
 
         var widths = new SettingsPaneWidths(profileDirectory, SetStatus);
         var taskbarNav = SettingsNavigation.Sidebar(144);
-        var appearanceItem = AddSubpage("任务栏外观设置", BuildPreview);
-        var iconPreview = new IconSettingsPreview(colors, accessibility);
-        AddSubpage("图标设置", page => BuildIconSettings(page, iconPreview), iconPreview.Surface);
+        var appearanceBody = new StackPanel();
+        BuildPreview(appearanceBody);
+        var appearanceItem = AddSubpage("任务栏外观设置", SettingsNavigation.Subpage("任务栏外观设置", appearanceBody));
+        AddSubpage("图标设置", BuildIconSettings());
         var compactSubpages = SettingsNavigation.ConnectSubpages(taskbarNav, item => item.Tag);
         var taskbarPages = new SettingsSplitView(taskbarNav, widths, SettingsSection.TaskbarSubpages,
             (length, condensed) =>
@@ -73,15 +74,9 @@ internal sealed partial class TaskbarSettingsWindow : Window
                 taskbarNav.IsPaneVisible = !condensed;
                 taskbarNav.IsPaneOpen = !condensed;
             }, compactSubpages);
-        NavigationViewItem AddSubpage(string title, Action<StackPanel> build, FrameworkElement? preview = null)
+        NavigationViewItem AddSubpage(string title, FrameworkElement page)
         {
-            var body = new StackPanel();
-            build(body);
-            var item = new NavigationViewItem
-            {
-                Content = title,
-                Tag = preview is null ? SettingsNavigation.Subpage(title, body) : SettingsNavigation.Subpage(title, body, preview)
-            };
+            var item = new NavigationViewItem { Content = title, Tag = page };
             taskbarNav.MenuItems.Add(item);
             return item;
         }

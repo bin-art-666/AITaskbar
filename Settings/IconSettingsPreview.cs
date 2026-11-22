@@ -13,10 +13,8 @@ internal sealed class IconSettingsPreview
 {
     private readonly UISettings system;
     private readonly AccessibilitySettings accessibility;
-    private readonly AppMenuIcons menuIcons;
     private readonly TaskbarIconHoverLayer iconHover;
     private readonly StackPanel icons = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
-    private readonly StackPanel menu = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Canvas running = new();
     private readonly List<(AppWindowState State, TaskbarAppFeedback Visual)> examples = [];
     private readonly List<Border> iconPlates = [];
@@ -27,31 +25,30 @@ internal sealed class IconSettingsPreview
     private long? started;
     private double offset, from, target;
     private int Step => iconSize + layout.Gap;
-    internal Border Surface { get; } = new() { CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 8, 12, 8) };
+    internal Border Surface { get; } = CreateCard();
 
-    internal IconSettingsPreview(UISettings system, AccessibilitySettings accessibility)
+    internal IconSettingsPreview(UISettings system, AccessibilitySettings accessibility, bool scrollDemo = false)
     {
         this.system = system;
         this.accessibility = accessibility;
-        menuIcons = new(system, accessibility);
         iconHover = new(system.AnimationsEnabled && !accessibility.HighContrast);
-        var play = new Button { Content = "试滚动", HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center };
-        AutomationProperties.SetName(play, "试滚动运行区");
-        play.Click += (_, _) => Scroll();
         var row = new Grid { ColumnSpacing = 8 };
         row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         Grid.SetColumnSpan(iconHover.Surface, 2);
         row.Children.Add(iconHover.Surface);
         row.Children.Add(icons);
-        Grid.SetColumn(play, 1);
-        row.Children.Add(play);
+        if (scrollDemo)
+        {
+            var play = new Button { Content = "试滚动", VerticalAlignment = VerticalAlignment.Center };
+            AutomationProperties.SetName(play, "试滚动运行区");
+            play.Click += (_, _) => Scroll();
+            Grid.SetColumn(play, 1);
+            row.Children.Add(play);
+        }
         var groups = new StackPanel { Spacing = 5 };
-        groups.Children.Add(PreviewLabel("应用图标预览"));
+        groups.Children.Add(PreviewLabel(scrollDemo ? "运行区滚动预览" : "应用图标预览"));
         groups.Children.Add(row);
-        groups.Children.Add(PreviewLabel("右键菜单图标预览"));
-        groups.Children.Add(menu);
         Surface.Child = groups;
         Surface.ActualThemeChanged += (_, _) => ApplyFeedback(feedback);
         Surface.Unloaded += (_, _) => FinishScroll();
@@ -106,7 +103,9 @@ internal sealed class IconSettingsPreview
         ApplyIconColors();
     }
 
-    private static TextBlock PreviewLabel(string text) => new() { Text = text, FontSize = 12, Opacity = .76 };
+    internal static Border CreateCard() => new() { CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 8, 12, 8) };
+
+    internal static TextBlock PreviewLabel(string text) => new() { Text = text, FontSize = 12, Opacity = .76 };
 
     private void ApplyIconColors()
     {
@@ -120,19 +119,6 @@ internal sealed class IconSettingsPreview
             icon.Background = plate;
             ((FontIcon)icon.Child).Foreground = ink;
         }
-        menu.Children.Clear();
-        AddMenuExample(AppMenuIcon.Open, "打开");
-        AddMenuExample(AppMenuIcon.Pin, "固定到预览栏");
-        AddMenuExample(AppMenuIcon.CloseWindow, "关闭窗口");
-        AddMenuExample(AppMenuIcon.EndTask, "结束任务（不可用）", enabled: false);
-    }
-
-    private void AddMenuExample(AppMenuIcon symbol, string label, bool enabled = true)
-    {
-        var icon = menuIcons.Create(symbol, layout.ColorMode, enabled);
-        ToolTipService.SetToolTip(icon, label);
-        AutomationProperties.SetName(icon, label);
-        menu.Children.Add(icon);
     }
 
     private Canvas AddExample(string label, string glyph, AppWindowState state)

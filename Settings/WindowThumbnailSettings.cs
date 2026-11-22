@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
+using Windows.UI.ViewManagement;
 
 namespace AITaskbar;
 
@@ -11,7 +12,10 @@ internal sealed partial class TaskbarSettingsWindow
 {
     private void BuildWindowThumbnailSettings(StackPanel page)
     {
-        page.Children.Add(IconSettingsHeading("窗口预览"));
+        page.Children.Add(new TextBlock
+        {
+            Text = "预览配色跟随「右键菜单」页签中的菜单配色。", TextWrapping = TextWrapping.Wrap, Opacity = .72
+        });
         var slider = FeedbackSlider("预览画面最大宽度", PreviewIconLayout.MinThumbnailWidth, PreviewIconLayout.MaxThumbnailWidth);
         slider.StepFrequency = 10;
         slider.LargeChange = 40;
@@ -39,10 +43,6 @@ internal sealed partial class TaskbarSettingsWindow
         var sampleImage = new Border { Background = new SolidColorBrush(Color.FromArgb(255, 231, 238, 247)), Child = window };
         var sample = new Grid { Padding = new Thickness(WindowThumbnailLayout.Padding), HorizontalAlignment = HorizontalAlignment.Left,
             CornerRadius = new CornerRadius(6) };
-        void SetSampleTheme() => sample.Background = new SolidColorBrush(sample.ActualTheme == ElementTheme.Dark
-            ? Color.FromArgb(255, 45, 50, 59) : Color.FromArgb(255, 248, 250, 254));
-        sample.ActualThemeChanged += (_, _) => SetSampleTheme();
-        SetSampleTheme();
         sample.RowDefinitions.Add(new() { Height = GridLength.Auto });
         sample.RowDefinitions.Add(new() { Height = new GridLength(WindowThumbnailLayout.FooterHeight) });
         sample.Children.Add(sampleImage);
@@ -60,6 +60,15 @@ internal sealed partial class TaskbarSettingsWindow
         AutomationProperties.SetName(sampleRow, "窗口大小预览");
         sampleRow.Children.Add(sample);
         page.Children.Add(sampleRow);
+        void ApplySampleTheme()
+        {
+            var theme = MenuPreviewTheme(sampleRow.ActualTheme);
+            sample.RequestedTheme = theme;
+            sample.Background = accessibility.HighContrast ? new SolidColorBrush(colors.GetColorValue(UIColorType.Background))
+                : PreviewApplicationStrip.MenuBackground(theme);
+        }
+        sampleRow.Loaded += (_, _) => ApplySampleTheme();
+        sampleRow.ActualThemeChanged += (_, _) => ApplySampleTheme();
 
         void UpdateSample(int width)
         {
