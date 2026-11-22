@@ -25,6 +25,7 @@ public partial class App : Application
     private string ShowSystemTaskbarFile => Path.Combine(root, "show-system-taskbar");
     internal TaskbarAppFeedbackStyle AppFeedback { get; private set; } = TaskbarAppFeedbackStyle.Default;
     internal PreviewIconLayout IconLayout { get; private set; } = PreviewIconLayout.Default;
+    internal TaskbarAppArtwork AppArtwork { get; } = new();
     internal TaskbarClockStyle ClockStyle { get; private set; } = TaskbarClockStyle.Default;
     internal QuickControlAppearance QuickAppearance { get; private set; } = new();
     internal PreviewIconPreferences IconPreferences { get; private set; } = null!;
@@ -208,10 +209,10 @@ public partial class App : Application
         if (!shuttingDown) settingsWindow?.ShowQuickControlAppearance();
     }
 
-    internal void ShowAppCenterSettings()
+    internal void ShowAppCenterInterfaceSettings()
     {
         ShowSettings(SettingsSection.AppCenter);
-        settingsWindow?.ShowAppCenterIconSettings();
+        settingsWindow?.ShowAppCenterInterfaceSettings();
     }
 
     internal void PreviewAppCenterAppearance(AppCenterAppearance next)

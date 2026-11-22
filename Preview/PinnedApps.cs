@@ -12,6 +12,7 @@ internal sealed record PinnedApp(string Name, string Executable,
 
 internal sealed class PinnedApps(string file)
 {
+    internal event Action? Changed;
     internal IReadOnlyList<PinnedApp> Items { get; private set; } = File.Exists(file)
         ? (JsonSerializer.Deserialize<PinnedApp[]>(File.ReadAllBytes(file)) ?? [])
             .Where(pin => pin is not null && !string.IsNullOrWhiteSpace(pin.Name) && (pin.AppId is null
@@ -65,6 +66,7 @@ internal sealed class PinnedApps(string file)
             Items = next;
         }
         finally { File.Delete(temporary); }
+        Changed?.Invoke();
     }
 
     public static bool SameProgram(string? left, string? right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);

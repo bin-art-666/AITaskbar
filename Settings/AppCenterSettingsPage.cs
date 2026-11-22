@@ -29,9 +29,8 @@ internal sealed class AppCenterSettingsPage : Grid
     private readonly Button save = new() { Content = "保存应用中心设置" };
     private readonly Button cancel = new() { Content = "取消更改" };
     private readonly ComboBox density = new();
-    private readonly ToggleSwitch follow = new() { OnContent = "跟随任务栏", OffContent = "自定义透明度" };
-    private readonly Slider transparency = new() { Minimum = 0, Maximum = 100, StepFrequency = 1 };
-    private readonly TextBlock transparencyValue = new();
+    private readonly ComboBox background = new();
+    private readonly ComboBox orderMode = new();
     private readonly UISettings colors = new();
     private readonly AccessibilitySettings accessibility = new();
     private AppCenterAppearance draft;
@@ -69,7 +68,7 @@ internal sealed class AppCenterSettingsPage : Grid
         Sync();
     }
 
-    internal void SelectIcon() => nav.SelectedItem = nav.MenuItems[0];
+    internal void SelectInterface() => nav.SelectedItem = nav.MenuItems[1];
 
     internal void Reset()
     {
@@ -123,24 +122,30 @@ internal sealed class AppCenterSettingsPage : Grid
         var body = new StackPanel();
         density.Items.Add("紧凑");
         density.Items.Add("宽松");
-        AutomationProperties.SetName(density, "列表密度");
-        AutomationProperties.SetName(follow, "面板背景");
-        AutomationProperties.SetName(transparency, "面板透明度");
+        background.Items.Add("与任务栏一致");
+        background.Items.Add("亮色");
+        background.Items.Add("暗色");
+        orderMode.Items.Add("A–Z");
+        orderMode.Items.Add("手动排序");
+        AutomationProperties.SetName(density, "图标网格密度");
+        AutomationProperties.SetName(background, "主页背板");
+        AutomationProperties.SetName(orderMode, "应用排序");
         density.SelectionChanged += (_, _) =>
         {
             if (!syncing) Apply(draft with { Panel = draft.Panel with { Spacious = density.SelectedIndex == 1 } });
         };
-        follow.Toggled += (_, _) =>
+        background.SelectionChanged += (_, _) =>
         {
-            if (!syncing) Apply(draft with { Panel = draft.Panel with { FollowTaskbar = follow.IsOn } });
+            if (!syncing && background.SelectedIndex >= 0)
+                Apply(draft with { Panel = draft.Panel with { Backdrop = (QuickBackdrop)background.SelectedIndex } });
         };
-        transparency.ValueChanged += (_, args) =>
+        orderMode.SelectionChanged += (_, _) =>
         {
-            if (!syncing) Apply(draft with { Panel = draft.Panel with { Opacity = 100 - (int)args.NewValue } });
+            if (!syncing) Apply(draft with { Panel = draft.Panel with { ManualOrder = orderMode.SelectedIndex == 1 } });
         };
-        body.Children.Add(Field("列表密度", density));
-        body.Children.Add(Field("面板背景", follow));
-        body.Children.Add(Field("面板透明度", transparency, transparencyValue));
+        body.Children.Add(Field("图标网格密度", density));
+        body.Children.Add(Field("主页背板", background));
+        body.Children.Add(Field("应用排序", orderMode));
         body.Children.Add(Heading("展开面板预览"));
         sampleRows.Children.Add(Heading("应用中心"));
         sampleRows.Children.Add(new TextBox { PlaceholderText = "搜索应用", IsReadOnly = true, IsTabStop = false });
@@ -193,10 +198,8 @@ internal sealed class AppCenterSettingsPage : Grid
         showInTaskbar.IsOn = draft.Icon.ShowInTaskbar;
         foreach (var sync in syncSliders) sync();
         density.SelectedIndex = draft.Panel.Spacious ? 1 : 0;
-        follow.IsOn = draft.Panel.FollowTaskbar;
-        transparency.IsEnabled = !follow.IsOn;
-        transparency.Value = 100 - draft.Panel.Opacity;
-        transparencyValue.Text = (100 - draft.Panel.Opacity) + "%";
+        background.SelectedIndex = (int)draft.Panel.Backdrop;
+        orderMode.SelectedIndex = draft.Panel.ManualOrder ? 1 : 0;
         sampleIcon.Apply(draft.Icon);
         RefreshPanel();
         syncing = false;
@@ -209,15 +212,10 @@ internal sealed class AppCenterSettingsPage : Grid
     {
         var material = app.BarAppearance;
         bool contrast = accessibility.HighContrast;
-        bool light = draft.Panel.FollowTaskbar && material is not null && !contrast
-            ? material.Tone == LumaBar.Tone.Light : ActualTheme != ElementTheme.Dark;
-        var standard = light ? Color.FromArgb(255, 243, 246, 250) : Color.FromArgb(255, 30, 34, 42);
-        var background = draft.Panel.FollowTaskbar && material is { Material: not "normal" }
-            ? PreviewBarAppearance.FromAbgr(material.Abgr) : standard;
-        if (!draft.Panel.FollowTaskbar) background.A = (byte)Math.Round(draft.Panel.Opacity * 255d / 100d);
-        if (contrast) background = colors.GetColorValue(UIColorType.Background);
-        samplePanel.RequestedTheme = contrast ? ElementTheme.Default : light ? ElementTheme.Light : ElementTheme.Dark;
-        samplePanel.Background = new SolidColorBrush(background);
+        bool light = material is null ? ActualTheme != ElementTheme.Dark : material.Tone == LumaBar.Tone.Light;
+        var palette = TaskbarPanelFlyout.ResolvePalette(new(Backdrop: draft.Panel.Backdrop), light, material, colors, contrast);
+        samplePanel.RequestedTheme = palette.Theme;
+        samplePanel.Background = new SolidColorBrush(palette.Background);
         foreach (var row in appRows)
             row.Padding = new Thickness(8, draft.Panel.Spacious ? 10 : 4, 8, draft.Panel.Spacious ? 10 : 4);
     }

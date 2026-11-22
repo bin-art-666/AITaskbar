@@ -30,7 +30,7 @@ internal sealed partial class PreviewApplicationStrip
     private readonly PreviewIconPreferences iconPreferences;
     private readonly nint owner;
     private readonly Action<string> report;
-    private readonly Dictionary<string, AppIconArtwork?> icons = new(StringComparer.OrdinalIgnoreCase);
+    private readonly TaskbarAppArtwork artwork;
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
     private readonly AppMenuIcons appMenuIcons;
@@ -89,11 +89,12 @@ internal sealed partial class PreviewApplicationStrip
         internal int LastStart { get; set; }
     }
 
-    public PreviewApplicationStrip(PinnedApps pins, PreviewIconPreferences iconPreferences, int iconSize, TaskbarAppFeedbackStyle feedbackStyle,
+    public PreviewApplicationStrip(PinnedApps pins, PreviewIconPreferences iconPreferences, TaskbarAppArtwork artwork, int iconSize, TaskbarAppFeedbackStyle feedbackStyle,
         PreviewIconLayout iconLayout, AppCenterIconStyle appCenterStyle, Action openAppCenter, nint owner, Action<string> report)
     {
         this.pins = pins;
         this.iconPreferences = iconPreferences;
+        this.artwork = artwork;
         this.iconSize = iconSize;
         this.feedbackStyle = feedbackStyle;
         this.iconLayout = iconLayout;
@@ -304,6 +305,12 @@ internal sealed partial class PreviewApplicationStrip
         if (openFlyout is null && !AppDragInteraction) Render();
     }
 
+    internal void SetAppCenterExpanded(bool expanded)
+    {
+        appCenterIcon.SetExpanded(expanded);
+        AutomationProperties.SetItemStatus(AppCenterButton, expanded ? "已展开" : "已收起");
+    }
+
     private void Render(AppRange? scrolled = null, bool animateRunning = false, bool preserveRangeStart = false,
         string? revealRunningKey = null)
     {
@@ -393,7 +400,7 @@ internal sealed partial class PreviewApplicationStrip
     }
 
     private static string LayoutKey(AppGroup group) =>
-        group.Key + "|" + IconCacheKey(group.IconExecutable, group.IconAppId);
+        group.Key + "|" + TaskbarAppArtwork.Key(group.IconExecutable, group.IconAppId);
 
     private void MountRunningTiles(int first, int count, int visible, bool slide)
     {
@@ -585,7 +592,7 @@ internal sealed partial class PreviewApplicationStrip
         {
             if (ReferenceEquals(thumbnailSuppressedUntilExit, button)) thumbnailSuppressedUntilExit = null;
         };
-        var icon = ProgramIcon(group.IconExecutable, group.IconAppId);
+        var icon = artwork.Get(group.IconExecutable, group.IconAppId);
         FrameworkElement graphic = icon is not null ? new Image { Stretch = Stretch.Uniform }
             : new FontIcon { Glyph = "\uE7C5", FontSize = Math.Round(iconSize * .7) };
         var plate = new TaskbarIconPlate(iconSize, graphic)
@@ -664,22 +671,8 @@ internal sealed partial class PreviewApplicationStrip
 
     private void UpdateIcon(AppButton view)
     {
-        bool highContrast = contrast == true;
-        bool original = highContrast || (view.Group.IconExecutable is { } path && iconPreferences.UsesOriginal(path));
-        var plate = view.IconPlate;
-        TaskbarIconOutline.Apply(plate.Outline, iconLayout, highContrast);
-        if (view.Icon is { } icon && plate.Artwork.Child is Image image)
-        {
-            image.Source = original ? icon.Original : icon.Graphic(iconLayout.ColorMode);
-            image.Width = image.Height = original || icon.HasPlate ? iconSize : Math.Round(iconSize * (20d / 26));
-        }
-        if (plate.Artwork.Child is FontIcon fallback)
-        {
-            if (original) fallback.ClearValue(IconElement.ForegroundProperty);
-            else fallback.Foreground = new SolidColorBrush(AppIconArtwork.FallbackColor(iconLayout.ColorMode));
-        }
-        plate.Artwork.Background = new SolidColorBrush(original || view.Icon?.HasPlate == true
-            ? Microsoft.UI.Colors.Transparent : AppIconArtwork.BackplateColor(iconLayout.ColorMode));
+        bool original = view.Group.IconExecutable is { } path && iconPreferences.UsesOriginal(path);
+        TaskbarAppArtwork.Apply(view.IconPlate, view.Icon, iconSize, iconLayout, original, contrast == true);
     }
 
     private void UpdateIndicators()
@@ -1241,17 +1234,4 @@ internal sealed partial class PreviewApplicationStrip
         catch (Exception error) { report(error.Message); return false; }
     }
 
-    private AppIconArtwork? ProgramIcon(string? executable, string? appId)
-    {
-        var key = IconCacheKey(executable, appId);
-        if (string.IsNullOrEmpty(key)) return null;
-        if (icons.TryGetValue(key, out var loaded)) return loaded;
-        AppIconArtwork? image = null;
-        try { image = AppIconArtwork.Load(executable, appId); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or System.Runtime.InteropServices.ExternalException) { }
-        if (icons.Count >= 128) icons.Clear();
-        return icons[key] = image;
-    }
-
-    private static string? IconCacheKey(string? executable, string? appId) => appId is null ? executable : appId + "|" + executable;
 }

@@ -27,8 +27,8 @@ internal sealed record AppCenterIconStyle
 internal sealed record AppCenterPanelStyle
 {
     public bool Spacious { get; init; }
-    public bool FollowTaskbar { get; init; } = true;
-    public int Opacity { get; init; } = 86;
+    public QuickBackdrop Backdrop { get; init; } = QuickBackdrop.FollowTaskbar;
+    public bool ManualOrder { get; init; }
 }
 
 internal sealed record AppCenterAppearance
@@ -47,7 +47,8 @@ internal sealed record AppCenterAppearance
                 return new()
                 {
                     Icon = (value.Icon ?? new()).Normalize(),
-                    Panel = panel with { Opacity = Math.Clamp(panel.Opacity, 0, 100) }
+                    Panel = panel.Backdrop is QuickBackdrop.Light or QuickBackdrop.Dark or QuickBackdrop.FollowTaskbar
+                        ? panel : panel with { Backdrop = QuickBackdrop.FollowTaskbar }
                 };
             }
         }

@@ -7,7 +7,8 @@ using BackdropTarget = Microsoft.UI.Composition.ICompositionSupportsSystemBackdr
 
 namespace AITaskbar;
 
-internal sealed class TaskbarGlassBackdrop : SystemBackdrop
+internal sealed class TaskbarGlassBackdrop(float radius = (float)TaskbarPanelFlyout.Radius,
+    float travel = TaskbarPanelFlyout.Travel) : SystemBackdrop
 {
     private Compositor? compositor;
     private CompositionBackdropBrush? desktop;
@@ -59,7 +60,7 @@ internal sealed class TaskbarGlassBackdrop : SystemBackdrop
         blur.SetSourceParameter("desktop", desktop);
 
         geometry = compositor.CreateRoundedRectangleGeometry();
-        geometry.CornerRadius = new Vector2((float)TaskbarPanelFlyout.Radius);
+        geometry.CornerRadius = new Vector2(radius);
         geometry.Size = Vector2.Max(size, Vector2.One);
         geometry.Offset = new Vector2(0, offset);
         clip = compositor.CreateGeometricClip(geometry);
@@ -83,7 +84,7 @@ internal sealed class TaskbarGlassBackdrop : SystemBackdrop
         target.SystemBackdrop = glass;
     }
 
-    private static Vector2 SurfaceSize(Vector2 size) => Vector2.Max(size + new Vector2(0, TaskbarPanelFlyout.Travel), Vector2.One);
+    private Vector2 SurfaceSize(Vector2 size) => Vector2.Max(size + new Vector2(0, travel), Vector2.One);
 
     protected override void OnTargetDisconnected(BackdropTarget target)
     {

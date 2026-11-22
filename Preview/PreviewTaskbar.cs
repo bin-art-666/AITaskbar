@@ -22,6 +22,7 @@ internal sealed class PreviewTaskbar : Window
     private readonly ScaleTransform stripScale = new();
     private int naturalStripHeight;
     private readonly SystemTaskbarVisibility systemTaskbar;
+    private AppCenterWindow? appCenter;
     private readonly TextBlock feedback = new() { MaxWidth = 200, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
     private bool closed, menuOpen;
     internal PreviewModuleIcons ModuleIcons { get; }
@@ -41,8 +42,8 @@ internal sealed class PreviewTaskbar : Window
         presenter.SetBorderAndTitleBar(false, false);
         presenter.IsResizable = presenter.IsMinimizable = presenter.IsMaximizable = false;
         handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        tasks = new(pins, app.IconPreferences,
-            iconSize, app.AppFeedback, app.IconLayout, app.CurrentAppCenterAppearance.Icon, app.ShowAppCenterSettings, handle, Report);
+        tasks = new(pins, app.IconPreferences, app.AppArtwork,
+            iconSize, app.AppFeedback, app.IconLayout, app.CurrentAppCenterAppearance.Icon, ToggleAppCenter, handle, Report);
         AIEnter.Native.RemoveWindowFrame(handle);
         const int cornerPreferenceAttribute = 33; // DWMWA_WINDOW_CORNER_PREFERENCE
         int doNotRound = 1; // DWMWCP_DONOTROUND
@@ -53,7 +54,24 @@ internal sealed class PreviewTaskbar : Window
         var ai = Button("AIEnter", "AIEnter 对话", () => _ = app.AiModule.ToggleAiWindow(false));
         SetMenu(halo, "Halo 设置", Halo.App.OpenSettings);
         SetMenu(ai, "AIEnter 设置", app.AiModule.OpenSettings);
-        SetMenu(tasks.AppCenterButton, "应用中心设置", app.ShowAppCenterSettings);
+        tasks.AppCenterButton.ContextRequested += (_, args) =>
+        {
+            args.Handled = true;
+            ToggleAppCenter();
+        };
+        void ToggleAppCenter()
+        {
+            if (appCenter is not null) { appCenter.Close(); return; }
+            try
+            {
+                tasks.DismissThumbnails();
+                var window = new AppCenterWindow(app, AppWindow, pins, root, tasks.Refresh);
+                appCenter = window;
+                tasks.SetAppCenterExpanded(true);
+                window.Closed += (_, _) => { appCenter = null; tasks.SetAppCenterExpanded(false); };
+            }
+            catch (Exception error) { reportFailure(error); Report("无法打开应用中心。"); }
+        }
         AcceptDrop(halo, Halo.StationWindow.Supports, async view =>
         {
             app.HaloModule.Handle("Open");
@@ -144,6 +162,7 @@ internal sealed class PreviewTaskbar : Window
             icons.RefreshSystem(light);
             tasks.SetFeedbackLight(light);
             tray.ApplyTone(light, app.BarAppearance);
+            appCenter?.ApplyPalette();
         });
 
         refresh = DispatcherQueue.CreateTimer();
@@ -158,6 +177,7 @@ internal sealed class PreviewTaskbar : Window
         Closed += (_, _) =>
         {
             closed = true;
+            appCenter?.Close();
             tray.Dispose();
             systemTaskbar.Dispose();
             refresh.Stop();
@@ -195,6 +215,7 @@ internal sealed class PreviewTaskbar : Window
     internal void SetIconSize(int size)
     {
         tasks.SetIconSize(size);
+        appCenter?.RefreshStyle();
         naturalStripHeight = HeightForIcons(size);
         UpdateStripLayout();
     }
@@ -235,12 +256,22 @@ internal sealed class PreviewTaskbar : Window
         strip.Height = Math.Max(height, naturalStripHeight);
         stripScale.ScaleX = stripScale.ScaleY = scale;
     }
-    internal void RefreshIconStyle(string executable) => tasks.RefreshIconStyle(executable);
-    internal void SetAppCenterIcon(AppCenterIconStyle style) => tasks.SetAppCenterIcon(style);
+    internal void RefreshIconStyle(string executable)
+    {
+        tasks.RefreshIconStyle(executable);
+        appCenter?.RefreshStyle();
+    }
+    internal void SetAppCenterIcon(AppCenterIconStyle style)
+    {
+        tasks.SetAppCenterIcon(style);
+        if (!style.ShowInTaskbar) appCenter?.Close();
+        else appCenter?.RefreshStyle();
+    }
     internal void SetAppFeedback(TaskbarAppFeedbackStyle style) => tasks.SetAppFeedback(style);
     internal void SetIconLayout(PreviewIconLayout layout)
     {
         tasks.SetIconLayout(layout);
+        appCenter?.RefreshStyle();
         ModuleIcons.SetIconLayout(layout);
     }
     internal void SetThumbnailWidth(int width) => tasks.SetThumbnailWidth(width);

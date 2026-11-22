@@ -139,7 +139,20 @@ internal sealed class TaskbarPanelFlyout : IDisposable
 
     internal (Color Text, Color Raised) ApplyPalette(QuickControlAppearance style, bool light, LumaBar.BarAppearance? taskbar)
     {
-        bool highContrast = accessibility.HighContrast;
+        var palette = ResolvePalette(style, light, taskbar, system, accessibility.HighContrast);
+        content.RequestedTheme = palette.Theme;
+        SetBackdrop(palette.Blur > 0);
+        desktopBackdrop?.SetBlur(palette.Blur);
+        backplate.Background = new SolidColorBrush(palette.Background);
+        return (palette.Text, palette.Raised);
+    }
+
+    internal sealed record Palette(ElementTheme Theme, Color Background, Color Solid, Color Text, Color Raised,
+        bool Glass, float Blur);
+
+    internal static Palette ResolvePalette(QuickControlAppearance style, bool light, LumaBar.BarAppearance? taskbar,
+        UISettings system, bool highContrast)
+    {
         bool followsBar = style.Backdrop == QuickBackdrop.FollowTaskbar;
         bool isLight = style.Backdrop switch { QuickBackdrop.Light => true, QuickBackdrop.Dark => false,
             QuickBackdrop.Custom => IsLight(FromRgb(style.Tint)), _ => light };
@@ -152,15 +165,15 @@ internal sealed class TaskbarPanelFlyout : IDisposable
         var solid = Blend(neutral, tint, opacity);
         var text = highContrast ? system.GetColorValue(UIColorType.Foreground)
             : isLight ? Color.FromArgb(255, 24, 39, 57) : Color.FromArgb(255, 242, 247, 255);
-        content.RequestedTheme = highContrast ? ElementTheme.Default : isLight ? ElementTheme.Light : ElementTheme.Dark;
+        var theme = highContrast ? ElementTheme.Default : isLight ? ElementTheme.Light : ElementTheme.Dark;
         bool glass = !highContrast && system.AdvancedEffectsEnabled && material is not ("normal" or "opaque");
         int blur = material switch { "acrylic" => 30, "blur" => followsBar ? taskbar?.Blur ?? 0 : 34, _ => 0 };
-        SetBackdrop(glass && blur > 0);
-        desktopBackdrop?.SetBlur(blur / 3f);
-        backplate.Background = new SolidColorBrush(highContrast ? system.GetColorValue(UIColorType.Background)
-            : !glass ? solid : Alpha(tint, (byte)Math.Round(opacity * 255)));
+        var background = highContrast ? system.GetColorValue(UIColorType.Background)
+            : !glass ? solid : Alpha(tint, (byte)Math.Round(opacity * 255));
         var raised = Blend(solid, text, .045);
-        return (text, highContrast ? system.GetColorValue(UIColorType.Background) : glass ? Alpha(raised, 72) : raised);
+        return new(theme, background, solid, text,
+            highContrast ? system.GetColorValue(UIColorType.Background) : glass ? Alpha(raised, 72) : raised,
+            glass, glass ? blur / 3f : 0f);
     }
 
     private void SetBackdrop(bool enabled)

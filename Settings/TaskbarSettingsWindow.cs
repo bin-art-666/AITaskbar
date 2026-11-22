@@ -246,7 +246,7 @@ internal sealed partial class TaskbarSettingsWindow : Window
     }
     internal void Select(SettingsSection section) => nav.SelectedItem = navigation[section];
     internal void ShowHaloStorage() => haloSettings?.ShowStorageSettings();
-    internal void ShowAppCenterIconSettings() => appCenterSettings?.SelectIcon();
+    internal void ShowAppCenterInterfaceSettings() => appCenterSettings?.SelectInterface();
 
     public void SetStatus(string text)
     {
