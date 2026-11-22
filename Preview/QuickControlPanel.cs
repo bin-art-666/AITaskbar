@@ -19,6 +19,7 @@ internal sealed partial class QuickControlPanel : IDisposable
     private enum Area { Wifi, Bluetooth, Audio, Appearance }
 
     private const double Radius = 23;
+    private const double WirelessBodySize = 14, WirelessHeadingSize = 16, WirelessRowHeight = 29;
     private const string SunGlyph = "\uE706";
     private readonly nint owner;
     private readonly FrameworkElement anchor;
@@ -48,7 +49,7 @@ internal sealed partial class QuickControlPanel : IDisposable
     private readonly StackPanel detailList = new() { Spacing = 3 };
     private readonly ScrollViewer detailScroll;
     private readonly ToggleSwitch radioSwitch = new() { HorizontalAlignment = HorizontalAlignment.Right, MinWidth = 0,
-        OnContent = "已开启", OffContent = "已关闭" };
+        FontSize = WirelessBodySize };
     private readonly RotateTransform sun = new();
     private QuickControlAppearance style;
     private LumaBar.BarAppearance? taskbar;
@@ -122,18 +123,20 @@ internal sealed partial class QuickControlPanel : IDisposable
         header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        detailHeading = Text("", 16, ink, strong: true);
+        detailHeading = Text("", WirelessHeadingSize, ink, strong: true);
         header.Children.Add(detailHeading);
         header.Children.Add(radioSwitch);
         Grid.SetColumn(radioSwitch, 1);
+        radioSwitch.OnContent = Text("已开启", WirelessBodySize, ink);
+        radioSwitch.OffContent = Text("已关闭", WirelessBodySize, ink);
         radioSwitch.Toggled += RadioToggled;
-        detailClose = FlatButton(Glyph("\uE711", ink), "关闭详细面板");
+        detailClose = FlatButton(Glyph("\uE711", ink, 16), "关闭详细面板");
         detailClose.Width = detailClose.Height = 32;
         detailClose.Click += (_, _) => CloseDetails();
         header.Children.Add(detailClose);
         Grid.SetColumn(detailClose, 2);
         details.Children.Add(header);
-        wirelessStatusStrip = Text("", 12, ink);
+        wirelessStatusStrip = Text("", WirelessBodySize, ink);
         wirelessStatusStrip.TextWrapping = TextWrapping.Wrap;
         wirelessStatusStrip.Visibility = Visibility.Collapsed;
         AutomationProperties.SetLiveSetting(wirelessStatusStrip, AutomationLiveSetting.Polite);
@@ -285,6 +288,7 @@ internal sealed partial class QuickControlPanel : IDisposable
         detailClose.Focus(FocusState.Programmatic);
         detailList.Children.Clear();
         listStatus.Visibility = area == Area.Appearance ? Visibility.Collapsed : Visibility.Visible;
+        listStatus.FontSize = area is Area.Wifi or Area.Bluetooth ? WirelessBodySize : 12;
         listStatus.Text = "正在读取…";
         UpdateRadioSwitch();
         scene.UpdateLayout();

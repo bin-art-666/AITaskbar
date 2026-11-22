@@ -70,7 +70,7 @@ internal sealed partial class QuickControlPanel
         var radio = SelectedRadio;
         applyingRadio = true;
         radioSwitch.IsOn = IsOn(radio) || (detailArea == Area.Wifi && radio is null && wifiStatus.Bars > 0);
-        radioSwitch.IsEnabled = !radioBusy && radio?.State is RadioState.On or RadioState.Off;
+        radioSwitch.IsEnabled = !radioBusy && !networkBusy && radio?.State is RadioState.On or RadioState.Off;
         applyingRadio = false;
     }
 
@@ -108,19 +108,22 @@ internal sealed partial class QuickControlPanel
 
     private Button DetailAction(string title, string subtitle, out TextBlock label, out TextBlock status)
     {
+        bool wireless = detailArea is Area.Wifi or Area.Bluetooth;
         var row = new Grid { ColumnSpacing = 8 };
         row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        label = Text(title, 13, ink);
+        label = Text(title, wireless ? WirelessBodySize : 13, ink);
         label.TextTrimming = TextTrimming.CharacterEllipsis;
-        status = Text(subtitle, 12, subtle);
+        status = Text(subtitle, wireless ? WirelessBodySize : 12, subtle);
+        status.TextAlignment = TextAlignment.Right;
         row.Children.Add(label);
         row.Children.Add(status);
         Grid.SetColumn(status, 1);
         var button = FlatButton(row, subtitle.Length == 0 ? title : title + " · " + subtitle);
         button.HorizontalAlignment = HorizontalAlignment.Stretch;
         button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-        button.Padding = new Thickness(8, 5, 8, 5);
+        button.Padding = wireless ? new Thickness(8, 4, 8, 4) : new Thickness(8, 5, 8, 5);
+        if (wireless) button.MinHeight = WirelessRowHeight;
         button.Background = tile;
         return button;
     }
@@ -134,8 +137,8 @@ internal sealed partial class QuickControlPanel
             detailRevision++;
             ShowWirelessNotice(null);
             detailList.Children.Clear();
-            listStatus.Text = network.Name;
-            var password = new PasswordBox { PlaceholderText = "网络密码" };
+            SetWirelessListStatus(network.Name);
+            var password = new PasswordBox { PlaceholderText = "网络密码", FontSize = WirelessBodySize };
             AutomationProperties.SetName(password, "网络密码");
             var connect = DetailAction("连接", "");
             connect.Click += async (_, _) =>
@@ -222,6 +225,50 @@ internal sealed partial class QuickControlPanel
             ShowWirelessNotice("暂时无法打开 Windows 设置。");
     }
 
+    private async Task ChangeBluetoothAudioAsync(QuickControlRadios.BluetoothEntry device, bool connect)
+    {
+        if (disposed || closing || detailArea != Area.Bluetooth || wirelessEditor || networkBusy || radioBusy) return;
+        string action = connect ? "连接" : "断开";
+        if (bluetoothRadio?.State is RadioState.Off or RadioState.Disabled)
+        {
+            ShowWirelessNotice($"无法{action}「{device.Device.Name}」：蓝牙已关闭。");
+            return;
+        }
+        int revision = detailRevision;
+        bool Current() => !disposed && !closing && detailArea == Area.Bluetooth && detailRevision == revision;
+        networkBusy = true;
+        UpdateRadioSwitch();
+        ShowWirelessNotice($"正在{action}「{device.Device.Name}」…");
+        string? failure;
+        try
+        {
+            failure = await Task.Run(() => SystemVolume.RequestBluetoothAudio(device.Container, connect));
+            if (failure is null)
+            {
+                var containers = new HashSet<Guid> { device.Container };
+                bool confirmed = false;
+                for (int attempt = 0; Current() && attempt < 18; attempt++)
+                {
+                    if (attempt > 0) await Task.Delay(500);
+                    if (!Current()) break;
+                    var endpoints = await Task.Run(() => SystemVolume.ReadBluetoothOutputs(containers));
+                    if (endpoints is not null && endpoints.Any(endpoint => endpoint.Connected) == connect)
+                    {
+                        confirmed = true;
+                        break;
+                    }
+                }
+                if (!confirmed) failure = connect ? "等待音频连接超时。请确认耳机已开机、在附近，并可接受连接。"
+                    : "等待音频断开超时，Windows 仍未确认已断开。";
+            }
+        }
+        finally { networkBusy = false; }
+        if (!Current()) return;
+        UpdateRadioSwitch();
+        ShowWirelessNotice(failure is null ? null : $"无法{action}「{device.Device.Name}」：{failure}");
+        await RefreshWirelessListAsync();
+    }
+
     private async Task DiscoverBluetoothAsync()
     {
         if (networkBusy || radioBusy) return;
@@ -230,13 +277,13 @@ internal sealed partial class QuickControlPanel
         int revision = ++detailRevision;
         detailList.Children.Clear();
         ResetWirelessScroll();
-        listStatus.Text = "正在查找可配对设备…";
+        SetWirelessListStatus("正在查找可配对设备…");
         bool Current() => !disposed && detailArea == Area.Bluetooth && detailRevision == revision;
         try
         {
             var devices = await QuickControlRadios.BluetoothDevicesAsync(paired: false);
             if (!Current()) return;
-            listStatus.Text = devices.Length == 0 ? "未找到可配对设备。" : "";
+            SetWirelessListStatus(devices.Length == 0 ? "未找到可配对设备。" : "");
             foreach (var entry in devices)
             {
                 var button = DetailAction(entry.Device.Name, "配对");
@@ -269,7 +316,7 @@ internal sealed partial class QuickControlPanel
         }
         catch (Exception error) when (QuickControlRadios.IsUnavailable(error))
         {
-            if (Current()) listStatus.Text = "暂时无法查找蓝牙设备。";
+            if (Current()) SetWirelessListStatus("暂时无法查找蓝牙设备。");
         }
         finally
         {

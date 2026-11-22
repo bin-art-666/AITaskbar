@@ -19,9 +19,11 @@ internal sealed partial class QuickControlPanel
     private Button? disconnectButton, discoverButton;
     private bool wirelessEditor, wirelessReading, scanRequested;
     private long nextWifiScan;
-    private string wirelessStatus = "";
-
-    private void UpdateWirelessStatus() => listStatus.Text = wirelessStatus;
+    private void SetWirelessListStatus(string message)
+    {
+        listStatus.Text = message;
+        listStatus.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
 
     private void ShowWirelessNotice(string? message)
     {
@@ -37,8 +39,7 @@ internal sealed partial class QuickControlPanel
             detailRevision++;
             wirelessEditor = false;
             ShowWirelessNotice(null);
-            wirelessStatus = "正在读取…";
-            UpdateWirelessStatus();
+            SetWirelessListStatus("正在读取…");
             rowsByKey.Clear();
             detailList.Children.Clear();
             wirelessRows = new StackPanel { Spacing = 3 };
@@ -47,7 +48,7 @@ internal sealed partial class QuickControlPanel
             if (detailArea == Area.Wifi)
             {
                 disconnectButton = DetailAction("断开连接", "");
-                disconnectButton.IsEnabled = false;
+                disconnectButton.Visibility = Visibility.Collapsed;
                 disconnectButton.Click += async (_, _) =>
                 {
                     if (wifiStatus is { Bars: > 0, Name: { } name })
@@ -111,9 +112,20 @@ internal sealed partial class QuickControlPanel
             {
                 var devices = await QuickControlRadios.BluetoothDevicesAsync();
                 if (!Current()) return;
-                UpdateWirelessRows(devices.Select(device => new WirelessItem(new(device.Key), device.Device.Name,
-                    device.Connected ? "已连接" : "已配对 · 未连接", device.Connected ? null :
-                        async () => await OpenSettingsAsync(Area.Bluetooth))).ToArray(),
+                var containers = devices.Select(device => device.Container).Where(id => id != Guid.Empty).ToHashSet();
+                var outputs = await Task.Run(() => SystemVolume.ReadBluetoothOutputs(containers));
+                if (!Current()) return;
+                var audio = outputs?.ToLookup(output => output.Container);
+                UpdateWirelessRows(devices.Select(device =>
+                {
+                    var endpoints = audio?[device.Container];
+                    bool hasAudio = endpoints?.Any() == true;
+                    bool connected = hasAudio ? endpoints!.Any(output => output.Connected) : device.Connected;
+                    string status = hasAudio ? connected ? "已连接 · 断开" : "未连接 · 连接"
+                        : connected ? "已连接" : "已配对 · 未连接";
+                    return new WirelessItem(new(device.Key), device.Device.Name, status,
+                        async () => await ChangeBluetoothAudioAsync(device, !connected));
+                }).ToArray(),
                     devices.Length == 0 ? "没有已配对的设备" : "");
             }
         }
@@ -132,8 +144,7 @@ internal sealed partial class QuickControlPanel
     {
         KeepWirelessScroll(() =>
         {
-            wirelessStatus = status;
-            UpdateWirelessStatus();
+            SetWirelessListStatus(status);
             var desired = items.Select(item => item.Key).ToHashSet();
             foreach (var key in rowsByKey.Keys.Where(key => !desired.Contains(key)).ToArray())
             {
@@ -158,16 +169,13 @@ internal sealed partial class QuickControlPanel
                 if (AutomationProperties.GetName(row.Button) != label) AutomationProperties.SetName(row.Button, label);
             }
             if (disconnectButton is not null)
-                disconnectButton.IsEnabled = wifiStatus.Bars > 0 && SelectedRadio?.State is not (RadioState.Off or RadioState.Disabled);
+                disconnectButton.Visibility = wifiStatus.Bars > 0 && SelectedRadio?.State is not (RadioState.Off or RadioState.Disabled)
+                    ? Visibility.Visible : Visibility.Collapsed;
             if (discoverButton is not null) discoverButton.IsEnabled = SelectedRadio?.State is not (RadioState.Off or RadioState.Disabled);
         });
     }
 
-    private void SetWirelessRefreshError(string message) => KeepWirelessScroll(() =>
-    {
-        wirelessStatus = message;
-        UpdateWirelessStatus();
-    });
+    private void SetWirelessRefreshError(string message) => KeepWirelessScroll(() => SetWirelessListStatus(message));
 
     private void KeepWirelessScroll(Action update)
     {

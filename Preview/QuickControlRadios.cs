@@ -16,7 +16,7 @@ internal sealed class QuickControlRadios
             Windows.Networking.Connectivity.NetworkAuthenticationType.Open80211;
     }
 
-    internal sealed record BluetoothEntry(string Key, DeviceInformation Device, bool Connected);
+    internal sealed record BluetoothEntry(string Key, DeviceInformation Device, bool Connected, Guid Container);
     private RadioAccessStatus? access;
     private IReadOnlyList<WiFiAdapter>? wifiAdapters;
 
@@ -74,7 +74,8 @@ internal sealed class QuickControlRadios
     {
         const string Connected = "System.Devices.Aep.IsConnected";
         const string Address = "System.Devices.Aep.DeviceAddress";
-        string[] properties = [Connected, Address];
+        const string Container = "System.Devices.Aep.ContainerId";
+        string[] properties = [Connected, Address, Container];
         string[] selectors = [BluetoothDevice.GetDeviceSelectorFromPairingState(paired),
             BluetoothLEDevice.GetDeviceSelectorFromPairingState(paired)];
         var all = await Task.WhenAll(selectors.Select(async selector =>
@@ -84,7 +85,9 @@ internal sealed class QuickControlRadios
             .GroupBy(device => device.Properties.TryGetValue(Address, out var address) && address is string key ? key : device.Id,
                 StringComparer.OrdinalIgnoreCase)
             .Select(group => new BluetoothEntry(group.Key, group.First(), group.Any(device =>
-                device.Properties.TryGetValue(Connected, out var value) && value is true)))
+                device.Properties.TryGetValue(Connected, out var value) && value is true),
+                group.Select(device => device.Properties.TryGetValue(Container, out var value) && value is Guid id
+                    ? id : Guid.Empty).FirstOrDefault(id => id != Guid.Empty)))
             .OrderByDescending(device => device.Connected).ThenBy(device => device.Device.Name).ToArray();
     }
 

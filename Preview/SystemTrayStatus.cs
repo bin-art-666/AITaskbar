@@ -138,6 +138,7 @@ internal sealed partial class SystemVolume : IDisposable
     {
         void EnumAudioEndpoints(int dataFlow, uint stateMask, out AudioDeviceCollection devices);
         void GetDefaultAudioEndpoint(int dataFlow, int role, out AudioDevice device);
+        void GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out AudioDevice device);
     }
 
     [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -146,6 +147,7 @@ internal sealed partial class SystemVolume : IDisposable
         void Activate(ref Guid iid, uint context, nint parameters, [MarshalAs(UnmanagedType.IUnknown)] out object result);
         void OpenPropertyStore(uint access, out AudioPropertyStore properties);
         void GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
+        void GetState(out uint state);
     }
 
     [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
