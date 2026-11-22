@@ -1,0 +1,111 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Windows.UI;
+
+namespace AITaskbar;
+
+internal sealed partial class TaskbarSettingsWindow
+{
+    private void BuildWindowThumbnailSettings(StackPanel page)
+    {
+        page.Children.Add(IconSettingsHeading("窗口预览"));
+        var slider = FeedbackSlider("预览画面最大宽度", PreviewIconLayout.MinThumbnailWidth, PreviewIconLayout.MaxThumbnailWidth);
+        slider.StepFrequency = 10;
+        slider.LargeChange = 40;
+        var value = new TextBlock { VerticalAlignment = VerticalAlignment.Center, MinWidth = 58 };
+        page.Children.Add(SettingRow("画面大小", "按原窗口比例缩放，拖动时预览，松手后保存。", Actions(slider, value)));
+
+        var window = new Grid();
+        window.RowDefinitions.Add(new() { Height = new GridLength(12) });
+        window.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        window.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        window.ColumnDefinitions.Add(new() { Width = new GridLength(3, GridUnitType.Star) });
+        var toolbar = new Border { Background = new SolidColorBrush(Color.FromArgb(255, 76, 118, 171)) };
+        Grid.SetColumnSpan(toolbar, 2);
+        window.Children.Add(toolbar);
+        var sidebar = new Border { Background = new SolidColorBrush(Color.FromArgb(255, 211, 224, 240)) };
+        Grid.SetRow(sidebar, 1);
+        window.Children.Add(sidebar);
+        var sampleImage = new Border { Background = new SolidColorBrush(Color.FromArgb(255, 231, 238, 247)), Child = window };
+        var sample = new Grid { Padding = new Thickness(WindowThumbnailLayout.Padding), HorizontalAlignment = HorizontalAlignment.Left,
+            CornerRadius = new CornerRadius(6) };
+        void SetSampleTheme() => sample.Background = new SolidColorBrush(sample.ActualTheme == ElementTheme.Dark
+            ? Color.FromArgb(255, 45, 50, 59) : Color.FromArgb(255, 248, 250, 254));
+        sample.ActualThemeChanged += (_, _) => SetSampleTheme();
+        SetSampleTheme();
+        sample.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        sample.RowDefinitions.Add(new() { Height = new GridLength(WindowThumbnailLayout.FooterHeight) });
+        sample.Children.Add(sampleImage);
+        var footer = new Grid { ColumnSpacing = 6, IsHitTestVisible = false };
+        footer.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        footer.Children.Add(new TextBlock { Text = "预览示例", FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        var close = WindowThumbnailPopup.CloseIcon();
+        close.Margin = new Thickness(4, 0, 4, 0);
+        Grid.SetColumn(close, 1);
+        footer.Children.Add(close);
+        Grid.SetRow(footer, 1);
+        sample.Children.Add(footer);
+        var sampleRow = new Grid { Margin = new Thickness(0, 0, 0, 8), IsHitTestVisible = false };
+        AutomationProperties.SetName(sampleRow, "窗口大小预览");
+        sampleRow.Children.Add(sample);
+        page.Children.Add(sampleRow);
+
+        bool syncing = false;
+        uint? heldPointer = null;
+        int SelectedWidth() => (int)Math.Round(slider.Value);
+
+        void UpdateSample()
+        {
+            int width = SelectedWidth();
+            value.Text = $"{width} DIP";
+            double room = sampleRow.ActualWidth > 0 ? sampleRow.ActualWidth : width + 2 * WindowThumbnailLayout.Padding;
+            sampleImage.Width = Math.Max(1, Math.Min(width, room - 2 * WindowThumbnailLayout.Padding));
+            sampleImage.Height = sampleImage.Width * 10 / 16;
+        }
+
+        void ReadSaved()
+        {
+            syncing = true;
+            slider.Value = app.IconLayout.ThumbnailWidth;
+            syncing = false;
+            UpdateSample();
+            app.PreviewThumbnailWidth(app.IconLayout.ThumbnailWidth);
+        }
+
+        void Save()
+        {
+            if (!slider.IsLoaded || heldPointer is not null || SelectedWidth() == app.IconLayout.ThumbnailWidth) return;
+            if (!app.TrySetIconLayout(app.IconLayout with { ThumbnailWidth = SelectedWidth() })) ReadSaved();
+        }
+
+        slider.ValueChanged += (_, _) =>
+        {
+            UpdateSample();
+            if (syncing) return;
+            app.PreviewThumbnailWidth(SelectedWidth());
+            // A track click can raise ValueChanged before PointerPressed reaches the slider.
+            slider.DispatcherQueue.TryEnqueue(Save);
+        };
+        slider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) => heldPointer = args.Pointer.PointerId), true);
+        void ReleasePointer(object sender, PointerRoutedEventArgs args)
+        {
+            if (heldPointer != args.Pointer.PointerId) return;
+            heldPointer = null;
+            slider.DispatcherQueue.TryEnqueue(Save);
+        }
+        slider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(ReleasePointer), true);
+        slider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(ReleasePointer), true);
+        slider.Loaded += (_, _) => ReadSaved();
+        slider.Unloaded += (_, _) =>
+        {
+            heldPointer = null;
+            app.PreviewThumbnailWidth(app.IconLayout.ThumbnailWidth);
+        };
+        sampleRow.SizeChanged += (_, _) => UpdateSample();
+        ReadSaved();
+    }
+}

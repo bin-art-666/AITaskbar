@@ -58,6 +58,7 @@ internal sealed partial class PreviewApplicationStrip
     private int wheelRemainder;
     private TaskbarAppFeedbackStyle feedbackStyle;
     private PreviewIconLayout iconLayout;
+    private int thumbnailWidth;
     private bool feedbackLight;
     private double available = double.PositiveInfinity;
     private FlyoutBase? openFlyout;
@@ -93,6 +94,7 @@ internal sealed partial class PreviewApplicationStrip
         this.iconSize = iconSize;
         this.feedbackStyle = feedbackStyle;
         this.iconLayout = iconLayout;
+        thumbnailWidth = iconLayout.ThumbnailWidth;
         pinnedPanel.Spacing = iconLayout.Gap;
         pinnedApps = new(pinnedPanel);
         this.owner = owner;
@@ -205,15 +207,25 @@ internal sealed partial class PreviewApplicationStrip
         bool colorChanged = iconLayout.ColorMode != layout.ColorMode;
         bool menuColorChanged = iconLayout.MenuColorMode != layout.MenuColorMode;
         iconLayout = layout;
+        SetThumbnailWidth(layout.ThumbnailWidth);
         if (colorChanged || menuColorChanged) openFlyout?.Hide();
         if (colorChanged)
             foreach (var view in Rendered) UpdateIcon(view);
         if (menuColorChanged)
+        {
+            UpdateThumbnailTheme(Surface.ActualTheme);
             foreach (var view in Rendered) SetAppMenu(view);
+        }
         if (!gapChanged && (!scrollChanged || scrollStarted is null)) return;
         pinnedPanel.Spacing = layout.Gap;
         runningApps.Layout = null;
         Render();
+    }
+
+    internal void SetThumbnailWidth(int width)
+    {
+        thumbnailWidth = width;
+        thumbnails?.Resize(width);
     }
 
     internal void SetFeedbackLight(bool light)
@@ -546,6 +558,7 @@ internal sealed partial class PreviewApplicationStrip
             iconLayout.MenuColorMode != AppMenuColorMode.FollowTaskbar;
         dark = useDark;
         contrast = highContrast;
+        UpdateThumbnailTheme(Surface.ActualTheme);
         var edge = highContrast ? system.GetColorValue(UIColorType.Foreground)
             : useDark ? Color.FromArgb(48, 255, 255, 255) : Color.FromArgb(70, 35, 58, 84);
         separator.Background = new SolidColorBrush(edge);
@@ -782,6 +795,24 @@ internal sealed partial class PreviewApplicationStrip
     private static SolidColorBrush MenuBackground(ElementTheme theme) => new(theme == ElementTheme.Dark
         ? Color.FromArgb(255, 37, 44, 57) : Color.FromArgb(255, 245, 248, 252));
 
+    private void UpdateThumbnailTheme(ElementTheme taskbarTheme)
+    {
+        if (thumbnails is null) return;
+        if (accessibility.HighContrast)
+        {
+            thumbnails.SetTheme(ElementTheme.Default, system.GetColorValue(UIColorType.Background));
+            return;
+        }
+        var theme = MenuTheme;
+        if (theme != ElementTheme.Default)
+        {
+            thumbnails.SetTheme(theme, MenuBackground(theme).Color);
+            return;
+        }
+        thumbnails.SetTheme(taskbarTheme, taskbarTheme == ElementTheme.Dark
+            ? Color.FromArgb(255, 34, 38, 45) : Color.FromArgb(255, 243, 247, 251));
+    }
+
     private void ScheduleHover(int milliseconds)
     {
         hoverTimer.Stop();
@@ -805,8 +836,9 @@ internal sealed partial class PreviewApplicationStrip
         try
         {
             thumbnails ??= new WindowThumbnailPopup(() => hoverTimer.Stop(), () => ScheduleHover(260));
+            UpdateThumbnailTheme(anchor.ActualTheme);
             hoverAnchor = anchor as Button;
-            thumbnails.Open(owner, anchor, group.Windows,
+            thumbnails.Open(owner, anchor, group.Windows, thumbnailWidth,
                 window => { DismissThumbnails(); OpenWindow(window, plate, toggle: false); },
                 window => { DismissThumbnails(); CloseWindows([window]); });
             thumbnailGroup = group.Key;

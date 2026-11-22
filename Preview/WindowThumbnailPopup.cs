@@ -4,25 +4,27 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 using Windows.Graphics;
 using Windows.UI;
-using Windows.UI.ViewManagement;
 using Native = AIEnter.Native;
 
 namespace AITaskbar;
 
 internal sealed class WindowThumbnailPopup : Window
 {
-    private const int Padding = 8, Gap = 6, HeaderHeight = 26, CardHeight = 146, ImageHeight = 86, PagingHeight = 34;
+    private const int Padding = WindowThumbnailLayout.Padding, Gap = WindowThumbnailLayout.Gap;
+    private const uint Destination = 1, VisibilityFlag = 8;
     private readonly Canvas panel = new();
     private Action<RunningWindow>? activate, close;
-    private readonly List<nint> thumbnails = [];
     private readonly nint handle;
-    private RunningWindow[] windows = [];
+    private readonly List<Source> windows = [];
+    private WindowThumbnailLayout.Page[] pages = [];
     private RectInt32 anchor, workArea;
     private double scale;
-    private int columns, cardWidth, pageSize, page;
-    private bool visible;
+    private int page, requestedWidth;
+    private bool visible, above;
+    private sealed record Source(RunningWindow Window, nint Thumbnail, double Aspect);
 
     public WindowThumbnailPopup(Action enter, Action leave)
     {
@@ -40,11 +42,11 @@ internal sealed class WindowThumbnailPopup : Window
         Closed += (_, _) => ClearThumbnails();
     }
 
-    public void Open(nint owner, FrameworkElement button, IEnumerable<RunningWindow> sources,
+    public void Open(nint owner, FrameworkElement button, IEnumerable<RunningWindow> sources, int width,
         Action<RunningWindow> activate, Action<RunningWindow> close)
     {
-        windows = sources.Where(RunningWindows.IsCurrent).ToArray();
-        if (windows.Length == 0 || button.XamlRoot is not { } root) { Dismiss(); return; }
+        ClearThumbnails();
+        if (button.XamlRoot is not { } root) { Dismiss(); return; }
         var point = button.TransformToVisual(root.Content).TransformPoint(new());
         scale = root.RasterizationScale;
         var origin = new Native.Point { X = Pixel(point.X), Y = Pixel(point.Y) };
@@ -52,20 +54,39 @@ internal sealed class WindowThumbnailPopup : Window
         anchor = new(origin.X, origin.Y, Pixel(button.ActualWidth), Pixel(button.ActualHeight));
         workArea = DisplayArea.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(owner),
             DisplayAreaFallback.Nearest).WorkArea;
-        int available = (int)(workArea.Width / scale) - 2 * Padding;
-        if (available < 80) { Dismiss(); return; }
+        foreach (var source in sources.Where(RunningWindows.IsCurrent)) windows.Add(Register(source));
+        if (windows.Count == 0) { Dismiss(); return; }
         this.activate = activate;
         this.close = close;
-        cardWidth = Math.Min(168, available);
-        columns = Math.Min(windows.Length, Math.Clamp((available + Gap) / (cardWidth + Gap), 1, 5));
-        pageSize = columns;
+        requestedWidth = width;
         page = 0;
-        panel.RequestedTheme = button.ActualTheme;
-        var system = new UISettings();
-        bool contrast = new AccessibilitySettings().HighContrast;
-        panel.Background = new SolidColorBrush(contrast ? system.GetColorValue(UIColorType.Background)
-            : button.ActualTheme == ElementTheme.Dark ? Color.FromArgb(255, 34, 38, 45)
-                : Color.FromArgb(255, 243, 247, 251));
+        RebuildPages();
+    }
+
+    internal void SetTheme(ElementTheme theme, Color background)
+    {
+        panel.RequestedTheme = theme;
+        if (panel.Background is not SolidColorBrush brush || brush.Color != background)
+            panel.Background = new SolidColorBrush(background);
+    }
+
+    internal void Resize(int width)
+    {
+        if (requestedWidth == width) return;
+        requestedWidth = width;
+        if (visible) RebuildPages(pages[page].Start);
+    }
+
+    private void RebuildPages(int first = 0)
+    {
+        int gap = Pixel(WindowThumbnailLayout.AnchorGap);
+        int roomAbove = Math.Min(anchor.Y, workArea.Y + workArea.Height) - workArea.Y - gap;
+        int roomBelow = workArea.Y + workArea.Height - Math.Max(anchor.Y + anchor.Height, workArea.Y) - gap;
+        above = roomAbove >= roomBelow;
+        pages = WindowThumbnailLayout.Build(windows.Select(source => source.Aspect).ToArray(), requestedWidth,
+            (int)Math.Floor(workArea.Width / scale), (int)Math.Floor(Math.Max(roomAbove, roomBelow) / scale));
+        if (pages.Length == 0) { Dismiss(); return; }
+        page = Math.Max(0, Array.FindLastIndex(pages, value => value.Start <= first));
         RenderPage();
     }
 
@@ -80,32 +101,48 @@ internal sealed class WindowThumbnailPopup : Window
 
     private void RenderPage()
     {
-        ClearThumbnails();
+        foreach (var source in windows)
+            if (source.Thumbnail != 0)
+            {
+                var hide = new ThumbnailProperties { Flags = VisibilityFlag };
+                DwmUpdateThumbnailProperties(source.Thumbnail, in hide);
+            }
         panel.Children.Clear();
-        bool paging = windows.Length > pageSize;
-        int visibleCount = Math.Min(pageSize, windows.Length - page * pageSize);
-        int width = 2 * Padding + columns * cardWidth + (columns - 1) * Gap;
-        int height = 2 * Padding + CardHeight + (paging ? PagingHeight : 0);
+        var layout = pages[page];
+        bool paging = pages.Length > 1;
+        int width = layout.Width, height = layout.Height(paging);
         int widthPx = Pixel(width), heightPx = Pixel(height);
         int x = Math.Clamp(anchor.X + (anchor.Width - widthPx) / 2, workArea.X, workArea.X + workArea.Width - widthPx);
-        int y = Math.Max(workArea.Y, anchor.Y - heightPx - Pixel(10));
+        int gap = Pixel(WindowThumbnailLayout.AnchorGap);
+        int y = above ? anchor.Y - heightPx - gap : anchor.Y + anchor.Height + gap;
+        y = Math.Clamp(y, workArea.Y, workArea.Y + workArea.Height - heightPx);
         AppWindow.MoveAndResize(new(x, y, widthPx, heightPx));
-        for (int index = 0; index < visibleCount; index++)
+        int left = Padding;
+        for (int index = 0; index < layout.Cards.Length; index++)
         {
-            var source = windows[page * pageSize + index];
-            int left = Padding + index * (cardWidth + Gap);
-            var at = new RectInt32(left + 6, Padding + HeaderHeight, cardWidth - 12, ImageHeight);
-            AddCard(source, left, at);
+            var card = layout.Cards[index];
+            var image = new RectInt32(left + (card.Width - card.ImageWidth) / 2, 2 * Padding, card.ImageWidth, layout.ImageHeight);
+            AddCard(windows[layout.Start + index], left, card.Width, layout.CardHeight, image);
+            left += card.Width + Gap;
         }
         if (paging)
         {
-            var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Gap };
-            navigation.Children.Add(PageButton("‹", "上一页", -1, page > 0));
-            navigation.Children.Add(new TextBlock { Text = $"{page + 1} / {(windows.Length + pageSize - 1) / pageSize}",
-                VerticalAlignment = VerticalAlignment.Center });
-            navigation.Children.Add(PageButton("›", "下一页", 1, (page + 1) * pageSize < windows.Length));
-            Canvas.SetLeft(navigation, Padding);
-            Canvas.SetTop(navigation, Padding + CardHeight + 4);
+            int navigationWidth = Math.Min(106, width - 2 * Padding);
+            var navigation = new Grid { Width = navigationWidth, ColumnSpacing = 3 };
+            navigation.ColumnDefinitions.Add(new() { Width = new GridLength(24) });
+            navigation.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+            navigation.ColumnDefinitions.Add(new() { Width = new GridLength(24) });
+            navigation.Children.Add(PageButton("上一页", -1, page > 0));
+            var count = new TextBlock { Text = $"{page + 1} / {pages.Length}", FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+            Grid.SetColumn(count, 1);
+            navigation.Children.Add(count);
+            var next = PageButton("下一页", 1, page + 1 < pages.Length);
+            Grid.SetColumn(next, 2);
+            navigation.Children.Add(next);
+            double centeredOnAnchor = (anchor.X + anchor.Width / 2d - x) / scale - navigationWidth / 2d;
+            Canvas.SetLeft(navigation, Math.Clamp(centeredOnAnchor, Padding, width - Padding - navigationWidth));
+            Canvas.SetTop(navigation, Padding + layout.CardHeight + 3);
             panel.Children.Add(navigation);
         }
         if (!visible)
@@ -115,19 +152,23 @@ internal sealed class WindowThumbnailPopup : Window
         }
     }
 
-    private void AddCard(RunningWindow source, int left, RectInt32 at)
+    private void AddCard(Source entry, int left, int cardWidth, int cardHeight, RectInt32 at)
     {
+        var source = entry.Window;
         var placeholder = new TextBlock { Text = "无可用缩略图", Opacity = .65,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         var title = new TextBlock { Text = DisplayTitle(source.Title), TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12,
-            Margin = new Thickness(6, 0, 6, 5), VerticalAlignment = VerticalAlignment.Bottom };
-        var content = new Grid { Width = cardWidth, Height = CardHeight };
+            VerticalAlignment = VerticalAlignment.Center };
+        var footer = new Grid { Margin = new Thickness(Padding, 0, Padding + 26, Padding),
+            VerticalAlignment = VerticalAlignment.Bottom, Height = WindowThumbnailLayout.FooterHeight };
+        footer.Children.Add(title);
+        var content = new Grid { Width = cardWidth, Height = cardHeight };
         var image = new Grid { Width = at.Width, Height = at.Height, VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, HeaderHeight, 0, 0) };
+            Margin = new Thickness(0, Padding, 0, 0) };
         image.Children.Add(placeholder);
         content.Children.Add(image);
-        content.Children.Add(title);
-        var button = new Button { Width = cardWidth, Height = CardHeight, Padding = new Thickness(0),
+        content.Children.Add(footer);
+        var button = new Button { Width = cardWidth, Height = cardHeight, Padding = new Thickness(0),
             BorderThickness = new Thickness(0), Content = content, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Stretch };
         AutomationProperties.SetName(button, "切换到 " + source.Title);
@@ -136,14 +177,14 @@ internal sealed class WindowThumbnailPopup : Window
         Canvas.SetLeft(button, left);
         Canvas.SetTop(button, Padding);
         panel.Children.Add(button);
-        var closeButton = new Button { Content = "×", Width = 24, Height = 24, Padding = new Thickness(0) };
+        var closeButton = ThumbnailButton(CloseIcon());
         AutomationProperties.SetName(closeButton, "关闭 " + source.Title);
         ToolTipService.SetToolTip(closeButton, "关闭窗口");
         closeButton.Click += (_, _) => close?.Invoke(source);
-        Canvas.SetLeft(closeButton, left + cardWidth - 26);
-        Canvas.SetTop(closeButton, Padding + 1);
+        Canvas.SetLeft(closeButton, left + cardWidth - Padding - 24);
+        Canvas.SetTop(closeButton, Padding + cardHeight - Padding - WindowThumbnailLayout.FooterHeight + 2);
         panel.Children.Add(closeButton);
-        if (Register(source, at)) placeholder.Visibility = Visibility.Collapsed;
+        if (ShowThumbnail(entry, at)) placeholder.Visibility = Visibility.Collapsed;
     }
 
     private static string DisplayTitle(string title)
@@ -152,43 +193,74 @@ internal sealed class WindowThumbnailPopup : Window
         return Path.IsPathFullyQualified(title) && Path.GetFileName(title) is { Length: > 0 } name ? name : title;
     }
 
-    private Button PageButton(string glyph, string name, int direction, bool enabled)
+    private Button PageButton(string name, int direction, bool enabled)
     {
-        var button = new Button { Content = glyph, IsEnabled = enabled, Padding = new Thickness(9, 2, 9, 2) };
+        Point[] outline = [new(0, 1), new(1, 0), new(5, 4), new(1, 8), new(0, 7), new(3, 4)];
+        if (direction < 0)
+            for (int index = 0; index < outline.Length; index++) outline[index] = new(5 - outline[index].X, outline[index].Y);
+        var button = ThumbnailButton(CenteredIcon(5, outline));
+        button.IsEnabled = enabled;
         AutomationProperties.SetName(button, name);
         button.Click += (_, _) => { page += direction; RenderPage(); };
         return button;
     }
 
-    private bool Register(RunningWindow source, RectInt32 area)
+    private static Button ThumbnailButton(IconElement icon) => new()
     {
-        if (!RunningWindows.IsCurrent(source) || DwmRegisterThumbnail(handle, source.Handle, out nint thumbnail) < 0) return false;
-        if (DwmQueryThumbnailSourceSize(thumbnail, out var size) >= 0 && size.Width > 0 && size.Height > 0)
+        Content = icon, Width = 24, Height = 24, Padding = new Thickness(0),
+        HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center
+    };
+
+    internal static PathIcon CloseIcon() => CenteredIcon(8,
+        [new(1, 0), new(4, 3), new(7, 0), new(8, 1), new(5, 4), new(8, 7),
+         new(7, 8), new(4, 5), new(1, 8), new(0, 7), new(3, 4), new(0, 1)]);
+
+    private static PathIcon CenteredIcon(int width, Point[] points)
+    {
+        var figure = new PathFigure { StartPoint = points[0], IsClosed = true };
+        foreach (var point in points.Skip(1)) figure.Segments.Add(new LineSegment { Point = point });
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
+        return new PathIcon
         {
-            double fit = Math.Min((double)area.Width / size.Width, (double)area.Height / size.Height);
-            double width = size.Width * fit, height = size.Height * fit;
-            double left = area.X + (area.Width - width) / 2, top = area.Y + (area.Height - height) / 2;
-            var properties = new ThumbnailProperties
-            {
-                Flags = 1 | 8, Visible = 1, Destination = new Native.Rect
-                { Left = Pixel(left), Top = Pixel(top), Right = Pixel(left + width), Bottom = Pixel(top + height) }
-            };
-            if (DwmUpdateThumbnailProperties(thumbnail, in properties) >= 0)
-            {
-                thumbnails.Add(thumbnail);
-                return true;
-            }
+            Data = geometry, Width = width, Height = 8,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+        };
+    }
+
+    private Source Register(RunningWindow source)
+    {
+        if (DwmRegisterThumbnail(handle, source.Handle, out nint thumbnail) >= 0)
+        {
+            if (DwmQueryThumbnailSourceSize(thumbnail, out var size) >= 0 && size.Width > 0 && size.Height > 0)
+                return new(source, thumbnail, (double)size.Width / size.Height);
+            DwmUnregisterThumbnail(thumbnail);
         }
-        DwmUnregisterThumbnail(thumbnail);
-        return false;
+        return new(source, 0, 16d / 10);
+    }
+
+    private bool ShowThumbnail(Source source, RectInt32 area)
+    {
+        if (source.Thumbnail == 0) return false;
+        double width = Math.Min(area.Width, area.Height * source.Aspect);
+        double height = width / source.Aspect;
+        double left = area.X + (area.Width - width) / 2, top = area.Y + (area.Height - height) / 2;
+        var properties = new ThumbnailProperties
+        {
+            Flags = Destination | VisibilityFlag, Visible = 1, Destination = new Native.Rect
+            { Left = Pixel(left), Top = Pixel(top), Right = Pixel(left + width), Bottom = Pixel(top + height) }
+        };
+        return DwmUpdateThumbnailProperties(source.Thumbnail, in properties) >= 0;
     }
 
     private int Pixel(double dip) => (int)Math.Round(dip * scale);
 
     private void ClearThumbnails()
     {
-        foreach (var thumbnail in thumbnails) DwmUnregisterThumbnail(thumbnail);
-        thumbnails.Clear();
+        foreach (var source in windows)
+            if (source.Thumbnail != 0) DwmUnregisterThumbnail(source.Thumbnail);
+        windows.Clear();
+        pages = [];
     }
 
     [StructLayout(LayoutKind.Sequential)]

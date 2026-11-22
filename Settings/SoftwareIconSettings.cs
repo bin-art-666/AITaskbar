@@ -159,13 +159,14 @@ internal sealed partial class TaskbarSettingsWindow
         };
 
         page.Children.Add(SettingRow("图标配色", "同时应用于任务栏背板和右键菜单图标。", colors));
-        page.Children.Add(SettingRow("右键菜单配色", "调整应用右键菜单和子菜单的背景与文字。", menuColors));
+        page.Children.Add(SettingRow("右键菜单配色", "同时应用于右键菜单和悬停窗口预览。", menuColors));
         page.Children.Add(IconSettingsHeading("图标布局"));
         page.Children.Add(SettingRow("应用图标大小", "统一调整中间应用区的图标。", Actions(size, sizeValue)));
         page.Children.Add(SettingRow("图标间距", "分别调整固定区和运行区内相邻图标的间隔。", Actions(gap, gapValue)));
         page.Children.Add(SettingRow("滚动动画", "运行区图标溢出时生效。关闭后仍可用滚轮切换。", animation));
         page.Children.Add(SettingRow("窗口开合动画", "适用于预览栏和窗口标题栏的开合操作。", windowAnimation));
         page.Children.Add(SettingRow("窗口开合速度", "曲面动画可调节为 200–1000 毫秒。Windows 风格使用 200 毫秒。", Actions(windowSpeed, windowSpeedValue)));
+        BuildWindowThumbnailSettings(page);
         page.Children.Add(SettingRow("显示最近文件", "在 Chrome 右键菜单中显示 Windows 提供的最近文件。", recentFiles));
         page.Children.Add(SettingRow("显示 Edge 最近文件", "在 Edge 右键菜单中显示 Windows 提供的最近文件。", edgeRecentFiles));
         BuildBrowserRecentConnection(page, RecentBrowser.Edge, edgeRecentlyClosed);

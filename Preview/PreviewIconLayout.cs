@@ -11,11 +11,13 @@ internal enum AppMenuColorMode { FollowTaskbar, Light, Dark }
 internal sealed record PreviewIconLayout
 {
     internal const int MinGap = 2, MaxGap = 12, DefaultGap = 7;
+    internal const int MinThumbnailWidth = 160, MaxThumbnailWidth = 360, DefaultThumbnailWidth = 240;
     internal const int MinWindowDurationMs = 200, MaxWindowDurationMs = 1000, DefaultWindowDurationMs = 240;
     private const int WindowsStyleDurationMs = 200; // Match the visible resize in the native animation comparison.
     internal static PreviewIconLayout Default { get; } = new();
 
     public int Gap { get; init; } = DefaultGap;
+    public int ThumbnailWidth { get; init; } = DefaultThumbnailWidth;
     [JsonConverter(typeof(JsonStringEnumConverter<IconColorMode>))]
     public IconColorMode ColorMode { get; init; } = IconColorMode.Light;
     [JsonConverter(typeof(JsonStringEnumConverter<AppMenuColorMode>))]
@@ -55,6 +57,7 @@ internal sealed record PreviewIconLayout
                 return value with
                 {
                     Gap = Math.Clamp(value.Gap, MinGap, MaxGap),
+                    ThumbnailWidth = Math.Clamp(value.ThumbnailWidth, MinThumbnailWidth, MaxThumbnailWidth),
                     ColorMode = Enum.IsDefined(value.ColorMode) ? value.ColorMode : Default.ColorMode,
                     MenuColorMode = Enum.IsDefined(value.MenuColorMode) ? value.MenuColorMode : Default.MenuColorMode,
                     Animation = Enum.IsDefined(value.Animation) ? value.Animation : Default.Animation,
