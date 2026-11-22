@@ -82,39 +82,43 @@ internal sealed class PreviewTaskbar : Window
         stripHost.Children.Add(strip);
         surface.SizeChanged += (_, _) => UpdateStripLayout();
         var taskbarMenu = NewBarMenu();
-        AddMenuAction(taskbarMenu, "固定应用", () => _ = PickPinAsync());
-        AddMenuAction(taskbarMenu, "AITaskbar 设置", app.ShowSettings);
-        var visibility = new MenuFlyoutItem();
+        AddMenuAction(taskbarMenu, "固定应用", () => _ = PickPinAsync(), Symbol.Pin);
+        AddMenuAction(taskbarMenu, "AITaskbar 设置", app.ShowSettings, Symbol.Setting);
+        var visibilityIcon = new SymbolIcon();
+        var visibility = new MenuFlyoutItem { Icon = visibilityIcon };
         visibility.Click += async (_, _) =>
         {
             if (systemTaskbar.Visible is bool visible)
                 await SetSystemTaskbarVisibilityAsync(!visible, app.SaveSystemTaskbarVisibility);
         };
-        var coverWindows = new ToggleMenuFlyoutItem { Text = "覆盖窗口" };
+        var coverIcon = new SymbolIcon();
+        var coverWindows = new MenuFlyoutItem { Text = "覆盖窗口", Icon = coverIcon };
         coverWindows.Click += (_, _) =>
         {
             try
             {
-                app.SaveTaskbarCoverWindows(coverWindows.IsChecked);
+                app.SaveTaskbarCoverWindows(!app.TaskbarCoversWindows);
                 bar.SetCoverWindows(app.TaskbarCoversWindows);
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
-                coverWindows.IsChecked = app.TaskbarCoversWindows;
                 reportFailure(error);
                 Report("无法保存覆盖窗口设置。");
             }
         };
         taskbarMenu.Opening += (_, _) =>
         {
-            visibility.Text = systemTaskbar.Visible == false ? "显示系统任务栏" : "隐藏系统任务栏";
+            bool systemTaskbarHidden = systemTaskbar.Visible == false;
+            visibility.Text = systemTaskbarHidden ? "显示系统任务栏" : "隐藏系统任务栏";
+            visibilityIcon.Symbol = systemTaskbarHidden ? Symbol.DockBottom : Symbol.Remove;
             visibility.IsEnabled = systemTaskbar.CanToggle;
-            coverWindows.IsChecked = app.TaskbarCoversWindows;
+            coverIcon.Symbol = app.TaskbarCoversWindows ? Symbol.Accept : Symbol.SwitchApps;
+            AutomationProperties.SetItemStatus(coverWindows, app.TaskbarCoversWindows ? "已开启" : "已关闭");
         };
         taskbarMenu.Items.Add(visibility);
         taskbarMenu.Items.Add(coverWindows);
         taskbarMenu.Items.Add(new MenuFlyoutSeparator());
-        AddMenuAction(taskbarMenu, "退出 AITaskbar", app.RequestExit);
+        AddMenuAction(taskbarMenu, "退出 AITaskbar", app.RequestExit, Symbol.Cancel);
         surface.ContextRequested += (_, args) =>
         {
             if (args.Handled || !args.TryGetPosition(surface, out var point)) return;
@@ -259,9 +263,10 @@ internal sealed class PreviewTaskbar : Window
         return menu;
     }
 
-    private static void AddMenuAction(MenuFlyout menu, string label, Action click)
+    private static void AddMenuAction(MenuFlyout menu, string label, Action click, Symbol? icon = null)
     {
         var action = new MenuFlyoutItem { Text = label };
+        if (icon is { } symbol) action.Icon = new SymbolIcon(symbol);
         action.Click += (_, _) => click();
         menu.Items.Add(action);
     }
