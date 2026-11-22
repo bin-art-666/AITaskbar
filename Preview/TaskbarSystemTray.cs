@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -41,8 +42,8 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
     private readonly TaskbarStatusIcon wifiIcon, audioIcon;
     private readonly Button wifi, volume;
     private readonly QuickControlPanel quickControls;
-    private readonly TextBlock time = new() { FontSize = 15, TextAlignment = TextAlignment.Right };
-    private readonly TextBlock date = new() { FontSize = 11, TextAlignment = TextAlignment.Right };
+    private readonly TextBlock time = new() { FontSize = 17, TextAlignment = TextAlignment.Right };
+    private readonly TextBlock date = new() { FontSize = 12, TextAlignment = TextAlignment.Right };
     private readonly RotateTransform direction = new() { CenterX = 6, CenterY = 4 };
     private readonly Flyout trayFlyout;
     private readonly WindowsNotificationArea notificationArea;
@@ -158,9 +159,11 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
         capsule.Children.Add(controls);
         Children.Add(capsule);
 
-        var clock = new StackPanel { MinWidth = 66, Margin = new Thickness(2, 0, 3, 0),
-            VerticalAlignment = VerticalAlignment.Center, Spacing = 0 };
+        var clock = new StackPanel { MinWidth = 66, MinHeight = TaskbarBatteryBorder.CapsuleHeight,
+            Margin = new Thickness(2, 0, 3, 0), VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
         time.Foreground = date.Foreground = foreground;
+        Typography.SetNumeralAlignment(time, FontNumeralAlignment.Tabular);
+        Typography.SetNumeralAlignment(date, FontNumeralAlignment.Tabular);
         clock.Children.Add(time);
         clock.Children.Add(date);
         Children.Add(clock);

@@ -74,7 +74,7 @@ internal sealed class TaskbarBatteryBorder : Grid, IDisposable
     private (CompositionRoundedRectangleGeometry, CompositionSpriteShape, CompositionColorBrush) CreateLine(
         Compositor compositor, float thickness)
     {
-        var geometry = CreateCapsule(compositor, 2);
+        var geometry = CreateCapsule(compositor, 1.4f);
         var shape = compositor.CreateSpriteShape(geometry);
         var brush = compositor.CreateColorBrush();
         shape.StrokeBrush = brush;

@@ -276,14 +276,14 @@ internal sealed partial class TaskbarSettingsWindow : Window
 
     private void AddClockWeightSettings(StackPanel page)
     {
-        int[] weights = [400, 500, 600];
+        int[] weights = [400, 500, 600, 700];
         AddPicker("时间字重", "调整任务栏时钟上方时间的粗细。", time: true);
         AddPicker("日期字重", "调整任务栏时钟下方日期的粗细。", time: false);
 
         void AddPicker(string title, string help, bool time)
         {
             int CurrentWeight() => time ? app.ClockStyle.TimeWeight : app.ClockStyle.DateWeight;
-            var picker = new ComboBox { Width = 110, ItemsSource = new[] { "常规", "中等", "半粗" },
+            var picker = new ComboBox { Width = 110, ItemsSource = new[] { "常规", "中等", "半粗", "加粗" },
                 SelectedIndex = Array.IndexOf(weights, CurrentWeight()) };
             AutomationProperties.SetName(picker, title);
             picker.SelectionChanged += (_, _) =>

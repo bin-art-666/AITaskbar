@@ -2,7 +2,7 @@ namespace AITaskbar;
 
 internal readonly record struct TaskbarClockStyle(int TimeWeight, int DateWeight)
 {
-    internal static TaskbarClockStyle Default => new(400, 400);
+    internal static TaskbarClockStyle Default => new(700, 600);
     private static string FilePath(string root) => Path.Combine(root, "taskbar-clock-weight.txt");
 
     internal static TaskbarClockStyle Read(string root)
@@ -10,13 +10,20 @@ internal readonly record struct TaskbarClockStyle(int TimeWeight, int DateWeight
         try
         {
             if (File.ReadAllText(FilePath(root)).Split(',') is [var time, var date])
-                return new(Parse(time), Parse(date));
+                return new(Parse(time, Default.TimeWeight), Parse(date, Default.DateWeight));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         return Default;
     }
 
-    private static int Parse(string value) => value switch { "500" => 500, "600" => 600, _ => 400 };
+    private static int Parse(string value, int fallback) => value.Trim() switch
+    {
+        "400" => 400,
+        "500" => 500,
+        "600" => 600,
+        "700" => 700,
+        _ => fallback,
+    };
 
     internal void Save(string root)
     {
