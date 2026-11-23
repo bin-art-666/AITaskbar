@@ -42,6 +42,15 @@ internal sealed partial class AiWindow
         layeredFlyout = taskbarFlyoutOwner = 0;
     }
 
+    void RaiseExpandedFlyout(nint window)
+    {
+        if (window != layeredFlyout || !IsOpen || !Detached || options.Data.Pinned || ModalActive || DragActive) return;
+        // WinUI's popup can receive clicks without taking foreground activation.
+        // Raise it within ordinary windows when the user clicks its exposed area.
+        if (!SetForegroundWindow(window))
+            SetLayerPosition(window, 0, 0, 0, 0, 0, PreserveGeometryAndActivation);
+    }
+
     [DllImport("user32.dll", EntryPoint = "GetWindow")]
     static extern nint GetLayerOwner(nint window, uint command);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
@@ -50,4 +59,6 @@ internal sealed partial class AiWindow
     static extern nint SetLayerOwner(nint window, int index, nint owner);
     [DllImport("user32.dll", EntryPoint = "SetWindowPos")]
     static extern bool SetLayerPosition(nint window, nint after, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll")]
+    static extern bool SetForegroundWindow(nint window);
 }

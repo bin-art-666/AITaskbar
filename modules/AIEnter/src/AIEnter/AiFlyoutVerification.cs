@@ -175,7 +175,7 @@ internal sealed partial class AiWindow
             await VerifyExpandedFileDrop(output, FlyoutAt(probe), "after-reopen");
         }
         await CloseVerifiedFlyout();
-        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels, toolbar, customColors, expandedLayout, expandedPinLayer = verifyPinLayer, compactOutsideClick = verifyOutsideClick, nativeFileDrop = verifyFileDrop, nativeFileDropAfterReopen = verifyFileDrop };
+        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels, toolbar, customColors, expandedLayout, expandedPinLayer = verifyPinLayer, clickRaisesUnpinnedFlyout = verifyPinLayer, compactOutsideClick = verifyOutsideClick, nativeFileDrop = verifyFileDrop, nativeFileDropAfterReopen = verifyFileDrop };
     }
 
     async Task VerifyExpandedPinLayer(nint popup, CoreWebView2 core)
@@ -187,6 +187,7 @@ internal sealed partial class AiWindow
         var bounds = ExpandedFlyoutBounds();
         var point = new Native.Point { X = bounds.X + 35, Y = bounds.Y + bounds.Height / 2 };
         var exposed = new Native.Point { X = bounds.X - 35, Y = point.Y };
+        var exposedFlyout = Center(bounds);
         var host = PanelContent!;
         var pinCenter = pin.TransformToVisual(host).TransformPoint(new(pin.ActualWidth / 2, pin.ActualHeight / 2));
         var pinPoint = new Native.Point { X = bounds.X + (int)Math.Round(pinCenter.X * FlyoutScale), Y = bounds.Y + (int)Math.Round(pinCenter.Y * FlyoutScale) };
@@ -214,6 +215,18 @@ internal sealed partial class AiWindow
                     || !ReferenceEquals(core, current?.View.CoreWebView2)
                     || (GetLayerStyle(owner, ExtendedStyleIndex).ToInt64() & TopmostStyle) != ownerTopmost)
                     throw new InvalidOperationException("Changing the expanded pin affected the taskbar or the flyout lifecycle.");
+
+                if (pinned) continue;
+                if (FlyoutAt(exposedFlyout) != popup)
+                    throw new InvalidOperationException("The expanded flyout has no exposed test area.");
+                await Task.Run(() => DesktopInputFixture.ClickAt(exposedFlyout));
+                await Task.Delay(250);
+                if (FlyoutAt(point) != popup || options.Data.Pinned || (GetLayerStyle(popup, ExtendedStyleIndex).ToInt64() & TopmostStyle) != 0)
+                    throw new InvalidOperationException("Clicking the exposed flyout did not raise it as a normal window.");
+                await Task.Run(() => DesktopInputFixture.ClickAt(exposed));
+                await Task.Delay(250);
+                if (FlyoutAt(point) != overlapHandle || !IsOpen || !ReferenceEquals(core, current?.View.CoreWebView2))
+                    throw new InvalidOperationException("The ordinary window could not cover the raised flyout again.");
             }
         }
         finally

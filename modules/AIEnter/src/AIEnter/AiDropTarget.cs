@@ -43,7 +43,7 @@ internal sealed partial class AiWindow
                 var popup = FindFlyoutDropWindow(anchor);
                 if (popup == IntPtr.Zero) continue;
                 // WinUI does not always light-dismiss a windowed flyout on a click in another window.
-                WatchOutsideClicks(popup);
+                WatchOutsideClicks(popup, () => RaiseExpandedFlyout(popup));
                 var drop = new FlyoutFileDrop(() => IsOpen && !flyout.IsClosing && !destroyed && !transferringDrop && !ModalActive,
                     SetDropHint, paths =>
                 {

@@ -113,13 +113,13 @@ internal abstract class PanelWindow : Window
         NotifyPresentationChanged();
     }
 
-    protected void WatchOutsideClicks(IntPtr panel)
+    protected void WatchOutsideClicks(IntPtr panel, Action? insideLeftPress = null)
     {
         outsideClicks?.Dispose();
         outsideClicks = new OutsideClickWatcher(panel, DispatcherQueue,
             () => { if (!VisibilityProtected && DismissOnOutside) Hide(); },
             UsesPanelWheel?(point,delta,horizontal)=>!VisibilityProtected&&HandlePanelWheel(point,delta,horizontal):null,
-            ObserveOutsidePress, ConsumeOutsideClick);
+            ObserveOutsidePress, ConsumeOutsideClick, insideLeftPress);
     }
 
     internal void Hide()

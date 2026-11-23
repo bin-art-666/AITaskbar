@@ -12,7 +12,7 @@ internal sealed class OutsideClickWatcher : IDisposable
     IntPtr hook;
     bool disposed;
 
-    internal OutsideClickWatcher(IntPtr panel, DispatcherQueue dispatcher, Action dismiss, Func<Native.Point,int,bool,bool>? wheel=null, Action<uint, Native.Point>? outsidePress=null, bool consumeOutside=false)
+    internal OutsideClickWatcher(IntPtr panel, DispatcherQueue dispatcher, Action dismiss, Func<Native.Point,int,bool,bool>? wheel=null, Action<uint, Native.Point>? outsidePress=null, bool consumeOutside=false, Action? insideLeftPress=null)
     {
         bool swallowingRelease = false;
         procedure = (code, message, data) =>
@@ -33,7 +33,10 @@ internal sealed class OutsideClickWatcher : IDisposable
                 // POINT is the first member of MSLLHOOKSTRUCT; no other input data is needed.
                 var point = Marshal.PtrToStructure<Native.Point>(data);
                 bool toggleClick = message.ToInt64() == 0x0201 && PanelToggleTargets.Contains(point);
-                if (!toggleClick && !Native.IsPanelWindow(panel, WindowFromPoint(point)))
+                var target = WindowFromPoint(point);
+                if (insideLeftPress is not null && message.ToInt64() == 0x0201 && Native.GetAncestor(target, 2) == panel)
+                    dispatcher.TryEnqueue(() => { if (!disposed) insideLeftPress(); });
+                if (!toggleClick && !Native.IsPanelWindow(panel, target))
                 {
                     outsidePress?.Invoke(unchecked((uint)Marshal.ReadInt32(data, 16)), point);
                     dispatcher.TryEnqueue(DispatcherQueuePriority.Low, () => { if (!disposed) dismiss(); });
