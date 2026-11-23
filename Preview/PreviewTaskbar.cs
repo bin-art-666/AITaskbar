@@ -52,6 +52,7 @@ internal sealed class PreviewTaskbar : Window
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
         var halo = Button("Halo", "Halo 中转站", () => app.HaloModule.Handle("Toggle"));
         var ai = Button("AIEnter", "AIEnter 对话", () => _ = app.AiModule.ToggleAiWindow(false));
+        var aiService = AIEnter.App.Ai;
         SetMenu(halo, "Halo 设置", Halo.App.OpenSettings);
         SetMenu(ai, "AIEnter 设置", app.AiModule.OpenSettings);
         tasks.AppCenterButton.ContextRequested += (_, args) =>
@@ -179,6 +180,7 @@ internal sealed class PreviewTaskbar : Window
         Closed += (_, _) =>
         {
             closed = true;
+            aiService.DetachTaskbar(ai);
             appCenter?.Close();
             tray.Dispose();
             systemTaskbar.Dispose();
@@ -194,6 +196,7 @@ internal sealed class PreviewTaskbar : Window
             visual.Refresh();
             bar = new(handle, DispatcherQueue, app.TaskbarHeight, app.TaskbarCoversWindows,
                 tasks.RememberForeground, tasks.UpdateAppAttention, error => { Close(); reportFailure(error); });
+            aiService.AttachTaskbar(ai);
             tasks.Refresh();
             refresh.Start();
         }

@@ -15,6 +15,9 @@ internal abstract class PanelWindow : Window
     CancellationTokenSource? hideCancellation;
     internal bool IsClosing { get; private set; }
     protected virtual bool FloatFadeMotion => false;
+    protected virtual Action<float, float>? BackdropMotion => null;
+    protected AITaskbar.TaskbarPanelFlyout? TaskbarFlyout { get; set; }
+    internal FrameworkElement? PanelContent { get; private set; }
     int modalDepth;
     int dragDepth;
     uint outsidePressTime;
@@ -44,7 +47,7 @@ internal abstract class PanelWindow : Window
         Activated += (_, args) =>
         {
             long version = ++activationVersion;
-            if (args.WindowActivationState != WindowActivationState.Deactivated || !IsOpen || VisibilityProtected || !DismissOnOutside) return;
+            if (TaskbarFlyout is not null || args.WindowActivationState != WindowActivationState.Deactivated || !IsOpen || VisibilityProtected || !DismissOnOutside) return;
             // Let XAML finish activating a dropdown/owned popup before deciding focus left the panel.
             DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
             {
@@ -59,7 +62,18 @@ internal abstract class PanelWindow : Window
 
     protected void InitializePanel(FrameworkElement content)
     {
-        Content = content;
+        PanelContent = content;
+        if (TaskbarFlyout is { } flyout)
+        {
+            flyout.DismissOnOutside = () => !VisibilityProtected && DismissOnOutside && AllowHide();
+            flyout.Closed += () =>
+            {
+                if (IsOpen) { IsOpen = false; OnHiding(); NotifyPresentationChanged(); }
+                OnHidden();
+            };
+            Closed += (_, _) => flyout.Dispose();
+        }
+        else Content = content;
         PanelTheme.Register(this);
         content.KeyDown += (_, args) =>
         {
@@ -72,6 +86,14 @@ internal abstract class PanelWindow : Window
 
     protected void ShowPanel(bool activate = true)
     {
+        if (TaskbarFlyout is { } flyout)
+        {
+            PanelTheme.Refresh(this);
+            flyout.Show(activate);
+            IsOpen = flyout.IsOpen;
+            NotifyPresentationChanged();
+            return;
+        }
         bool entering = !IsOpen, resume = IsClosing;
         CancelPendingHide();
         PanelTheme.Refresh(this);
@@ -79,7 +101,7 @@ internal abstract class PanelWindow : Window
         IsOpen = true; hasOutsidePress = false;
         // Activate alone is not a reliable way to re-show an AppWindow that was
         // explicitly hidden, especially after a non-activating drag-hover open.
-        if (entering && FloatFadeMotion && Content is FrameworkElement content) PanelMotion.Enter(content, true, resume);
+        if (entering && FloatFadeMotion && Content is FrameworkElement content) PanelMotion.Enter(content, true, resume, BackdropMotion);
         AppWindow.Show(false);
         if (entering && !FloatFadeMotion && Content is FrameworkElement legacyContent) PanelMotion.Enter(legacyContent);
         if (activate) Activate();
@@ -97,6 +119,14 @@ internal abstract class PanelWindow : Window
     {
         if (!IsOpen || closed || VisibilityProtected) return;
         if (!AllowHide()) return;
+        if (TaskbarFlyout is { } flyout)
+        {
+            IsOpen = false;
+            OnHiding();
+            flyout.Hide();
+            NotifyPresentationChanged();
+            return;
+        }
         activationVersion++;
         IsOpen = false;
         outsideClicks?.Dispose();
@@ -107,7 +137,7 @@ internal abstract class PanelWindow : Window
             NotifyPresentationChanged();
             int duration = FloatFadeMotion && AppWindow.IsVisible && Content is FrameworkElement element
                 && ((Microsoft.UI.Windowing.OverlappedPresenter)AppWindow.Presenter).State != Microsoft.UI.Windowing.OverlappedPresenterState.Minimized
-                ? PanelMotion.Exit(element) : 0;
+                ? PanelMotion.Exit(element, BackdropMotion) : 0;
             if (duration > 0)
             {
                 IsClosing = true;
@@ -139,7 +169,7 @@ internal abstract class PanelWindow : Window
     {
         AppWindow.Hide();
         CancelPendingHide();
-        if (Content is FrameworkElement content) PanelMotion.Reset(content);
+        if (Content is FrameworkElement content) PanelMotion.Reset(content, BackdropMotion);
         OnHidden();
     }
 
@@ -170,6 +200,6 @@ internal abstract class PanelWindow : Window
     {
         if (closed) return;
         try { Hide(); }
-        finally { CancelPendingHide(); closed = true; outsideClicks?.Dispose(); Close(); }
+        finally { CancelPendingHide(); if (Content is FrameworkElement content) PanelMotion.Stop(content); closed = true; outsideClicks?.Dispose(); Close(); }
     }
 }

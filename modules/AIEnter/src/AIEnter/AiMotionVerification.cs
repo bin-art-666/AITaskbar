@@ -18,13 +18,17 @@ internal sealed partial class AiWindow
                 bool animated = PanelMotion.Enabled;
                 Hide();
                 var rootElement = (UIElement)Content;
+                var contentVisual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(rootElement);
                 Check(!IsOpen, "Animation delayed logical dismissal or taskbar state.");
                 if (animated)
                     Check(IsClosing && AppWindow.IsVisible && !rootElement.IsHitTestVisible && !Native.IsWindowEnabled(WinRT.Interop.WindowNative.GetWindowHandle(this)), "Exit animation did not keep a noninteractive visual window.");
-                await Task.Delay(35); await Open(display, dockTop);
+                await Task.Delay(35);
+                Check(contentVisual.Opacity == desktopGlass.Motion.Opacity, "The glass and content used different exit progress.");
+                await Open(display, dockTop);
                 Check(IsOpen && !IsClosing && rootElement.IsHitTestVisible && Native.IsWindowEnabled(WinRT.Interop.WindowNative.GetWindowHandle(this)), "Reopen failed to cancel exit or restore input.");
                 await Task.Delay(UiDefaults.PanelEnterMilliseconds + UiDefaults.PanelExitMilliseconds + 50);
                 Check(IsOpen && AppWindow.IsVisible && ReferenceEquals(original, current) && AppWindow.Size == size, "Stale animation hid a reopened window or replaced its browser.");
+                Check(desktopGlass.Motion == (1f, 0f) && contentVisual.Opacity == 1, "The glass or content did not settle after reopening.");
                 Hide();
                 for (int attempt = 0; attempt < 40 && IsClosing; attempt++) await Task.Delay(20);
                 Check(!IsClosing && !AppWindow.IsVisible, "Animated exit never hid the native window.");

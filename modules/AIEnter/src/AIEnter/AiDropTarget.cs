@@ -20,9 +20,9 @@ internal sealed partial class AiWindow
     }
     void InitializeDropTarget()
     {
-        var shell = (Grid)((Border)Content).Child;
+        var shell = (Grid)((Border)PanelContent!).Child;
         Canvas.SetZIndex(dropHint, 100); shell.Children.Add(dropHint);
-        AttachDropTarget((FrameworkElement)Content);
+        AttachDropTarget(PanelContent!);
     }
     void AttachDropTarget(FrameworkElement target)
     {

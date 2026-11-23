@@ -21,17 +21,22 @@ internal sealed class TaskbarPanelFlyout : IDisposable
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
     private readonly CompositeTransform motion = new();
-    private TaskbarGlassBackdrop? desktopBackdrop;
+    private AIEnter.DesktopGlassBackdrop? desktopBackdrop;
     private long transitionStart;
     private float progress = 1, transitionFrom, transitionTo;
     private bool animating, finishClose, disposed;
+    private bool explicitHide;
+    private float? glassHeight;
+    private float glassRadius = (float)Radius;
 
     internal bool IsOpen { get; private set; }
     internal bool IsClosing { get; private set; }
     internal bool CanAnimate => system.AnimationsEnabled && !accessibility.HighContrast;
     internal event Action? Opening, Opened, Closed;
+    internal Func<bool>? DismissOnOutside { get; set; }
 
-    internal TaskbarPanelFlyout(FrameworkElement anchor, FrameworkElement content, Border backplate)
+    internal TaskbarPanelFlyout(FrameworkElement anchor, FrameworkElement content, Border backplate,
+        FlyoutPlacementMode placement = FlyoutPlacementMode.Top, bool allowWideContent = false)
     {
         this.anchor = anchor;
         this.content = content;
@@ -45,7 +50,12 @@ internal sealed class TaskbarPanelFlyout : IDisposable
         presenter.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(0)));
         presenter.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Microsoft.UI.Colors.Transparent)));
         presenter.Setters.Add(new Setter(FlyoutPresenter.IsDefaultShadowEnabledProperty, false));
-        flyout = new() { Content = popup, Placement = FlyoutPlacementMode.Top, ShouldConstrainToRootBounds = false,
+        if (allowWideContent)
+        {
+            presenter.Setters.Add(new Setter(FrameworkElement.MaxWidthProperty, double.PositiveInfinity));
+            presenter.Setters.Add(new Setter(FrameworkElement.MaxHeightProperty, double.PositiveInfinity));
+        }
+        flyout = new() { Content = popup, Placement = placement, ShouldConstrainToRootBounds = false,
             AreOpenCloseAnimationsEnabled = false, FlyoutPresenterStyle = presenter,
             OverlayInputPassThroughElement = anchor };
         flyout.Opening += (_, _) =>
@@ -61,6 +71,7 @@ internal sealed class TaskbarPanelFlyout : IDisposable
         };
         flyout.Closing += (_, args) =>
         {
+            if (!finishClose && !disposed && !explicitHide && DismissOnOutside?.Invoke() == false) { args.Cancel = true; return; }
             if (finishClose || disposed || !CanAnimate) return;
             args.Cancel = true;
             if (!IsClosing) Animate(show: false);
@@ -69,17 +80,23 @@ internal sealed class TaskbarPanelFlyout : IDisposable
         {
             StopAnimation();
             SetFrame(0);
-            IsOpen = IsClosing = finishClose = false;
+            IsOpen = IsClosing = finishClose = explicitHide = false;
             Closed?.Invoke();
         };
     }
 
-    internal void Show() => flyout.ShowAt(anchor);
-    internal void Hide() { if (IsOpen) flyout.Hide(); }
+    internal void Show(bool activate = true)
+    {
+        if (IsClosing) CancelClosing();
+        else if (!IsOpen) flyout.ShowAt(anchor, new FlyoutShowOptions
+        { Placement = flyout.Placement, ShowMode = activate ? FlyoutShowMode.Standard : FlyoutShowMode.Transient });
+    }
+    internal void Hide() { if (IsOpen) { explicitHide = true; flyout.Hide(); } }
 
     internal void CancelClosing()
     {
         if (!IsClosing) return;
+        explicitHide = false;
         Animate(show: true);
     }
 
@@ -108,7 +125,19 @@ internal sealed class TaskbarPanelFlyout : IDisposable
         progress = amount;
         content.Opacity = amount;
         motion.TranslateY = (1 - amount) * Travel;
-        desktopBackdrop?.SetFrame(new Vector2((float)content.ActualWidth, (float)content.ActualHeight), amount, (float)motion.TranslateY);
+        var size = new Vector2((float)content.ActualWidth, (float)content.ActualHeight);
+        var glassSize = new Vector2(size.X, Math.Min(size.Y, glassHeight ?? size.Y));
+        desktopBackdrop?.SetShape(size + new Vector2(0, Travel), glassSize, glassRadius, squareBottom: glassHeight.HasValue);
+        desktopBackdrop?.SetMotion(amount, (float)motion.TranslateY);
+    }
+
+    internal void SetGlass(float blur, float radius, float height)
+    {
+        glassRadius = radius;
+        glassHeight = height;
+        SetBackdrop(blur > 0);
+        desktopBackdrop?.SetBlur(blur);
+        SetFrame(progress);
     }
 
     private void CompleteAnimation()
@@ -179,7 +208,7 @@ internal sealed class TaskbarPanelFlyout : IDisposable
     private void SetBackdrop(bool enabled)
     {
         if (enabled == (desktopBackdrop is not null)) return;
-        desktopBackdrop = enabled ? new TaskbarGlassBackdrop() : null;
+        desktopBackdrop = enabled ? new AIEnter.DesktopGlassBackdrop() : null;
         SetFrame(progress);
         flyout.SystemBackdrop = desktopBackdrop;
     }

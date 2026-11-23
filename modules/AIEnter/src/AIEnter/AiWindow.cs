@@ -16,7 +16,8 @@ internal sealed partial class AiWindow : PanelWindow
     readonly Action changed;
     readonly bool verification;
     readonly Grid root = PanelTheme.Layout();
-    readonly BackplateSurface backplate = PanelTheme.BackdropSurface();
+    readonly Border backplate = new() { IsHitTestVisible = false, VerticalAlignment = VerticalAlignment.Top };
+    readonly DesktopGlassBackdrop desktopGlass = new(transparentWindow: true);
     readonly Grid browsers = new();
     Border pageFrame = null!;
     readonly TextBlock status = new() { FontSize = 12, Opacity = .7, TextWrapping = TextWrapping.NoWrap,
@@ -37,12 +38,13 @@ internal sealed partial class AiWindow : PanelWindow
     AiBounds? floating;
     bool switcherVisibilityApplied;
     internal bool Detached { get; private set; }
-    readonly RunningWindowIcon runningWindowIcon;
+    readonly RunningWindowIcon? runningWindowIcon;
     internal bool Initializing => current?.Ready is { IsCompleted: false };
     internal string Status => status.Text;
     internal string DisplayDevice => display.Device;
-    protected override bool DismissOnOutside => !Detached && pin.IsChecked != true;
+    protected override bool DismissOnOutside => (TaskbarFlyout is not null || !Detached) && pin.IsChecked != true;
     protected override bool FloatFadeMotion => true;
+    protected override Action<float, float> BackdropMotion => desktopGlass.SetMotion;
     protected override bool Frameless => !Detached;
     sealed class Page(AiEndpoint endpoint)
     {
@@ -56,24 +58,28 @@ internal sealed partial class AiWindow : PanelWindow
     }
     sealed record Choice(string Id, string Name) { public override string ToString() => Name; }
     sealed record Popup(Page Owner, WebView2 View);
-    internal AiWindow(AiOptionsStore options, string directory, DesktopMonitor display, Action changed, bool verification = false)
+    internal AiWindow(AiOptionsStore options, string directory, DesktopMonitor display, Action changed, bool verification = false,
+        FrameworkElement? taskbarAnchor = null)
     {
         this.options = options; this.directory = directory; this.display = display; this.changed = changed;
         this.verification = verification;
         Title = "AIEnter · AI 助手";
-        AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AIEnter.ico"));
-        runningWindowIcon = new RunningWindowIcon(this);
-        runningWindowIcon.Apply();
-        AppWindow.Changed += (_, _) => { if (!destroyed) runningWindowIcon.Apply(); };
-        Closed += (_, _) => runningWindowIcon.Dispose();
-        var presenter = (OverlappedPresenter)AppWindow.Presenter;
-        presenter.SetBorderAndTitleBar(false, false);
-        presenter.IsResizable = presenter.IsMaximizable = presenter.IsMinimizable = false; presenter.IsAlwaysOnTop = true;
-        UpdateSwitcherVisibility();
-        var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        int corner = 1, border = unchecked((int)0xFFFFFFFE);
-        Native.DwmSetWindowAttribute(handle, 33, ref corner, sizeof(int)); Native.DwmSetWindowAttribute(handle, 34, ref border, sizeof(int));
-        SystemBackdrop = new GlassBackdrop(new MaterialOptions(TintOpacity: 0, LuminosityOpacity: 0, NoBase: true)) { TransparentCanvas = true };
+        if (taskbarAnchor is null)
+        {
+            AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AIEnter.ico"));
+            runningWindowIcon = new RunningWindowIcon(this);
+            runningWindowIcon.Apply();
+            AppWindow.Changed += (_, _) => { if (!destroyed) runningWindowIcon.Apply(); };
+            Closed += (_, _) => runningWindowIcon.Dispose();
+            var presenter = (OverlappedPresenter)AppWindow.Presenter;
+            presenter.SetBorderAndTitleBar(false, false);
+            presenter.IsResizable = presenter.IsMaximizable = presenter.IsMinimizable = false; presenter.IsAlwaysOnTop = true;
+            UpdateSwitcherVisibility();
+            var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            int corner = 1, border = unchecked((int)0xFFFFFFFE);
+            Native.DwmSetWindowAttribute(handle, 33, ref corner, sizeof(int)); Native.DwmSetWindowAttribute(handle, 34, ref border, sizeof(int));
+            SystemBackdrop = desktopGlass;
+        }
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         var controls = PanelTheme.Actions();
@@ -87,7 +93,7 @@ internal sealed partial class AiWindow : PanelWindow
         back.Visibility = Visibility.Collapsed; back.Click += (_, _) => ClosePopup(); aiNavigation.Children.Add(back);
         InitializeProviderStrip(); Grid.SetColumn(providerHost, 1); aiNavigation.Children.Add(providerHost);
         aiHeader = PanelTheme.Header(aiNavigation, controls); root.Children.Add(aiHeader);
-        InitializeFloatingCaption(aiHeader, controls, () => Detached, aiNavigation);
+        if (taskbarAnchor is null) InitializeFloatingCaption(aiHeader, controls, () => Detached, aiNavigation);
         InitializeAiHeaderLayout();
         var browserHost = new Grid(); browserHost.Children.Add(browsers); InitializeDropInbox(browserHost);
         var content = new Border { CornerRadius = PanelTheme.Value<CornerRadius>("CardRadius"), Child = dropContent, Background = new SolidColorBrush(Colors.Transparent) };
@@ -127,13 +133,22 @@ internal sealed partial class AiWindow : PanelWindow
         Grid.SetRow(footer, 1); Canvas.SetZIndex(footer, 5); root.Children.Add(footer);
         saveTimer = DispatcherQueue.CreateTimer(); saveTimer.Interval = TimeSpan.FromMilliseconds(400); saveTimer.IsRepeating = false;
         saveTimer.Tick += (_, _) => SaveFloating();
-        AppWindow.Changed += (_, e) => { if (Detached && !destroyed && (e.DidPositionChange || e.DidSizeChange)) { saveTimer.Stop(); saveTimer.Start(); } };
-        Closed += (_, _) => { destroyed = true; backplate.Dispose(); EndDockResize(true); saveTimer.Stop(); transientStatusTimer.Stop(); ClosePopup(); foreach (var page in pages.Values) page.View.Close(); pages.Clear(); };
+        if (taskbarAnchor is null)
+            AppWindow.Changed += (_, e) => { if (Detached && !destroyed && (e.DidPositionChange || e.DidSizeChange)) { saveTimer.Stop(); saveTimer.Start(); } };
+        Closed += (_, _) => { destroyed = true; EndDockResize(true); saveTimer.Stop(); transientStatusTimer.Stop(); ClosePopup(); foreach (var page in pages.Values) page.View.Close(); pages.Clear(); };
         var shell = new Grid(); shell.Children.Add(backplate); shell.Children.Add(root); InitializeDockResize(shell);
-        InitializePanel(new Border { Background = new SolidColorBrush(Colors.Transparent), Child = shell,
-            CornerRadius = new CornerRadius(App.Appearance.BackplateRadius) });
-        InitializeBackplateCorners(); InitializeDropTarget(); ApplyOptions();
+        var panel = new Border { Background = new SolidColorBrush(Colors.Transparent), Child = shell,
+            CornerRadius = new CornerRadius(App.Appearance.BackplateRadius) };
+        if (taskbarAnchor is not null)
+        {
+            TaskbarFlyout = new(taskbarAnchor, panel, backplate, FlyoutPlacementMode.TopEdgeAlignedRight, allowWideContent: true);
+            dockBottomGripHost.Visibility = Visibility.Collapsed;
+            AutomationProperties.SetName(expand, "放大 AI 面板");
+            ToolTipService.SetToolTip(expand, "放大 AI 面板");
+        }
+        InitializePanel(panel);
         if (verification && Environment.GetCommandLineArgs().Contains("--compare-no-glass")) backplate.Visibility = Visibility.Collapsed;
+        InitializeBackplateCorners(); InitializeDropTarget(); ApplyOptions();
     }
     static FontIcon Glyph(string value) => PanelTheme.Glyph(value);
     static void Style(ButtonBase button, string name) => PanelTheme.FramedIconStyle(button, name);
@@ -193,7 +208,7 @@ internal sealed partial class AiWindow : PanelWindow
             dockWidth = options.Data.DockWidth; dockHeight = options.Data.DockHeight;
         }
         foreach (var grip in new[] { dockGrip, dockTopGrip, dockBottomGrip }) grip.IsEnabled = !options.ReadOnly;
-        if (IsOpen && !Detached && !dockResizing) Position();
+        if (IsOpen && (TaskbarFlyout is not null || !Detached) && !dockResizing) Position();
         {
             providerChoices.Clear();
             foreach (string id in AiPolicy.OrderedProviders(options.Data))
@@ -208,12 +223,12 @@ internal sealed partial class AiWindow : PanelWindow
     {
         pin.IsChecked = options.Data.Pinned; AiControls.SetIcon(pin,options.Data.Pinned ? "\uE77A" : "\uE718");
         ToolTipService.SetToolTip(pin, options.Data.Pinned ? "取消固定" : "固定 AI 面板");
-        ((OverlappedPresenter)AppWindow.Presenter).IsAlwaysOnTop = !Detached || options.Data.Pinned;
+        if (TaskbarFlyout is null) ((OverlappedPresenter)AppWindow.Presenter).IsAlwaysOnTop = !Detached || options.Data.Pinned;
     }
     internal async Task ToggleFromTaskbar(DesktopMonitor monitor, uint pressTime = 0, Native.Point pressPoint = default, FirstOpenTiming? timing = null)
     {
         if (ModalActive || DragActive) return;
-        bool minimized = ((OverlappedPresenter)AppWindow.Presenter).State == OverlappedPresenterState.Minimized;
+        bool minimized = TaskbarFlyout is null && ((OverlappedPresenter)AppWindow.Presenter).State == OverlappedPresenterState.Minimized;
         if (IsOpen && !minimized) { Hide(); return; }
         if (!minimized && pressTime != 0 && DismissedByPress(pressTime, pressPoint)) return;
         if (minimized) ((OverlappedPresenter)AppWindow.Presenter).Restore();
@@ -223,7 +238,7 @@ internal sealed partial class AiWindow : PanelWindow
     {
         display = monitor; dockTop = top;
         dockPlacement = null; // Each entry opens at the work area bottom-right; old top offsets are ignored.
-        if (!Detached) Position(); else ClampFloating();
+        if (TaskbarFlyout is not null || !Detached) Position(); else ClampFloating();
         ShowPanel(activate);
         timing?.Mark("windowShownMs");
         RefreshBackplateCorners(); await ShowSelected(timing);
@@ -344,12 +359,24 @@ internal sealed partial class AiWindow : PanelWindow
             foreach (var host in new[] { dockGripHost, dockTopGripHost, dockBottomGripHost })
                 host.Visibility = Detached ? Visibility.Collapsed : Visibility.Visible;
             dockGrip.Visibility = Detached ? Visibility.Collapsed : Visibility.Visible;
+            if (TaskbarFlyout is not null)
+            {
+                dockBottomGripHost.Visibility = Visibility.Collapsed;
+                dockPlacement = null;
+                Position();
+                AiControls.SetIcon(expand, Detached ? "\uE73F" : "\uE740");
+                string label = Detached ? "缩小 AI 面板" : "放大 AI 面板";
+                AutomationProperties.SetName(expand, label);
+                ToolTipService.SetToolTip(expand, label);
+                UpdateAiHeaderLayout();
+                return;
+            }
             var presenter = (OverlappedPresenter)AppWindow.Presenter;
             // Both modes share one borderless silhouette. Resize hit testing is
             // handled by AiResizeFrame rather than an OS-painted thick frame.
             presenter.SetBorderAndTitleBar(false, false); presenter.IsResizable = false;
             UpdateSwitcherVisibility();
-            runningWindowIcon.Apply(force: true);
+            runningWindowIcon?.Apply(force: true);
             if (Detached)
             {
                 Native.RestoreResizeFrame(WinRT.Interop.WindowNative.GetWindowHandle(this));
@@ -387,7 +414,7 @@ internal sealed partial class AiWindow : PanelWindow
     }
     void SaveFloating()
     {
-        saveTimer.Stop(); if (!Detached || current == null || destroyed) return;
+        saveTimer.Stop(); if (TaskbarFlyout is not null || !Detached || current == null || destroyed) return;
         floating = new(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
         try { options.SaveBounds(current.Endpoint.Key, floating); } catch { SetStatus("窗口位置保存失败，请检查设置目录权限。"); }
     }
@@ -400,8 +427,24 @@ internal sealed partial class AiWindow : PanelWindow
     void Position()
     {
         var work = display.Info.Work;
-        var bounds = dockPlacement ?? AiPolicy.DockBounds(dockWidth, dockHeight, new(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top), display.Dpi);
+        var bounds = DockBounds();
+        if (TaskbarFlyout is not null && PanelContent is { } panel)
+        {
+            double scale = Math.Max(96, display.Dpi) / 96d;
+            double width = bounds.Width / scale, height = bounds.Height / scale;
+            double maxWidth = Math.Max(1, (work.Right - work.Left) / scale - 24);
+            double maxHeight = Math.Max(1, (work.Bottom - work.Top) / scale - 24);
+            panel.Width = Math.Min(maxWidth, Detached ? Math.Max(900, width + 160) : width);
+            panel.Height = Math.Min(maxHeight, Detached ? Math.Max(maxHeight * .82, height + 96) : height);
+            return;
+        }
         AppWindow.MoveAndResize(new(bounds.X, bounds.Y, bounds.Width, bounds.Height));
     }
-    internal void UpdateDisplay(DesktopMonitor monitor) { display = monitor; if (IsOpen) { if (Detached) ClampFloating(); else { dockPlacement = null; Position(); } } }
+    AiBounds DockBounds()
+    {
+        var work = display.Info.Work;
+        return dockPlacement ?? AiPolicy.DockBounds(dockWidth, dockHeight,
+            new(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top), display.Dpi);
+    }
+    internal void UpdateDisplay(DesktopMonitor monitor) { display = monitor; if (IsOpen) { if (Detached && TaskbarFlyout is null) ClampFloating(); else { dockPlacement = null; Position(); } } }
 }

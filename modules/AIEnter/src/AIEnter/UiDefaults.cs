@@ -17,7 +17,7 @@ internal static class UiDefaults
     internal const int BackplateRadius = 20;
     internal const int BackplateTransparency = 20;
     internal const int BackplateTransparencyReference = 17;
-    internal const int BackplateBlur = 0;
+    internal const int BackplateBlur = 60;
     internal const string ButtonColor = "#1C14DDFF";
     internal const string SelectedButtonColor = "#FF32D4EB";
     internal const string Provider = "deepseek";

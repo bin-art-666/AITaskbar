@@ -8,6 +8,7 @@ internal sealed class TransparentWindowFrame : IDisposable
 {
     readonly IntPtr window;
     readonly WindowProcedure procedure;
+    readonly Action? settingsChanged;
     readonly UIntPtr subclassId = new(0x4C4E);
     bool disposed;
     bool configuring;
@@ -20,9 +21,9 @@ internal sealed class TransparentWindowFrame : IDisposable
         [MarshalAs(UnmanagedType.Bool)] public bool Transition;
     }
     delegate IntPtr WindowProcedure(IntPtr window, uint message, IntPtr wParam, IntPtr lParam, UIntPtr id, UIntPtr data);
-    internal TransparentWindowFrame(IntPtr window)
+    internal TransparentWindowFrame(IntPtr window, Action? settingsChanged = null)
     {
-        this.window = window; procedure = HandleMessage;
+        this.window = window; this.settingsChanged = settingsChanged; procedure = HandleMessage;
         if (!SetWindowSubclass(window, procedure, subclassId, UIntPtr.Zero)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         Configure();
         IntPtr dc = GetDC(window);
@@ -54,6 +55,7 @@ internal sealed class TransparentWindowFrame : IDisposable
     {
         if (!disposed && message == 0x0014 && Clear(wParam)) return new IntPtr(1);
         if (!disposed && message == 0x031E) Configure();
+        if (!disposed && message is 0x001A or 0x031A) settingsChanged?.Invoke(); // WM_SETTINGCHANGE or WM_THEMECHANGED
         return DefSubclassProc(handle, message, wParam, lParam);
     }
     public void Dispose()

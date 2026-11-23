@@ -13,7 +13,7 @@
   "GlowIntensity": 100,
   "BackplateRadius": 20,
   "BackplateTransparency": 20,
-  "BackplateBlur": 0,
+  "BackplateBlur": 60,
   "ButtonColor": "#1C14DDFF",
   "SelectedButtonColor": "#FF32D4EB",
   "Provider": "deepseek",

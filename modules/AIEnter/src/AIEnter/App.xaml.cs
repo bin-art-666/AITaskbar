@@ -17,6 +17,12 @@ public partial class App
     {
         DataDirectory = dataDirectory;
         if (arguments.Contains("--verify-screenshot")) { _ = VerifyScreenshots(); return; }
+        if (arguments.Contains("--verify-ai-flyout"))
+        {
+            PanelTheme.Apply(UiStyle.Data);
+            _ = VerifyAiFlyout();
+            return;
+        }
         if (arguments.Contains("--verify-ai-modes"))
         {
             PanelTheme.Apply(UiStyle.Data);

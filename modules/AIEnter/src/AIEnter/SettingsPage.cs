@@ -40,6 +40,12 @@ internal sealed partial class SettingsPage : UserControl
         AITaskbar.SettingsPaneWidths widths)
     {
         this.options = options; this.saveOptions = saveOptions; initialHotkeyWarning = hotkeyWarning;
+        if (host is AITaskbar.TaskbarSettingsWindow)
+        {
+            floatingMode.Header = "面板大小";
+            floatingMode.OnContent = "缩小";
+            floatingMode.OffContent = "放大";
+        }
         pickerWindow = WinRT.Interop.WindowNative.GetWindowHandle(host);
         var layout = new Grid();
         layout.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });

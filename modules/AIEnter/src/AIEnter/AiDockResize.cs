@@ -71,7 +71,9 @@ internal sealed partial class AiWindow
         if (Detached || destroyed || dockResizing || options.ReadOnly || ModalActive) return;
         dockResizing = true; resizeLease = KeepOpen(); dockEdge = edge;
         dockWidthBefore = dockWidth; dockHeightBefore = dockHeight;
-        dockStartBounds = new(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height); dockStartCursor = cursor;
+        dockStartBounds = TaskbarFlyout is not null ? DockBounds()
+            : new(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
+        dockStartCursor = cursor;
     }
     void MoveDockResize(int cursor)
     {

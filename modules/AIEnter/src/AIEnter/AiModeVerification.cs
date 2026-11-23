@@ -1,4 +1,9 @@
 using System.Text.Json;
+using Microsoft.UI.Windowing;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Windows.Graphics;
 
 namespace AIEnter;
 
@@ -22,6 +27,8 @@ public partial class App
             store.Changed += window.ApplyOptions;
             await window.Open(display, display.Info.Work.Top);
             var result = await window.VerifyModeSwitches();
+            if (Environment.GetCommandLineArgs().Contains("--capture-ai-glass"))
+                await window.CaptureBackdropComparison();
             File.WriteAllText(Path.Combine(DataDirectory, "mode-result.json"), JsonSerializer.Serialize(result));
         }
         catch (Exception error)
@@ -44,6 +51,75 @@ public partial class App
 
 internal sealed partial class AiWindow
 {
+    internal async Task CaptureBackdropComparison()
+    {
+        var saved = options.Data;
+        bool captureCorners = Environment.GetCommandLineArgs().Contains("--capture-ai-corners");
+        var text = new TextBlock
+        {
+            FontSize = 19,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.Black),
+            Text = string.Join('\n', Enumerable.Repeat(string.Concat(Enumerable.Repeat("WINDOW TEXT • AaBb 0123    ", 5)), 40))
+        };
+        var background = new Window { Title = "AIEnter 背板测试文字", Content = new Border
+        {
+            Background = new SolidColorBrush(Microsoft.UI.Colors.LightGoldenrodYellow), Child = text
+        } };
+        var presenter = (OverlappedPresenter)background.AppWindow.Presenter;
+        presenter.SetBorderAndTitleBar(false, false);
+        presenter.IsAlwaysOnTop = true;
+        try
+        {
+            foreach (bool floating in new[] { true, false })
+            {
+                options.Save(options.Data with { FloatingPanel = floating, Pinned = true });
+                var position = AppWindow.Position;
+                var size = AppWindow.Size;
+                background.AppWindow.MoveAndResize(new RectInt32(position.X - 48, position.Y - 48, size.Width + 96, size.Height + 96));
+                background.Activate();
+                var output = Path.Combine(directory, "glass-comparison", floating ? "floating" : "independent");
+                if (captureCorners)
+                {
+                    Hide();
+                    await Task.Delay(UiDefaults.PanelExitMilliseconds + 220);
+                    await CaptureCorners(ScreenshotCapture.Desktop(), position, size, Path.Combine(output, "reference"));
+                    await Open(display, dockTop);
+                }
+                Native.KeepOnTop(WinRT.Interop.WindowNative.GetWindowHandle(this));
+                Activate();
+                foreach (int strength in new[] { 0, UiDefaults.BackplateBlur })
+                {
+                    App.PreviewAppearance(new UiAppearance(BackplateTransparency: 65, BackplateBlur: strength));
+                    await Task.Delay(350);
+                    var frame = ScreenshotCapture.Desktop();
+                    var sample = Path.Combine(output, strength.ToString());
+                    await frame.Crop(position.X - 24 - frame.Left, position.Y - 24 - frame.Top, size.Width + 48, 140).Save(sample);
+                    if (captureCorners)
+                        await CaptureCorners(frame, position, size, sample);
+                }
+            }
+        }
+        finally
+        {
+            background.Close();
+            App.PreviewAppearance(null);
+            options.Save(saved);
+        }
+    }
+
+    static async Task CaptureCorners(ScreenshotFrame frame, PointInt32 position, SizeInt32 size, string output)
+    {
+        const int inside = 96, outside = 24;
+        foreach (bool bottom in new[] { false, true })
+        foreach (bool right in new[] { false, true })
+        {
+            int x = position.X + (right ? size.Width - inside : -outside);
+            int y = position.Y + (bottom ? size.Height - inside : -outside);
+            string corner = (bottom ? "bottom" : "top") + (right ? "-right" : "-left");
+            await frame.Crop(x - frame.Left, y - frame.Top, inside + outside, inside + outside).Save(Path.Combine(output, corner));
+        }
+    }
+
     internal async Task<object> VerifyModeSwitches()
     {
         if (!verification || current?.View.CoreWebView2 is not { } core)
@@ -136,6 +212,7 @@ internal sealed partial class AiWindow
         await CheckDraft();
 
         int floatingRadius = backplateShape!.Value.Radius;
+        await core.ExecuteScriptAsync("document.body.insertAdjacentHTML('beforeend','<div id=scroll-fixture style=height:3000px></div>'); window.scrollTo(0,160);");
         ToggleDetached();
         Check(Detached && (!switcherVisibilityApplied || AppWindow.IsShownInSwitchers) && !options.Data.FloatingPanel, "Expansion did not enter and save independent mode.");
         await VerifyFloatingCaption(true); VerifyBackplateCorners();
@@ -149,6 +226,8 @@ internal sealed partial class AiWindow
         ToggleDetached();
         Check(!Detached && (!switcherVisibilityApplied || !AppWindow.IsShownInSwitchers) && options.Data.FloatingPanel, "Return did not restore floating mode.");
         await VerifyFloatingCaption(false); VerifyBackplateCorners();
+        Check(await core.ExecuteScriptAsync("window.scrollY") == "160", "Mode switching lost the page scroll position.");
+        await core.ExecuteScriptAsync("document.getElementById('scroll-fixture').remove(); window.scrollTo(0,0);");
         // Exercise settled presenter state, including unchanged-size HRGN loss.
         for (int cycle = 0; cycle < 3; cycle++)
         {

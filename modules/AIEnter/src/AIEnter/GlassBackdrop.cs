@@ -10,13 +10,11 @@ namespace AIEnter;
 public sealed class GlassBackdrop : SystemBackdrop
 {
     MaterialOptions material;
-    internal bool TransparentCanvas { get; init; }
     public GlassBackdrop(GlassStyle style) : this(MaterialOptions.ForPreset(style)) { }
     public GlassBackdrop(MaterialOptions material) => this.material = material;
 
     public void Update(MaterialOptions material)
     {
-        if (TransparentCanvas) material = new(TintOpacity: 0, LuminosityOpacity: 0, NoBase: true);
         if (this.material == material) return;
         this.material = material;
         UpdatePalette();
@@ -26,23 +24,10 @@ public sealed class GlassBackdrop : SystemBackdrop
     IntPtr handle;
     Windows.UI.Composition.Compositor? transparentCompositor;
     Windows.UI.Composition.CompositionColorBrush? transparentBrush;
-    Windows.UI.Composition.CompositionEffectFactory? blurFactory;
-    Windows.UI.Composition.CompositionEffectBrush? blurBrush;
-    Windows.UI.Composition.CompositionBackdropBrush? desktopSource;
-    int blurStrength;
-    internal void UpdateBlur(int value)
-    {
-        value = Math.Clamp(value, 0, 100);
-        if (blurStrength == value) return;
-        blurStrength = value;
-        UpdatePalette();
-    }
     TransparentWindowFrame? transparentFrame;
-    internal bool IsClearCanvas => TransparentCanvas && transparentBrush?.Color.A == 0 && controller == null;
     internal bool IsNoBaseActive => material.NoBase && transparentBrush != null;
     internal bool IsReady => material.NoBase ? transparentBrush != null : controller != null || !DesktopAcrylicController.IsSupported();
     internal int ConnectionCount { get; private set; }
-    internal void ReapplyTransparentFrame() => transparentFrame?.Reapply();
     SystemBackdropConfiguration? configuration;
 
     protected override void OnTargetConnected(ICompositionSupportsSystemBackdrop target, XamlRoot root)
@@ -77,25 +62,7 @@ public sealed class GlassBackdrop : SystemBackdrop
             var color = material.FlatColor(dark);
             transparentBrush ??= transparentCompositor.CreateColorBrush();
             transparentBrush.Color = Color.FromArgb(color.Alpha, (byte)(color.Rgb >> 16), (byte)(color.Rgb >> 8), (byte)color.Rgb);
-            if (TransparentCanvas && blurStrength > 0)
-            {
-                if (blurBrush == null)
-                {
-                    var description = new Microsoft.Graphics.Canvas.Effects.GaussianBlurEffect
-                    {
-                        Name = "DesktopBlur", BlurAmount = .1f,
-                        BorderMode = Microsoft.Graphics.Canvas.Effects.EffectBorderMode.Hard,
-                        Source = new Windows.UI.Composition.CompositionEffectSourceParameter("desktop")
-                    };
-                    blurFactory = transparentCompositor.CreateEffectFactory(description, new[] { "DesktopBlur.BlurAmount" });
-                    blurBrush = blurFactory.CreateBrush();
-                    desktopSource = transparentCompositor.CreateHostBackdropBrush();
-                    blurBrush.SetSourceParameter("desktop", desktopSource);
-                }
-                blurBrush.Properties.InsertScalar("DesktopBlur.BlurAmount", blurStrength * .18f);
-                connectedTarget.SystemBackdrop = blurBrush;
-            }
-            else connectedTarget.SystemBackdrop = transparentBrush;
+            connectedTarget.SystemBackdrop = transparentBrush;
             return;
         }
         ClearTransparent();
@@ -123,9 +90,6 @@ public sealed class GlassBackdrop : SystemBackdrop
     {
         if (transparentBrush == null && transparentFrame == null) return;
         if (connectedTarget != null) connectedTarget.SystemBackdrop = null;
-        blurBrush?.Dispose(); blurBrush = null;
-        blurFactory?.Dispose(); blurFactory = null;
-        desktopSource?.Dispose(); desktopSource = null;
         transparentBrush?.Dispose(); transparentBrush = null;
         transparentCompositor?.Dispose(); transparentCompositor = null;
         transparentFrame?.Dispose(); transparentFrame = null;

@@ -39,7 +39,7 @@ internal sealed class AppCenterWindow : Window
     private readonly TextBlock empty = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock status = new() { HorizontalAlignment = HorizontalAlignment.Center, TextWrapping = TextWrapping.Wrap };
     private readonly List<Button> pageButtons = [];
-    private TaskbarGlassBackdrop? backdrop;
+    private AIEnter.DesktopGlassBackdrop? backdrop;
     private AppCenterEntry[] installed = [], alphabetical = [], visible = [];
     private AppCenterPanelStyle style;
     private string? draggedKey;
@@ -228,7 +228,8 @@ internal sealed class AppCenterWindow : Window
         {
             if (backdrop is null)
             {
-                backdrop = new(radius: 0, travel: 0);
+                backdrop = new();
+                backdrop.SetMotion(1, 0);
                 backdrop.SetBlur(palette.Blur);
                 SizeBackdrop();
                 SystemBackdrop = backdrop;
@@ -242,7 +243,11 @@ internal sealed class AppCenterWindow : Window
         }
     }
 
-    private void SizeBackdrop() => backdrop?.SetFrame(new Vector2((float)root.ActualWidth, (float)root.ActualHeight), 1, 0);
+    private void SizeBackdrop()
+    {
+        var size = new Vector2((float)root.ActualWidth, (float)root.ActualHeight);
+        backdrop?.SetShape(size, size, 0);
+    }
 
     private void TaskbarChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
