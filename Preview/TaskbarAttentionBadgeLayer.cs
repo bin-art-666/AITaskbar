@@ -13,10 +13,35 @@ internal sealed class TaskbarAttentionBadgeLayer
         internal TaskbarAttentionIndicator? Pulse { get; set; }
     }
     private readonly Dictionary<FrameworkElement, Entry> badges = [];
+    private readonly Border leftOverflow = CreateOverflowMarker(), rightOverflow = CreateOverflowMarker();
+    private FrameworkElement? overflowViewport;
     internal Canvas Surface { get; } = new() { IsHitTestVisible = false };
     internal Canvas PulseSurface { get; } = new() { IsHitTestVisible = false };
 
-    internal TaskbarAttentionBadgeLayer() => Surface.LayoutUpdated += (_, _) => Reposition();
+    internal TaskbarAttentionBadgeLayer()
+    {
+        Surface.Children.Add(leftOverflow);
+        Surface.Children.Add(rightOverflow);
+        Surface.LayoutUpdated += (_, _) => Reposition();
+    }
+
+    private static Border CreateOverflowMarker()
+    {
+        var marker = TaskbarAttentionIndicator.CreateBadge();
+        marker.Width = marker.Height = 6;
+        marker.CornerRadius = new CornerRadius(3);
+        marker.Visibility = Visibility.Collapsed;
+        return marker;
+    }
+
+    internal void SetOverflow(FrameworkElement viewport, bool left, bool right, Color? highlight)
+    {
+        overflowViewport = left || right ? viewport : null;
+        leftOverflow.Visibility = left ? Visibility.Visible : Visibility.Collapsed;
+        rightOverflow.Visibility = right ? Visibility.Visible : Visibility.Collapsed;
+        if (left) TaskbarAttentionIndicator.ColorBadge(leftOverflow, highlight);
+        if (right) TaskbarAttentionIndicator.ColorBadge(rightOverflow, highlight);
+    }
 
     internal void Set(FrameworkElement icon, Button button, FrameworkElement feedback, FrameworkElement? viewport,
         bool pending, bool animate, Color? highlight)
@@ -50,6 +75,13 @@ internal sealed class TaskbarAttentionBadgeLayer
 
     internal void Reposition()
     {
+        if (overflowViewport is { IsLoaded: true } edgeViewport && Surface.XamlRoot is { } layoutRoot && edgeViewport.XamlRoot == layoutRoot)
+        {
+            var origin = edgeViewport.TransformToVisual(Surface).TransformPoint(new Point());
+            double top = origin.Y + TaskbarAppFeedback.TopSpace;
+            if (leftOverflow.Visibility == Visibility.Visible) Place(leftOverflow, origin.X - leftOverflow.Width, top, 1, null, 0, 0);
+            if (rightOverflow.Visibility == Visibility.Visible) Place(rightOverflow, origin.X + edgeViewport.ActualWidth, top, 1, null, 0, 0);
+        }
         foreach (var (icon, entry) in badges)
         {
             if (Surface.XamlRoot is not { } root || !icon.IsLoaded || icon.XamlRoot != root || icon.ActualWidth <= 0)

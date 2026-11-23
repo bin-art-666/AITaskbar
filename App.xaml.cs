@@ -29,6 +29,7 @@ public partial class App : Application
     internal TaskbarClockStyle ClockStyle { get; private set; } = TaskbarClockStyle.Default;
     internal QuickControlAppearance QuickAppearance { get; private set; } = new();
     internal PreviewIconPreferences IconPreferences { get; private set; } = null!;
+    internal AppAttentionDiagnosticLog AttentionDiagnostics { get; } = new();
     internal AppCenterAppearance SavedAppCenterAppearance { get; private set; } = new();
     internal AppCenterAppearance CurrentAppCenterAppearance { get; private set; } = new();
 
@@ -56,6 +57,7 @@ public partial class App : Application
         TaskbarCoversWindows = File.Exists(TaskbarCoverFile);
         AppFeedback = TaskbarAppFeedbackStyle.Read(root);
         IconLayout = PreviewIconLayout.Read(root);
+        AttentionDiagnostics.SetEnabled(IconLayout.AppAttentionDiagnostics);
         ClockStyle = TaskbarClockStyle.Read(root);
         QuickAppearance = QuickControlAppearance.Read(root);
         IconPreferences = new(Path.Combine(root, "preview-original-icons.json"));
@@ -381,6 +383,7 @@ public partial class App : Application
         bool enableRecentHost = (layout.ShowChromeRecentlyClosed && !IconLayout.ShowChromeRecentlyClosed) ||
             (layout.ShowEdgeRecentlyClosed && !IconLayout.ShowEdgeRecentlyClosed);
         IconLayout = layout;
+        AttentionDiagnostics.SetEnabled(layout.AppAttentionDiagnostics);
         if (enableRecentHost) EnsureBrowserRecentHosts();
         preview?.SetIconLayout(layout);
         settingsWindow?.SetStatus("");

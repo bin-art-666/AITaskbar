@@ -6,6 +6,8 @@ namespace AITaskbar;
 internal enum IconScrollAnimation { Off, Fast, Standard, Relaxed }
 internal enum WindowAnimationStyle { Curved, WindowsDefault, WindowsStyle }
 internal enum AppAttentionMode { PulseAndDot, DotOnly, Off }
+[JsonConverter(typeof(JsonStringEnumConverter<AppAttentionOverride>))]
+internal enum AppAttentionOverride { FollowDefault, DotOnly, Off }
 internal enum IconColorMode { Light, Dark }
 internal enum AppMenuColorMode { FollowTaskbar, Light, Dark }
 
@@ -34,6 +36,8 @@ internal sealed record PreviewIconLayout
     public IconScrollAnimation Animation { get; init; } = IconScrollAnimation.Standard;
     [JsonConverter(typeof(JsonStringEnumConverter<AppAttentionMode>))]
     public AppAttentionMode AppAttention { get; init; } = AppAttentionMode.PulseAndDot;
+    public Dictionary<string, AppAttentionOverride> AppAttentionOverrides { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public bool AppAttentionDiagnostics { get; init; }
     [JsonConverter(typeof(JsonStringEnumConverter<WindowAnimationStyle>))]
     public WindowAnimationStyle WindowAnimation { get; init; } = WindowAnimationStyle.WindowsDefault;
     public int WindowDurationMs { get; init; } = DefaultWindowDurationMs;
@@ -73,6 +77,7 @@ internal sealed record PreviewIconLayout
                     MenuColorMode = Enum.IsDefined(value.MenuColorMode) ? value.MenuColorMode : Default.MenuColorMode,
                     Animation = Enum.IsDefined(value.Animation) ? value.Animation : Default.Animation,
                     AppAttention = Enum.IsDefined(value.AppAttention) ? value.AppAttention : Default.AppAttention,
+                    AppAttentionOverrides = ReadAttentionOverrides(value.AppAttentionOverrides),
                     WindowAnimation = Enum.IsDefined(value.WindowAnimation) ? value.WindowAnimation : Default.WindowAnimation,
                     WindowDurationMs = Math.Clamp(duration, MinWindowDurationMs, MaxWindowDurationMs)
                 };
@@ -81,6 +86,25 @@ internal sealed record PreviewIconLayout
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { }
         return Default;
     }
+
+    private static Dictionary<string, AppAttentionOverride> ReadAttentionOverrides(Dictionary<string, AppAttentionOverride>? values)
+    {
+        var result = new Dictionary<string, AppAttentionOverride>(StringComparer.OrdinalIgnoreCase);
+        if (values is not null)
+            foreach (var (key, mode) in values)
+                if ((key.StartsWith("app:", StringComparison.OrdinalIgnoreCase) || key.StartsWith("exe:", StringComparison.OrdinalIgnoreCase)) &&
+                    mode is AppAttentionOverride.DotOnly or AppAttentionOverride.Off) result[key] = mode;
+        return result;
+    }
+
+    internal AppAttentionOverride AttentionOverride(string key) => AppAttentionOverrides.GetValueOrDefault(key);
+
+    internal AppAttentionMode AttentionMode(string key) => AttentionOverride(key) switch
+    {
+        AppAttentionOverride.DotOnly => AppAttentionMode.DotOnly,
+        AppAttentionOverride.Off => AppAttentionMode.Off,
+        _ => AppAttention
+    };
 
     private static bool IsLegacySlow(JsonElement value) => value.ValueKind switch
     {

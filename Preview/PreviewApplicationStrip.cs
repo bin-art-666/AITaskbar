@@ -93,7 +93,7 @@ internal sealed partial class PreviewApplicationStrip
     }
 
     public PreviewApplicationStrip(PinnedApps pins, PreviewIconPreferences iconPreferences, TaskbarAppArtwork artwork, int iconSize, TaskbarAppFeedbackStyle feedbackStyle,
-        PreviewIconLayout iconLayout, AppCenterIconStyle appCenterStyle, Action openAppCenter, nint owner, Action<string> report)
+        PreviewIconLayout iconLayout, AppAttentionDiagnosticLog attentionLog, AppCenterIconStyle appCenterStyle, Action openAppCenter, nint owner, Action<string> report)
     {
         this.pins = pins;
         this.iconPreferences = iconPreferences;
@@ -101,6 +101,7 @@ internal sealed partial class PreviewApplicationStrip
         this.iconSize = iconSize;
         this.feedbackStyle = feedbackStyle;
         this.iconLayout = iconLayout;
+        this.attentionLog = attentionLog;
         thumbnailWidth = iconLayout.ThumbnailWidth;
         thumbnailAnimationMs = iconLayout.ThumbnailAnimationMs;
         pinnedPanel.Spacing = iconLayout.Gap;
@@ -253,12 +254,12 @@ internal sealed partial class PreviewApplicationStrip
         bool colorChanged = iconLayout.ColorMode != layout.ColorMode;
         bool outlineChanged = iconLayout.ShowIconOutline != layout.ShowIconOutline;
         bool menuColorChanged = iconLayout.MenuColorMode != layout.MenuColorMode;
-        bool attentionChanged = iconLayout.AppAttention != layout.AppAttention;
+        bool attentionChanged = iconLayout.AppAttention != layout.AppAttention ||
+            !ReferenceEquals(iconLayout.AppAttentionOverrides, layout.AppAttentionOverrides);
         iconLayout = layout;
         if (attentionChanged)
         {
-            if (layout.AppAttention == AppAttentionMode.Off)
-                ResetAppAttention();
+            ApplyAttentionPreferences();
             UpdateIndicators();
         }
         SetThumbnailWidth(layout.ThumbnailWidth);
@@ -492,6 +493,7 @@ internal sealed partial class PreviewApplicationStrip
             tile.View.Button.Opacity = PreviewIconLayout.EdgeOpacity(left, iconSize, width);
         }
         iconHover.Reposition();
+        UpdateAttentionOverflow();
         attentionBadges.Reposition();
     }
 
@@ -694,7 +696,7 @@ internal sealed partial class PreviewApplicationStrip
     {
         if (attentionWindows.Count > 0) ClearWindowAttention(RunningWindows.RawForeground());
         var (activeColor, backgroundColor) = TaskbarAppFeedback.DotColors(feedbackStyle, system, accessibility.HighContrast);
-        bool pulseAttention = CanPulseAttention;
+        bool animateAttention = CanAnimateAttention;
         Color? attentionHighlight = accessibility.HighContrast ? system.UIElementColor(UIElementType.Highlight) : null;
         foreach (var view in Rendered)
         {
@@ -703,11 +705,13 @@ internal sealed partial class PreviewApplicationStrip
             view.Feedback.ShowState(IndicatorState(running, active), activeColor, backgroundColor, feedbackLight);
             bool needsAttention = HasAppAttention(view.Group);
             attentionBadges.Set(view.IconPlate, view.Button, view.Feedback.Surface,
-                view.Group.Pin is null ? runningApps.Panel : null, needsAttention, pulseAttention, attentionHighlight);
+                view.Group.Pin is null ? runningApps.Panel : null, needsAttention,
+                animateAttention && iconLayout.AttentionMode(view.Group.Key) == AppAttentionMode.PulseAndDot, attentionHighlight);
             string status = active ? "当前前台应用" : running
                 ? $"正在运行，{view.Group.Windows.Count} 个窗口" : "已固定，未运行";
             AutomationProperties.SetItemStatus(view.Button, needsAttention ? status + "，有应用提醒" : status);
         }
+        UpdateAttentionOverflow();
         attentionBadges.Reposition();
     }
 

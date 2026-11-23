@@ -1,9 +1,11 @@
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.UI.ViewManagement;
 
 namespace AITaskbar;
@@ -62,6 +64,8 @@ internal sealed partial class TaskbarSettingsWindow
             (AppAttentionMode.Off, "关闭")
         ];
         foreach (var mode in attentionModes) attention.Items.Add(mode.Label);
+        var diagnostics = new ToggleSwitch();
+        AutomationProperties.SetName(diagnostics, "应用提醒诊断");
         var windowAnimation = new ComboBox { MinWidth = 118 };
         AutomationProperties.SetName(windowAnimation, "窗口开合动画");
         (WindowAnimationStyle Value, string Label)[] windowModes =
@@ -96,6 +100,7 @@ internal sealed partial class TaskbarSettingsWindow
             menuColors.SelectedIndex = Array.FindIndex(menuModes, mode => mode.Value == app.IconLayout.MenuColorMode);
             animation.SelectedIndex = Array.FindIndex(modes, mode => mode.Value == app.IconLayout.Animation);
             attention.SelectedIndex = Array.FindIndex(attentionModes, mode => mode.Value == app.IconLayout.AppAttention);
+            diagnostics.IsOn = app.IconLayout.AppAttentionDiagnostics;
             windowAnimation.SelectedIndex = Array.FindIndex(windowModes, mode => mode.Value == app.IconLayout.WindowAnimation);
             windowSpeed.IsEnabled = app.IconLayout.WindowAnimation == WindowAnimationStyle.Curved;
             windowSpeed.Value = app.IconLayout.EffectiveWindowDurationMs;
@@ -166,6 +171,12 @@ internal sealed partial class TaskbarSettingsWindow
             app.TrySetIconLayout(app.IconLayout with { AppAttention = mode });
             Sync();
         };
+        diagnostics.Toggled += (_, _) =>
+        {
+            if (syncing || diagnostics.IsOn == app.IconLayout.AppAttentionDiagnostics) return;
+            app.TrySetIconLayout(app.IconLayout with { AppAttentionDiagnostics = diagnostics.IsOn });
+            Sync();
+        };
         windowSpeed.ValueChanged += (_, args) =>
         {
             if (syncing || !windowSpeed.IsEnabled) return;
@@ -213,6 +224,8 @@ internal sealed partial class TaskbarSettingsWindow
         motion.Children.Add(SettingRow("窗口开合动画", "适用于预览栏和窗口标题栏的开合操作。", windowAnimation));
         motion.Children.Add(SettingRow("窗口开合速度", "曲面动画可调节为 200–1000 毫秒。Windows 风格使用 200 毫秒。", Actions(windowSpeed, windowSpeedValue)));
         motion.Children.Add(SettingRow("应用提醒", "后台窗口发出任务栏注意信号时显示提醒。系统关闭动画时仅显示圆点。", attention));
+        motion.Children.Add(SettingRow("应用提醒诊断", "开启后记录本次运行的最近 200 条提醒事件，可复制用于排查。",
+            Actions(diagnostics, ActionButton("复制诊断", CopyAttentionDiagnostics))));
 
         BuildWindowThumbnailSettings(thumbnails);
 
@@ -278,12 +291,28 @@ internal sealed partial class TaskbarSettingsWindow
     private static TextBlock IconSettingsHeading(string text) =>
         new() { Text = text, FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 0) };
 
+    private void CopyAttentionDiagnostics()
+    {
+        string text = app.AttentionDiagnostics.GetText();
+        if (text.Length == 0) { SetStatus("暂无应用提醒诊断记录。"); return; }
+        try
+        {
+            var data = new DataPackage();
+            data.SetText(text);
+            Clipboard.SetContent(data);
+            SetStatus("已复制应用提醒诊断。");
+        }
+        catch (COMException) { SetStatus("无法复制应用提醒诊断。"); }
+    }
+
+    private sealed record SoftwareIconEntry(string Name, string Key, string? Executable);
+
     private void BuildSoftwareIconSettings(StackPanel page)
     {
         var entries = new StackPanel { Spacing = 4 };
         page.Children.Add(new TextBlock
         {
-            Text = "为正在运行、已固定或曾设为原始图标的应用选择样式。更改会即时保存。",
+            Text = "为单个应用设置图标样式和提醒方式。更改会即时保存。",
             TextWrapping = TextWrapping.Wrap, Opacity = .72
         });
         page.Children.Add(ActionButton("刷新应用列表", RefreshApps));
@@ -301,36 +330,66 @@ internal sealed partial class TaskbarSettingsWindow
             }
 
             var apps = AppGroups.Build(pinned, RunningWindows.List())
-                .Where(group => group.IconExecutable is not null)
-                .Select(group => new PinnedApp(group.Name, group.IconExecutable!))
-                .Concat(app.IconPreferences.OriginalExecutables.Where(path => !string.IsNullOrWhiteSpace(path))
-                    .Select(path => new PinnedApp(Path.GetFileNameWithoutExtension(path), path)))
-                .Where(item => Path.IsPathFullyQualified(item.Executable) && !RunningWindows.IsFrameHost(item.Executable))
-                .DistinctBy(item => item.Executable, StringComparer.OrdinalIgnoreCase)
-                .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase);
+                .Where(group => group.Key.StartsWith("app:", StringComparison.Ordinal) ||
+                    group.Key.StartsWith("exe:", StringComparison.Ordinal) && UsableIconPath(group.IconExecutable))
+                .Select(group => new SoftwareIconEntry(group.Name, group.Key,
+                    UsableIconPath(group.IconExecutable) ? group.IconExecutable : null))
+                .ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
+            var paths = apps.Values.Select(item => item.Executable).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in app.IconPreferences.OriginalExecutables.Where(UsableIconPath))
+                if (paths.Add(path)) apps.TryAdd("exe:" + path, new(Path.GetFileNameWithoutExtension(path), "exe:" + path, path));
+            foreach (string key in app.IconLayout.AppAttentionOverrides.Keys)
+            {
+                if (apps.ContainsKey(key)) continue;
+                string id = key[4..];
+                if (key.StartsWith("app:", StringComparison.OrdinalIgnoreCase))
+                    apps.Add(key, new(PackagedAppPin.Name(id) ?? id, key, null));
+                else if (UsableIconPath(id)) apps.Add(key, new(Path.GetFileNameWithoutExtension(id), key, id));
+            }
 
             entries.Children.Clear();
-            foreach (var item in apps) entries.Children.Add(SoftwareIconRow(item));
+            foreach (var item in apps.Values.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
+                entries.Children.Add(SoftwareIconRow(item));
             if (entries.Children.Count == 0)
                 entries.Children.Add(new TextBlock { Text = "打开一个应用后刷新列表。", TextWrapping = TextWrapping.Wrap });
         }
     }
 
-    private FrameworkElement SoftwareIconRow(PinnedApp appEntry)
+    private static bool UsableIconPath(string? path) => !string.IsNullOrWhiteSpace(path) &&
+        Path.IsPathFullyQualified(path) && !RunningWindows.IsFrameHost(path);
+
+    private FrameworkElement SoftwareIconRow(SoftwareIconEntry appEntry)
     {
+        var reminder = new ComboBox { MinWidth = 104 };
+        reminder.Items.Add("跟随全局");
+        reminder.Items.Add("仅红点");
+        reminder.Items.Add("关闭提醒");
+        reminder.SelectedIndex = (int)app.IconLayout.AttentionOverride(appEntry.Key);
+        AutomationProperties.SetName(reminder, $"{appEntry.Name} 提醒方式");
+        reminder.SelectionChanged += (_, _) =>
+        {
+            var previous = app.IconLayout.AttentionOverride(appEntry.Key);
+            if (reminder.SelectedIndex < 0 || (int)previous == reminder.SelectedIndex) return;
+            var mode = (AppAttentionOverride)reminder.SelectedIndex;
+            var next = new Dictionary<string, AppAttentionOverride>(app.IconLayout.AppAttentionOverrides, StringComparer.OrdinalIgnoreCase);
+            if (mode == AppAttentionOverride.FollowDefault) next.Remove(appEntry.Key);
+            else next[appEntry.Key] = mode;
+            if (!app.TrySetIconLayout(app.IconLayout with { AppAttentionOverrides = next })) reminder.SelectedIndex = (int)previous;
+        };
+        if (appEntry.Executable is not { } executable) return SettingRow(appEntry.Name, "", reminder);
         var choice = new ComboBox { MinWidth = 124 };
         choice.Items.Add("使用圆角图标");
         choice.Items.Add("使用原始图标");
-        choice.SelectedIndex = app.IconPreferences.UsesOriginal(appEntry.Executable) ? 1 : 0;
+        choice.SelectedIndex = app.IconPreferences.UsesOriginal(executable) ? 1 : 0;
         AutomationProperties.SetName(choice, $"{appEntry.Name} 图标样式");
-        var row = SettingRow(appEntry.Name, "", choice);
-        ToolTipService.SetToolTip(row, appEntry.Executable);
+        var row = SettingRow(appEntry.Name, "", Actions(choice, reminder));
+        ToolTipService.SetToolTip(row, executable);
 
         choice.SelectionChanged += (_, _) =>
         {
-            bool original = app.IconPreferences.UsesOriginal(appEntry.Executable);
+            bool original = app.IconPreferences.UsesOriginal(executable);
             if (choice.SelectedIndex < 0 || original == (choice.SelectedIndex == 1)) return;
-            if (!app.TrySetOriginalIcon(appEntry.Executable, !original)) choice.SelectedIndex = original ? 1 : 0;
+            if (!app.TrySetOriginalIcon(executable, !original)) choice.SelectedIndex = original ? 1 : 0;
         };
         return row;
     }

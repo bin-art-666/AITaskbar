@@ -43,7 +43,7 @@ internal sealed class PreviewTaskbar : Window
         presenter.IsResizable = presenter.IsMinimizable = presenter.IsMaximizable = false;
         handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         tasks = new(pins, app.IconPreferences, app.AppArtwork,
-            iconSize, app.AppFeedback, app.IconLayout, app.CurrentAppCenterAppearance.Icon, ToggleAppCenter, handle, Report);
+            iconSize, app.AppFeedback, app.IconLayout, app.AttentionDiagnostics, app.CurrentAppCenterAppearance.Icon, ToggleAppCenter, handle, Report);
         AIEnter.Native.RemoveWindowFrame(handle);
         const int cornerPreferenceAttribute = 33; // DWMWA_WINDOW_CORNER_PREFERENCE
         int doNotRound = 1; // DWMWCP_DONOTROUND
