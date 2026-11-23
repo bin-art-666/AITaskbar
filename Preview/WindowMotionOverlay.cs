@@ -27,6 +27,7 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
     private readonly WindowMotionMesh? mesh;
     private readonly Rect window, icon, source, content;
     private readonly nint insertAfter;
+    private readonly double? taskbarTop;
     private int left, top, width, height;
     private bool visible;
 
@@ -43,6 +44,10 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
         if ((long)width * height > 12_000_000) throw new ArgumentOutOfRangeException(nameof(window));
         this.window = new Rect(window.X - left, window.Y - top, window.Width, window.Height);
         this.icon = new Rect(icon.X - left, icon.Y - top, icon.Width, icon.Height);
+        if (style == WindowAnimationStyle.WindowsStyle && owner.XamlRoot?.Content is FrameworkElement taskbar &&
+            WindowMotionNative.ScreenBounds(insertAfter, taskbar) is { } taskbarBounds &&
+            taskbarBounds.Top > window.Top && taskbarBounds.Top <= icon.Top)
+            taskbarTop = taskbarBounds.Top - top;
         source = new Rect(0, 0, snapshot.Width, snapshot.Height);
         content = snapshot.Content;
 
@@ -92,18 +97,26 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
 
     private void Draw(double extent, bool opening)
     {
+        var bounds = mesh is null ? RectangularBounds(extent) : window;
+        double opacity = WindowMotionMesh.SmoothStep(0, .12, extent);
+        if (taskbarTop is { } edge)
+        {
+            // Fade the part still visible above the bar before it becomes a narrow horizontal strip.
+            double visibleHeight = Math.Min(bounds.Height, edge - bounds.Top);
+            opacity *= WindowMotionMesh.SmoothStep(icon.Height * .08, icon.Height * .28, visibleHeight);
+        }
         using (var drawing = CanvasComposition.CreateDrawingSession(frame))
         {
             drawing.Clear(Microsoft.UI.Colors.Transparent);
-            if (extent == 1)
+            if (opacity > 0 && extent == 1)
                 DrawFlat(drawing, window);
-            else if (extent > 0)
+            else if (opacity > 0)
             {
                 if (mesh is not null) mesh.Draw(drawing, extent, opening);
-                else DrawFlat(drawing, RectangularBounds(extent));
+                else DrawFlat(drawing, bounds);
             }
         }
-        visual.Opacity = (float)WindowMotionMesh.SmoothStep(0, .12, extent);
+        visual.Opacity = (float)opacity;
         if (visible) return;
 
         const uint NoActivateShow = 0x0010 | 0x0040;

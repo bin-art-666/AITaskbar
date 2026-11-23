@@ -95,6 +95,8 @@ internal sealed class WindowMotion(FrameworkElement owner, nint taskbarHandle)
                 }
                 extent = 1;
             }
+            // Let the transparent last frame reach composition before removing the overlay.
+            await Task.Delay(16, token);
             return true;
         }
         catch (Exception error) when (Recoverable(error))
