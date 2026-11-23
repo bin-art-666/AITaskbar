@@ -113,12 +113,7 @@ internal sealed partial class SettingsPage : UserControl
         var settingsChildren = fields.Children.ToArray();
         fields.Children.Clear();
         ArrangeSettingsPages(settingsChildren, pages);
-        var nav = AITaskbar.SettingsNavigation.Sidebar(132);
-        foreach (var name in pageNames)
-            nav.MenuItems.Add(new NavigationViewItem { Content = name, Tag = AITaskbar.SettingsNavigation.Subpage(name, pages[name]) });
-        var compact = AITaskbar.SettingsNavigation.ConnectSubpages(nav, item => item.Tag);
-        layout.Children.Add(new AITaskbar.SettingsSplitView(nav, widths, AITaskbar.SettingsSection.AIEnter,
-            (length, condensed) => { nav.OpenPaneLength = length; nav.IsPaneVisible = !condensed; }, compact));
+        layout.Children.Add(CreateSubpageNavigation(pageNames, pages, widths));
 
         saveButton = new Button { Content = "保存", IsEnabled = false };
         discardButton = new Button { Content = "取消", IsEnabled = false };
@@ -174,8 +169,8 @@ internal sealed partial class SettingsPage : UserControl
         App.PreviewAppearance(appearance);
         App.Ai.PreviewCorners(followCorners.IsOn, (int)Math.Round(radius.Value));
         UpdateAppearancePreview();
-        status.Text = "正在预览；保存后记住，关闭撤销未保存的外观。";
         RefreshDirty();
+        status.Text = IsDirty ? "正在预览；保存后记住，关闭撤销未保存的外观。" : "";
     }
     internal void ResetPreview()
     {
