@@ -32,6 +32,20 @@ internal static class AiControls
         var path = (Microsoft.UI.Xaml.Shapes.Path)Microsoft.UI.Xaml.Markup.XamlReader.Load(
             "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='" + data + "' StrokeThickness='1.4' StrokeStartLineCap='Round' StrokeEndLineCap='Round' StrokeLineJoin='Round'/>");
         path.SetBinding(Microsoft.UI.Xaml.Shapes.Shape.StrokeProperty, new Binding { Source = button, Path = new PropertyPath("Foreground") });
+        VisualStateGroup? commonStates = null;
+        void StateChanged(object sender, VisualStateChangedEventArgs args) => RefreshToolbarIcon(button);
+        path.Loaded += (_, _) => path.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (commonStates is not null || !path.IsLoaded) return;
+            commonStates = ButtonStates(button);
+            if (commonStates is not null) commonStates.CurrentStateChanged += StateChanged;
+            RefreshToolbarIcon(button);
+        });
+        path.Unloaded += (_, _) =>
+        {
+            if (commonStates is not null) commonStates.CurrentStateChanged -= StateChanged;
+            commonStates = null;
+        };
         path.StrokeThickness = PanelTheme.Value<double>("IconStroke");
         var canvas = new Canvas { Width = 20, Height = 20, IsHitTestVisible = false };
         canvas.Children.Add(path);
@@ -43,5 +57,32 @@ internal static class AiControls
                 button.Resources[prefix + "ForegroundPointerOver"] = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 196, 43, 53));
                 button.Resources[prefix + "BackgroundPointerOver"] = new SolidColorBrush(Windows.UI.Color.FromArgb(28, 232, 69, 80));
             }
+    }
+
+    static VisualStateGroup? ButtonStates(ButtonBase button) =>
+        VisualTreeHelper.GetChildrenCount(button) != 0 && VisualTreeHelper.GetChild(button, 0) is FrameworkElement template
+            ? VisualStateManager.GetVisualStateGroups(template).FirstOrDefault(group => group.Name == "CommonStates") : null;
+
+    internal static void RefreshToolbarIcon(ButtonBase button)
+    {
+        if (!PanelTheme.HasToolbarPalette(button) || button.Content is not Viewbox { Child: Canvas canvas }
+            || canvas.Children[0] is not Microsoft.UI.Xaml.Shapes.Path path) return;
+        var state = ButtonStates(button)?.CurrentState?.Name;
+        if (state == null && button is ToggleButton { IsChecked: true }) state = "Checked";
+        string prefix = button is ToggleButton ? "ToggleButton" : "Button";
+        if (state != null && button.Resources.TryGetValue(prefix + "Foreground" + (state == "Normal" ? "" : state), out var value)
+            && value is Brush brush)
+        {
+            path.Stroke = brush;
+            return;
+        }
+        // High contrast and disabled states retain the WinUI template's ink.
+        for (var parent = VisualTreeHelper.GetParent(path); parent is not null && parent != button;
+            parent = VisualTreeHelper.GetParent(parent))
+        {
+            if (parent is not ContentPresenter presenter) continue;
+            path.Stroke = presenter.Foreground;
+            return;
+        }
     }
 }

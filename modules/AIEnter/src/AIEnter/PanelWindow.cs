@@ -68,6 +68,8 @@ internal abstract class PanelWindow : Window
             flyout.DismissOnOutside = () => !VisibilityProtected && DismissOnOutside && AllowHide();
             flyout.Closed += () =>
             {
+                outsideClicks?.Dispose();
+                outsideClicks = null;
                 if (IsOpen) { IsOpen = false; OnHiding(); NotifyPresentationChanged(); }
                 OnHidden();
             };
@@ -107,12 +109,17 @@ internal abstract class PanelWindow : Window
         if (activate) Activate();
         if (Frameless) Native.RemoveWindowFrame(WinRT.Interop.WindowNative.GetWindowHandle(this));
         caption?.Queue();
+        WatchOutsideClicks(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        NotifyPresentationChanged();
+    }
+
+    protected void WatchOutsideClicks(IntPtr panel)
+    {
         outsideClicks?.Dispose();
-        outsideClicks = new OutsideClickWatcher(WinRT.Interop.WindowNative.GetWindowHandle(this), DispatcherQueue,
+        outsideClicks = new OutsideClickWatcher(panel, DispatcherQueue,
             () => { if (!VisibilityProtected && DismissOnOutside) Hide(); },
             UsesPanelWheel?(point,delta,horizontal)=>!VisibilityProtected&&HandlePanelWheel(point,delta,horizontal):null,
             ObserveOutsidePress, ConsumeOutsideClick);
-        NotifyPresentationChanged();
     }
 
     internal void Hide()

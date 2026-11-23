@@ -52,6 +52,7 @@ internal sealed class PreviewTaskbar : Window
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
         var halo = Button("Halo", "Halo 中转站", () => app.HaloModule.Handle("Toggle"));
         var ai = Button("AIEnter", "AIEnter 对话", () => _ = app.AiModule.ToggleAiWindow(false));
+        AIEnter.PanelToggleTargets.Register(this, ai);
         var aiService = AIEnter.App.Ai;
         SetMenu(halo, "Halo 设置", Halo.App.OpenSettings);
         SetMenu(ai, "AIEnter 设置", app.AiModule.OpenSettings);
@@ -160,12 +161,17 @@ internal sealed class PreviewTaskbar : Window
             args.Handled = true;
             taskbarMenu.ShowAt(surface, point);
         };
+        var panelColors = new Windows.UI.ViewManagement.UISettings();
+        var panelAccessibility = new Windows.UI.ViewManagement.AccessibilitySettings();
         var visual = new PreviewBarAppearance(this, surface, stripHost, appearance, light =>
         {
             icons.RefreshSystem(light);
             tasks.SetFeedbackLight(light);
             tray.ApplyTone(light, app.BarAppearance);
             appCenter?.ApplyPalette();
+            var palette = TaskbarPanelFlyout.ResolvePalette(new QuickControlAppearance(Backdrop: QuickBackdrop.FollowTaskbar),
+                light, app.BarAppearance, panelColors, panelAccessibility.HighContrast);
+            aiService.SetTaskbarPalette(palette.Theme, palette.Solid);
         });
 
         refresh = DispatcherQueue.CreateTimer();

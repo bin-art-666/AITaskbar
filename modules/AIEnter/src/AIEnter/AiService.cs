@@ -6,6 +6,7 @@ internal sealed class AiService
     readonly bool verification;
     AiWindow? window;
     Microsoft.UI.Xaml.FrameworkElement? taskbarAnchor;
+    (Microsoft.UI.Xaml.ElementTheme Theme, Windows.UI.Color Tint)? taskbarPalette;
     internal AiOptionsStore Options { get; }
     internal bool HasPendingTransfer => window?.HasPendingDrop == true;
     internal bool Busy => window?.Initializing == true;
@@ -33,9 +34,20 @@ internal sealed class AiService
         window?.Destroy();
         window = null;
         taskbarAnchor = null;
+        taskbarPalette = null;
     }
-    AiWindow GetPanel(DesktopMonitor display) => window ??= new AiWindow(Options, directory, display,
-        () => Changed?.Invoke(), verification, taskbarAnchor);
+    internal void SetTaskbarPalette(Microsoft.UI.Xaml.ElementTheme theme, Windows.UI.Color tint)
+    {
+        taskbarPalette = (theme, tint);
+        window?.SetTaskbarPalette(theme, tint);
+    }
+    AiWindow GetPanel(DesktopMonitor display)
+    {
+        if (window is not null) return window;
+        window = new AiWindow(Options, directory, display, () => Changed?.Invoke(), verification, taskbarAnchor);
+        if (taskbarPalette is { } palette) window.SetTaskbarPalette(palette.Theme, palette.Tint);
+        return window;
+    }
     internal void Select(string provider) => Options.Save(Options.Data with { Provider = provider });
     internal async Task Open(DesktopMonitor display, int? top = null)
     {

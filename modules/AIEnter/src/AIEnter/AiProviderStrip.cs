@@ -46,6 +46,7 @@ internal sealed partial class AiWindow
             label.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));
             var button=new ToggleButton{Content=label,Padding=new Thickness(10,0,10,0),Tag=choice,IsChecked=choice.Id==options.Data.Provider};
             PanelTheme.FramedIconStyle(button,choice.Name);button.Width=Math.Clamp(Math.Ceiling(label.DesiredSize.Width)+24,56,150);button.Resources["AIEnterNaturalWidth"]=button.Width;
+            ApplyToolbarPalette(button);
             AutomationProperties.SetItemStatus(button,button.IsChecked==true?"当前 AI 服务":"切换 AI 服务");
             button.Click+=(_,_)=>SelectProvider(choice.Id);
             button.GotFocus+=(_,_)=>RevealProvider(button);

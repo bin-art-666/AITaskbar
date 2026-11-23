@@ -16,6 +16,7 @@ internal sealed partial class AiWindow : PanelWindow
     readonly Action changed;
     readonly bool verification;
     readonly Grid root = PanelTheme.Layout();
+    readonly StackPanel headerActions = PanelTheme.Actions();
     readonly Border backplate = new() { IsHitTestVisible = false, VerticalAlignment = VerticalAlignment.Top };
     readonly DesktopGlassBackdrop desktopGlass = new(transparentWindow: true);
     readonly Grid browsers = new();
@@ -42,7 +43,7 @@ internal sealed partial class AiWindow : PanelWindow
     internal bool Initializing => current?.Ready is { IsCompleted: false };
     internal string Status => status.Text;
     internal string DisplayDevice => display.Device;
-    protected override bool DismissOnOutside => (TaskbarFlyout is not null || !Detached) && pin.IsChecked != true;
+    protected override bool DismissOnOutside => !Detached && pin.IsChecked != true;
     protected override bool FloatFadeMotion => true;
     protected override Action<float, float> BackdropMotion => desktopGlass.SetMotion;
     protected override bool Frameless => !Detached;
@@ -82,7 +83,7 @@ internal sealed partial class AiWindow : PanelWindow
         }
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
-        var controls = PanelTheme.Actions();
+        var controls = headerActions;
         Style(pin, "固定 AI 面板"); AiControls.SetIcon(pin, "\uE718");
         var close = Icon("\uE8BB", "收起 AI 面板");
         expand.Click += (_, _) => ToggleDetached(); close.Click += (_, _) => Hide();
@@ -147,6 +148,7 @@ internal sealed partial class AiWindow : PanelWindow
             ToolTipService.SetToolTip(expand, "放大 AI 面板");
         }
         InitializePanel(panel);
+        if (taskbarAnchor is not null) InitializeFlyoutFileDrop(taskbarAnchor);
         if (verification && Environment.GetCommandLineArgs().Contains("--compare-no-glass")) backplate.Visibility = Visibility.Collapsed;
         InitializeBackplateCorners(); InitializeDropTarget(); ApplyOptions();
     }

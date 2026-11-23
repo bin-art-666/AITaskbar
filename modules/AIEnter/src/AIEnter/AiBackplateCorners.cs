@@ -1,7 +1,9 @@
 using System.Runtime.InteropServices;
 using System.Numerics;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
+using Windows.UI;
 using Windows.UI.ViewManagement;
 
 namespace AIEnter;
@@ -14,6 +16,24 @@ internal sealed partial class AiWindow
     readonly UISettings backdropSettings = new();
     readonly AccessibilitySettings backdropAccessibility = new();
     readonly SolidColorBrush backplateTint = new();
+    (ElementTheme Theme, Color Tint)? taskbarPalette;
+    (ElementTheme Theme, Color Tint)? effectivePalette;
+    PanelTheme.ToolbarPalette? toolbarPalette;
+
+    internal void SetTaskbarPalette(ElementTheme theme, Color tint)
+    {
+        if (TaskbarFlyout is null || taskbarPalette == (theme, tint)) return;
+        taskbarPalette = (theme, tint);
+        RefreshBackplateMaterial();
+    }
+
+    IEnumerable<ButtonBase> ToolbarButtons() => headerActions.Children.OfType<ButtonBase>()
+        .Append(back).Append(providerMore).Concat(providerLabels.Children.OfType<ButtonBase>());
+
+    void ApplyToolbarPalette(ButtonBase button)
+    {
+        if (toolbarPalette is { } palette) PanelTheme.SetToolbarPalette(button, palette);
+    }
     void QueueFrameRefresh()
     {
         if (destroyed || frameRefreshQueued) return;
@@ -85,6 +105,25 @@ internal sealed partial class AiWindow
         bool allowTransparency = !highContrast && backdropSettings.AdvancedEffectsEnabled && desktopGlass.CanUseGlass;
         if (highContrast) tint = backdropSettings.GetColorValue(UIColorType.Background);
         else if (!allowTransparency) tint.A = 255;
+        if (taskbarPalette is { } palette)
+        {
+            var theme = highContrast ? ElementTheme.Default : palette.Theme;
+            if (!highContrast)
+            {
+                tint.R = palette.Tint.R;
+                tint.G = palette.Tint.G;
+                tint.B = palette.Tint.B;
+            }
+            if (effectivePalette != (theme, tint))
+            {
+                effectivePalette = (theme, tint);
+                bool dark = theme == ElementTheme.Dark;
+                toolbarPalette = new(theme, highContrast ? tint : PanelTheme.ReadableToolbarTint(tint, dark));
+                aiHeader.RequestedTheme = theme;
+                foreach (var button in ToolbarButtons()) ApplyToolbarPalette(button);
+            }
+            tint = toolbarPalette!.Tint;
+        }
         backplateTint.Color = tint;
         float blur = allowTransparency && tint.A < 255 && backplate.Visibility == Visibility.Visible
             ? appearance.BackplateBlur * .18f : 0;

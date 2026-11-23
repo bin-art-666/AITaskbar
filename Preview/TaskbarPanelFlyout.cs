@@ -32,7 +32,7 @@ internal sealed class TaskbarPanelFlyout : IDisposable
     internal bool IsOpen { get; private set; }
     internal bool IsClosing { get; private set; }
     internal bool CanAnimate => system.AnimationsEnabled && !accessibility.HighContrast;
-    internal event Action? Opening, Opened, Closed;
+    internal event Action? Opening, Opened, Dismissing, Closed;
     internal Func<bool>? DismissOnOutside { get; set; }
 
     internal TaskbarPanelFlyout(FrameworkElement anchor, FrameworkElement content, Border backplate,
@@ -72,7 +72,7 @@ internal sealed class TaskbarPanelFlyout : IDisposable
         flyout.Closing += (_, args) =>
         {
             if (!finishClose && !disposed && !explicitHide && DismissOnOutside?.Invoke() == false) { args.Cancel = true; return; }
-            if (finishClose || disposed || !CanAnimate) return;
+            if (finishClose || disposed || !CanAnimate) { Dismissing?.Invoke(); return; }
             args.Cancel = true;
             if (!IsClosing) Animate(show: false);
         };

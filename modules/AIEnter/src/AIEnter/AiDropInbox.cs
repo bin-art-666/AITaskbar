@@ -37,11 +37,11 @@ internal sealed partial class AiWindow
         Closed += (_, _) => { receiptTimer.Stop(); ClearDropInbox(); };
     }
     Grid? dropContent;
-    internal async Task<bool> ReceiveDrop(DataPackageView view)
+    internal async Task<bool> ReceiveDrop(DataPackageView view, string? intendedProvider = null)
     {
         if (transferringDrop || ModalActive) return false;
         using var lease = KeepOpenForDrag();
-        string provider = options.Data.Provider;
+        string provider = intendedProvider ?? options.Data.Provider;
         var payload = await DropPayload.Read(view);
         return await ReceivePayload(payload, provider);
     }

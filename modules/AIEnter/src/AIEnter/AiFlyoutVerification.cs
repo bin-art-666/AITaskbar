@@ -3,8 +3,11 @@ using System.Text.Json;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.Web.WebView2.Core;
 using Windows.Graphics;
+using Windows.UI;
 
 namespace AIEnter;
 
@@ -23,11 +26,12 @@ public partial class App
             int scale = Math.Max(1, (int)Math.Round(monitor.Dpi / 96d));
             var options = new AiOptionsStore(Path.Combine(DataDirectory, "flyout-ai.json"));
             options.Save(options.Data with { Pinned = true, FloatingPanel = true, DockWidth = 380, DockHeight = 420 });
-            background = FixtureWindow(new Border { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 67, 153, 87)) },
+            var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(255, 67, 153, 87)) };
+            background = FixtureWindow(backdrop,
                 new(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top));
             var anchor = new Border { Width = 48, Height = 40, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
             var ownerBounds = new RectInt32(work.Right - 280 * scale, work.Bottom - 54 * scale, 230 * scale, 44 * scale);
-            var root = new Grid { Background = background.Content is Border backdrop ? backdrop.Background : null };
+            var root = new Grid { Background = backdrop.Background };
             root.Children.Add(anchor);
             owner = FixtureWindow(root, ownerBounds);
             await Task.Delay(250);
@@ -36,7 +40,7 @@ public partial class App
             options.Changed += panel.ApplyOptions;
             await panel.Open(monitor, work.Top);
             var result = await panel.VerifyTaskbarFlyout(backgroundFrame,
-                new Native.Point { X = ownerBounds.X + ownerBounds.Width - 80 * scale, Y = ownerBounds.Y - 100 * scale }, DataDirectory);
+                new Native.Point { X = ownerBounds.X + ownerBounds.Width - 80 * scale, Y = ownerBounds.Y - 100 * scale }, DataDirectory, backdrop);
             File.WriteAllText(resultPath, JsonSerializer.Serialize(result));
         }
         catch (Exception error)
@@ -67,7 +71,7 @@ public partial class App
 
 internal sealed partial class AiWindow
 {
-    internal async Task<object> VerifyTaskbarFlyout(ScreenshotFrame background, Native.Point sample, string output)
+    internal async Task<object> VerifyTaskbarFlyout(ScreenshotFrame background, Native.Point sample, string output, Border backdrop)
     {
         if (current?.View.CoreWebView2 is not { } core || !IsOpen || TaskbarFlyout is null)
             throw new InvalidOperationException("The taskbar flyout or WebView2 did not open.");
@@ -94,10 +98,229 @@ internal sealed partial class AiWindow
                 throw new InvalidOperationException("Resizing changed the draft or scroll position.");
             totalCornerPixels += await CheckFlyoutCorners(background, popup, Path.Combine(output, expanded ? "expanded" : "compact"));
         }
+        bool liveTransparency = Environment.GetCommandLineArgs().Contains("--verify-ai-toolbar-high-transparency");
+        if (liveTransparency) App.PreviewAppearance(new UiAppearance(BackplateTransparency: 41, BackplateBlur: 47));
+        var toolbar = Environment.GetCommandLineArgs().Contains("--verify-ai-toolbar-contrast")
+            ? await VerifyToolbarContrast(backdrop, popup, sample, core, output, liveTransparency) : null;
+        if (liveTransparency) App.PreviewAppearance(null);
+        bool verifyOutsideClick = Environment.GetCommandLineArgs().Contains("--verify-outside-click");
+        if (verifyOutsideClick)
+        {
+            await VerifyCompactOutsideClick(sample, popup);
+            await Open(display, dockTop);
+            await Task.Delay(250);
+            popup = FlyoutAt(sample);
+        }
+        bool verifyFileDrop = Environment.GetCommandLineArgs().Contains("--verify-native-file-drop");
+        if (verifyFileDrop)
+        {
+            await VerifyExpandedFileDrop(output, popup, "first");
+            await CloseVerifiedFlyout();
+            await Open(display, dockTop);
+            await Task.Delay(250);
+            await VerifyExpandedFileDrop(output, FlyoutAt(sample), "after-reopen");
+        }
+        await CloseVerifiedFlyout();
+        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels, toolbar, compactOutsideClick = verifyOutsideClick, nativeFileDrop = verifyFileDrop, nativeFileDropAfterReopen = verifyFileDrop };
+    }
+
+    async Task<object> VerifyToolbarContrast(Border backdrop, IntPtr popup, Native.Point sample, CoreWebView2 core, string output,
+        bool liveTransparency)
+    {
+        var white = Microsoft.UI.Colors.White;
+        var black = Microsoft.UI.Colors.Black;
+        var original = backdrop.Background;
+        double minimum = double.PositiveInfinity;
+        int states = 0;
+        foreach (bool expanded in new[] { false, true })
+        {
+            if (Detached != expanded) ToggleDetached();
+            await Task.Delay(220);
+            GetBackplateWindowRect(popup, out var position);
+            var work = display.Info.Work;
+            double split = ((position.Left + position.Right) / 2d - work.Left) / (work.Right - work.Left);
+            var mixed = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(1, 0) };
+            mixed.GradientStops.Add(new GradientStop { Color = black, Offset = split });
+            mixed.GradientStops.Add(new GradientStop { Color = white, Offset = split });
+            foreach (var (name, brush) in new (string, Brush)[]
+                { ("white", new SolidColorBrush(white)), ("black", new SolidColorBrush(black)), ("mixed", mixed) })
+            {
+                backdrop.Background = brush;
+                foreach (var theme in new[] { ElementTheme.Light, ElementTheme.Dark })
+                {
+                    SetTaskbarPalette(theme, theme == ElementTheme.Light
+                        ? Color.FromArgb(255, 229, 241, 249) : Color.FromArgb(255, 22, 33, 51));
+                    await Task.Delay(180);
+                    if (aiHeader.ActualTheme != theme || FlyoutAt(sample) != popup || AppWindow.IsVisible
+                        || !ReferenceEquals(core, current?.View.CoreWebView2)
+                        || await core.ExecuteScriptAsync("window.scrollY") != "180"
+                        || JsonSerializer.Deserialize<string>(await core.ExecuteScriptAsync("document.getElementById('draft').value")) != "保留这条草稿")
+                        throw new InvalidOperationException("Changing the taskbar theme changed the flyout, draft, or scroll position.");
+                    foreach (var button in ToolbarButtons())
+                    {
+                        bool toggle = button is ToggleButton;
+                        var prefix = toggle ? "ToggleButton" : "Button";
+                        foreach (var state in PanelTheme.ButtonStates.Where(state => toggle || !state.StartsWith("Checked")))
+                        {
+                            var fill = ((SolidColorBrush)button.Resources[prefix + "Background" + state]).Color;
+                            var text = ((SolidColorBrush)button.Resources[prefix + "Foreground" + state]).Color;
+                            if (liveTransparency && theme == ElementTheme.Dark && state == "" && text != white)
+                                throw new InvalidOperationException("Dark toolbar buttons lost their white foreground at high transparency.");
+                            foreach (var desktop in new[] { black, white })
+                            {
+                                var color = PanelTheme.Composite(fill, PanelTheme.Composite(backplateTint.Color, desktop));
+                                double contrast = PanelTheme.Contrast(text, color);
+                                if (contrast < 4.5) throw new InvalidOperationException($"Toolbar contrast: {theme} {prefix}{state} {contrast:F2}:1.");
+                                minimum = Math.Min(minimum, contrast);
+                                states++;
+                            }
+                        }
+                    }
+                    foreach (var icon in ToolbarButtons().Where(button => button.Visibility == Visibility.Visible))
+                    {
+                        if (icon.Content is not Viewbox { Child: Canvas { Children: var children } }
+                            || children[0] is not Microsoft.UI.Xaml.Shapes.Path path) continue;
+                        for (var parent = VisualTreeHelper.GetParent(path); parent is not null && parent != icon;
+                            parent = VisualTreeHelper.GetParent(parent))
+                        {
+                            if (parent is not ContentPresenter presenter) continue;
+                            if (path.Stroke is not SolidColorBrush stroke || presenter.Foreground is not SolidColorBrush foreground
+                                || stroke.Color != foreground.Color)
+                                throw new InvalidOperationException($"Toolbar glyph did not use its rendered state foreground: {theme} {ToolTipService.GetToolTip(icon)}.");
+                            break;
+                        }
+                    }
+                    GetBackplateWindowRect(popup, out var bounds);
+                    var frame = ScreenshotCapture.Desktop();
+                    int headerHeight = (int)Math.Ceiling((aiHeader.ActualHeight + root.Padding.Top + 12) * aiHeader.XamlRoot.RasterizationScale);
+                    await frame.Crop(bounds.Left - frame.Left, bounds.Top - frame.Top,
+                        bounds.Right - bounds.Left, headerHeight).Save(Path.Combine(output, $"toolbar-{expanded}-{name}-{theme}"));
+                }
+            }
+        }
+        backdrop.Background = original;
+        if (Detached) ToggleDetached();
+        await Task.Delay(250);
+        return new { states, minimumContrast = Math.Round(minimum, 2), captures = 12 };
+    }
+
+    async Task VerifyCompactOutsideClick(Native.Point inside, IntPtr popup)
+    {
+        var work = display.Info.Work;
+        using var target = new DesktopInputFixture(work.Left + 20, work.Top + 200);
+        target.Show();
+        GetBackplateWindowRect(target.Handle, out var bounds);
+        var outside = new Native.Point { X = (bounds.Left + bounds.Right) / 2, Y = (bounds.Top + bounds.Bottom) / 2 };
+        async Task Click(Native.Point point, IntPtr expectedWindow)
+        {
+            if (FlyoutAt(point) != expectedWindow) throw new InvalidOperationException("Outside-click fixture is not visible.");
+            await Task.Run(() => DesktopInputFixture.ClickAt(point));
+            await Task.Delay(250);
+        }
+
+        await Click(outside, target.Handle);
+        if (!IsOpen || FlyoutAt(inside) != popup) throw new InvalidOperationException("An outside click hid the pinned compact flyout.");
+        options.Save(options.Data with { Pinned = false });
+        await Click(inside, popup);
+        if (!IsOpen) throw new InvalidOperationException("An inside click closed the compact flyout.");
+        await Click(outside, target.Handle);
+        if (IsOpen || TaskbarFlyout!.IsOpen) throw new InvalidOperationException("An outside click did not close the unpinned compact flyout.");
+    }
+
+    async Task CloseVerifiedFlyout()
+    {
+        for (int attempt = 0; attempt < 20 && (DragActive || ModalActive); attempt++) await Task.Delay(40);
         Hide();
         await Task.Delay(220);
-        if (IsOpen || TaskbarFlyout.IsOpen || AppWindow.IsVisible) throw new InvalidOperationException("The taskbar flyout did not close.");
-        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels };
+        if (IsOpen || TaskbarFlyout!.IsOpen || AppWindow.IsVisible) throw new InvalidOperationException("The taskbar flyout did not close.");
+    }
+
+    async Task VerifyExpandedFileDrop(string directory, IntPtr popup, string suffix)
+    {
+        options.Save(options.Data with { FloatingPanel = false, Pinned = false });
+        await Task.Delay(250);
+        var core = current!.View.CoreWebView2;
+        string fileName = $"flyout-drop-{suffix}.txt";
+        string path = Path.Combine(directory, fileName);
+        await File.WriteAllTextAsync(path, "AIEnter local file drop verification");
+        await core.ExecuteScriptAsync("window.submitted=0; document.addEventListener('submit',()=>window.submitted++);");
+        int dragEnters = 0;
+        PanelContent!.AddHandler(UIElement.DragEnterEvent, new Microsoft.UI.Xaml.DragEventHandler((_, _) => dragEnters++), true);
+        GetBackplateWindowRect(popup, out var bounds);
+        var work = display.Info.Work;
+        using var source = new DesktopInputFixture(work.Left + 20, work.Top + 200, path);
+        source.Show();
+        GetBackplateWindowRect(source.Handle, out var sourceBounds);
+        var from = new Native.Point { X = (sourceBounds.Left + sourceBounds.Right) / 2, Y = (sourceBounds.Top + sourceBounds.Bottom) / 2 };
+        var to = new Native.Point { X = (bounds.Left + bounds.Right) / 2, Y = (bounds.Top + bounds.Bottom) / 2 };
+        if (FlyoutAt(from) != source.Handle || FlyoutAt(to) != popup) throw new InvalidOperationException("Drag fixture is not fully visible.");
+        await Task.Run(() => DesktopInputFixture.Drag(from, to));
+        for (int i = 0; i < 30 && !Status.Contains("文件已加入网页附件"); i++) await Task.Delay(100);
+        if (!IsOpen || !Detached || source.Effect != System.Windows.Forms.DragDropEffects.Copy
+            || JsonSerializer.Deserialize<string>(await core.ExecuteScriptAsync("document.getElementById('attachments').files[0]?.name")) != fileName
+            || await core.ExecuteScriptAsync("window.submitted") != "0")
+            throw new InvalidOperationException($"Expanded flyout file drop failed. Open={IsOpen}, test popup={popup:X}, location={flyoutDropLocation}, register={flyoutFileDropResult:X8}, started={source.Started}, enter={dragEnters}, effect={source.Effect}, status={Status}");
+    }
+
+    sealed class DesktopInputFixture : System.Windows.Forms.Form
+    {
+        internal System.Windows.Forms.DragDropEffects Effect { get; private set; }
+        internal bool Started { get; private set; }
+        protected override bool ShowWithoutActivation => true;
+
+        internal DesktopInputFixture(int x, int y, string? file = null)
+        {
+            FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
+            ShowInTaskbar = false;
+            TopMost = true;
+            StartPosition = System.Windows.Forms.FormStartPosition.Manual;
+            Bounds = new System.Drawing.Rectangle(x, y, 180, 100);
+            if (file is null) return;
+            MouseDown += (_, _) =>
+            {
+                Started = true;
+                var data = new System.Windows.Forms.DataObject(System.Windows.Forms.DataFormats.FileDrop, new[] { file });
+                Effect = DoDragDrop(data, System.Windows.Forms.DragDropEffects.Copy);
+            };
+        }
+
+        internal static void Drag(Native.Point from, Native.Point to)
+        {
+            var previous = System.Windows.Forms.Cursor.Position;
+            SetDragCursor(from.X, from.Y);
+            MouseInput(0x0002, 0, 0, 0, UIntPtr.Zero);
+            try
+            {
+                Thread.Sleep(180);
+                for (int step = 1; step <= 10; step++)
+                {
+                    SetDragCursor(from.X + (to.X - from.X) * step / 10, from.Y + (to.Y - from.Y) * step / 10);
+                    Thread.Sleep(25);
+                }
+                Thread.Sleep(160);
+            }
+            finally
+            {
+                MouseInput(0x0004, 0, 0, 0, UIntPtr.Zero);
+                Thread.Sleep(150);
+                SetDragCursor(previous.X, previous.Y);
+            }
+        }
+
+        internal static void ClickAt(Native.Point point)
+        {
+            var previous = System.Windows.Forms.Cursor.Position;
+            SetDragCursor(point.X, point.Y);
+            try
+            {
+                MouseInput(0x0002, 0, 0, 0, UIntPtr.Zero);
+                MouseInput(0x0004, 0, 0, 0, UIntPtr.Zero);
+            }
+            finally { SetDragCursor(previous.X, previous.Y); }
+        }
+
+        [DllImport("user32.dll", EntryPoint = "SetCursorPos")] static extern bool SetDragCursor(int x, int y);
+        [DllImport("user32.dll", EntryPoint = "mouse_event")] static extern void MouseInput(uint flags, uint x, uint y, uint data, UIntPtr extra);
     }
 
     async Task<int> CheckFlyoutCorners(ScreenshotFrame background, IntPtr popup, string output)
