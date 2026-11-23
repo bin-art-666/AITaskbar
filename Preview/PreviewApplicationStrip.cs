@@ -108,6 +108,9 @@ internal sealed partial class PreviewApplicationStrip
         this.owner = owner;
         this.report = report;
         windowMotion = new(items, owner);
+        attentionRetryTimer = items.DispatcherQueue.CreateTimer();
+        attentionRetryTimer.Interval = TimeSpan.FromMilliseconds(180);
+        attentionRetryTimer.Tick += (_, _) => RetryAppAttention();
         appMenuIcons = new(system, accessibility);
         iconHover = new(system.AnimationsEnabled && !accessibility.HighContrast);
         appCenterIcon = new AppCenterIcon(iconSize);
@@ -255,10 +258,7 @@ internal sealed partial class PreviewApplicationStrip
         if (attentionChanged)
         {
             if (layout.AppAttention == AppAttentionMode.Off)
-            {
-                attentionWindows.Clear();
-                lastAttentionPulse.Clear();
-            }
+                ResetAppAttention();
             UpdateIndicators();
         }
         SetThumbnailWidth(layout.ThumbnailWidth);
@@ -1000,6 +1000,7 @@ internal sealed partial class PreviewApplicationStrip
 
     public void Close()
     {
+        ResetAppAttention();
         StopMembershipAnimation();
         ResetAppDragInteraction();
         titleBarMinimize?.Dispose();

@@ -30,12 +30,9 @@ internal static class RunningWindows
         var desktop = GetShellWindow();
         EnumWindows((handle, _) =>
         {
-            if (handle == desktop || !IsWindowVisible(handle)) return true;
+            if (handle == desktop || !IsTaskbarWindowCandidate(handle)) return true;
             GetWindowThreadProcessId(handle, out var processId);
             if (processId == 0 || processId == Environment.ProcessId) return true;
-            long style = GetWindowLongPtr(handle, -20).ToInt64();
-            if ((style & AppWindow) == 0 &&
-                ((style & (ToolWindow | NoActivate)) != 0 || GetWindow(handle, 4) != 0)) return true;
             if (DwmGetWindowAttribute(handle, 14, out var cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
 
             var text = new StringBuilder(1024);
@@ -74,7 +71,17 @@ internal static class RunningWindows
         OwnsHandle(window) && IsWindowVisible(window.Handle);
 
     internal static bool OwnsHandle(RunningWindow window) =>
-        GetWindowThreadProcessId(window.Handle, out var processId) != 0 && processId == window.ProcessId;
+        ProcessIdForWindow(window.Handle) is var processId && processId != 0 && processId == window.ProcessId;
+
+    internal static uint ProcessIdForWindow(nint window) =>
+        GetWindowThreadProcessId(window, out var processId) != 0 ? processId : 0;
+
+    internal static bool IsTaskbarWindowCandidate(nint window)
+    {
+        if (!IsWindowVisible(window)) return false;
+        long style = GetWindowLongPtr(window, -20).ToInt64();
+        return (style & AppWindow) != 0 || (style & (ToolWindow | NoActivate)) == 0 && GetWindow(window, 4) == 0;
+    }
 
     internal static bool IsMinimized(RunningWindow window) => IsIconic(window.Handle);
 
