@@ -62,7 +62,7 @@ internal sealed partial class AiWindow
             Check(ReferenceEquals(view, current?.View) && ReferenceEquals(core, current?.View.CoreWebView2), "Switching recreated the browser.");
             Check(JsonSerializer.Deserialize<string>(await core.ExecuteScriptAsync("document.getElementById('draft').value")) == draft, "Switching lost the draft.");
         }
-        Check(!Detached && !AppWindow.IsShownInSwitchers, "Default floating panel was not restored.");
+        Check(!Detached && (!switcherVisibilityApplied || !AppWindow.IsShownInSwitchers), "Default floating panel was not restored.");
         void CheckPlacement()
         {
             var work = display.Info.Work;
@@ -137,7 +137,7 @@ internal sealed partial class AiWindow
 
         int floatingRadius = backplateShape!.Value.Radius;
         ToggleDetached();
-        Check(Detached && AppWindow.IsShownInSwitchers && !options.Data.FloatingPanel, "Expansion did not enter and save independent mode.");
+        Check(Detached && (!switcherVisibilityApplied || AppWindow.IsShownInSwitchers) && !options.Data.FloatingPanel, "Expansion did not enter and save independent mode.");
         await VerifyFloatingCaption(true); VerifyBackplateCorners();
         Check(backplateShape!.Value.Radius == floatingRadius, "Expanded mode changed the configured backplate radius.");
         var expandedSize = AppWindow.Size;
@@ -147,7 +147,7 @@ internal sealed partial class AiWindow
         await Task.Delay(180); VerifyBackplateCorners();
         await CheckDraft();
         ToggleDetached();
-        Check(!Detached && !AppWindow.IsShownInSwitchers && options.Data.FloatingPanel, "Return did not restore floating mode.");
+        Check(!Detached && (!switcherVisibilityApplied || !AppWindow.IsShownInSwitchers) && options.Data.FloatingPanel, "Return did not restore floating mode.");
         await VerifyFloatingCaption(false); VerifyBackplateCorners();
         // Exercise settled presenter state, including unchanged-size HRGN loss.
         for (int cycle = 0; cycle < 3; cycle++)

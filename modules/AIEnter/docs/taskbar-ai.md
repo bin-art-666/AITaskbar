@@ -39,6 +39,7 @@ Windows 应用列表中的运行窗口图标单独使用 `AIEnter.Window.ico`：
 
 - `tests/AiChecks`：配置兼容性、缩放、负坐标、右下角间距、极小工作区及对侧边缘保持。
 - `dist/AIEnter.exe --verify-ai-modes --data-dir <隔离目录>`：真实 WinUI/WebView2 本地页，检查旧偏移被忽略、每次打开右下角定位、调整尺寸、模式切换及草稿保留。结果为目录中的 `mode-result.json`。
+  当 Windows 的窗口切换器登记接口不可用时，面板与独立窗口仍可互相切换并保留网页草稿。
 - `.tools/windhawk/AppData/Engine/ModsWritable/aienter-taskbar-ai.ini`：由主任务栏按钮所在的 Explorer 进程记录 `ButtonAttached`、`ButtonAfterClock`、`ButtonBeforeDesktop`、`LayoutDoesNotOverlap`、`TaskbarDropEnabled`、`ArtworkLoaded`、`ArtworkSize` 及实际坐标。静态 PNG 在启动动态图标前解码，供系统禁用动画或绘制失败时使用。布局验收检查图片解码成功、拖放事件已注册、按钮位于时钟与显示桌面区域之间。
 - `--verify-ai-modes --data-dir <隔离目录>` 还检查本机 HTML 测试页的拖入文字、链接、图片和多文件草稿状态；只验证页面输入框接收，不会发送消息。真实 AI 网页的附件接收与上传规则会按服务逐个验证，登录失效、验证码或站点结构变化均记录为未验证／具体失败，不绕过站点检查。
 - `dist/AIEnter.exe --verify-ai-sites` 可对当前 `AiWebProfiles` 中的七个服务逐一做非消息控件探测，结果写到 `.build/ai-site-capability-report.json`。它会访问各站点、只读取主机名和可见编辑框／文件输入框数量及输入类型匹配结果；不读取聊天文字，不附加文件，不发送消息。浏览导航仍会更新网站自身的本地会话状态。2026-11-15 实测：DeepSeek、Grok、Kimi 可唯一定位图片、常见文件及多文件入口；ChatGPT 的图片入口存在歧义，豆包、小艺、Gemini 至少一类文件入口未能唯一定位。此结果只说明当前页面状态下的控件匹配，未等同于真实上传成功；对应站点适配仍需进一步验证。

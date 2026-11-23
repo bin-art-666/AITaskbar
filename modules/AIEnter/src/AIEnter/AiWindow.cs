@@ -35,6 +35,7 @@ internal sealed partial class AiWindow : PanelWindow
     Page? current;
     Popup? popup;
     AiBounds? floating;
+    bool switcherVisibilityApplied;
     internal bool Detached { get; private set; }
     readonly RunningWindowIcon runningWindowIcon;
     internal bool Initializing => current?.Ready is { IsCompleted: false };
@@ -68,7 +69,7 @@ internal sealed partial class AiWindow : PanelWindow
         var presenter = (OverlappedPresenter)AppWindow.Presenter;
         presenter.SetBorderAndTitleBar(false, false);
         presenter.IsResizable = presenter.IsMaximizable = presenter.IsMinimizable = false; presenter.IsAlwaysOnTop = true;
-        AppWindow.IsShownInSwitchers = false;
+        UpdateSwitcherVisibility();
         var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         int corner = 1, border = unchecked((int)0xFFFFFFFE);
         Native.DwmSetWindowAttribute(handle, 33, ref corner, sizeof(int)); Native.DwmSetWindowAttribute(handle, 34, ref border, sizeof(int));
@@ -347,7 +348,7 @@ internal sealed partial class AiWindow : PanelWindow
             // Both modes share one borderless silhouette. Resize hit testing is
             // handled by AiResizeFrame rather than an OS-painted thick frame.
             presenter.SetBorderAndTitleBar(false, false); presenter.IsResizable = false;
-            AppWindow.IsShownInSwitchers = Detached;
+            UpdateSwitcherVisibility();
             runningWindowIcon.Apply(force: true);
             if (Detached)
             {
@@ -370,6 +371,19 @@ internal sealed partial class AiWindow : PanelWindow
             UpdateFloatingCaption();
         }
         finally { changingMode = false; }
+    }
+    void UpdateSwitcherVisibility()
+    {
+        try
+        {
+            AppWindow.IsShownInSwitchers = Detached;
+            switcherVisibilityApplied = true;
+        }
+        catch (NotImplementedException)
+        {
+            // Shell switcher registration is optional for both window modes.
+            switcherVisibilityApplied = false;
+        }
     }
     void SaveFloating()
     {
