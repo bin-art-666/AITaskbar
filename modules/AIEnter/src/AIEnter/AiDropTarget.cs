@@ -59,12 +59,14 @@ internal sealed partial class AiWindow
                     if (site != popup && Native.GetAncestor(site, 2) == popup) flyoutFileDropResult = drop.Register(site);
                 }
                 if (flyoutFileDropResult >= 0) flyoutFileDrop = drop;
+                AttachFlyoutLayer(popup);
                 return;
             }
         };
         void Detach()
         {
             generation++;
+            DetachFlyoutLayer();
             flyoutFileDrop?.Dispose();
             flyoutFileDrop = null;
             SetDropHint(false);
@@ -88,6 +90,11 @@ internal sealed partial class AiWindow
             X = origin.X + (int)Math.Round((anchorBounds.Right - Math.Min(48, host.ActualWidth / 2)) * scale),
             Y = origin.Y + (int)Math.Round((anchorBounds.Top - Math.Min(100, host.ActualHeight / 2)) * scale)
         };
+        if (TaskbarFlyout?.CanMove == true)
+        {
+            var layout = Detached ? ExpandedFlyoutBounds() : DockBounds();
+            point = new() { X = layout.X + layout.Width / 2, Y = layout.Y + layout.Height / 2 };
+        }
         var popup = Native.GetAncestor(DropWindowAtPoint(point), 2);
         flyoutDropLocation = $"point={point.X},{point.Y}; owner={owner:X}; popup={popup:X}";
         if (popup == IntPtr.Zero || popup == owner || DropWindowThread(popup, out uint process) == 0 || process != Environment.ProcessId

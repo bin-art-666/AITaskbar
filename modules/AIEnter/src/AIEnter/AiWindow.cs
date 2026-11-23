@@ -136,17 +136,18 @@ internal sealed partial class AiWindow : PanelWindow
         saveTimer.Tick += (_, _) => SaveFloating();
         if (taskbarAnchor is null)
             AppWindow.Changed += (_, e) => { if (Detached && !destroyed && (e.DidPositionChange || e.DidSizeChange)) { saveTimer.Stop(); saveTimer.Start(); } };
-        Closed += (_, _) => { destroyed = true; EndDockResize(true); saveTimer.Stop(); transientStatusTimer.Stop(); ClosePopup(); foreach (var page in pages.Values) page.View.Close(); pages.Clear(); };
-        var shell = new Grid(); shell.Children.Add(backplate); shell.Children.Add(root); InitializeDockResize(shell);
+        Closed += (_, _) => { destroyed = true; EndDockResize(true); EndExpandedMove(true); saveTimer.Stop(); transientStatusTimer.Stop(); ClosePopup(); foreach (var page in pages.Values) page.View.Close(); pages.Clear(); };
+        var shell = new Grid(); shell.Children.Add(backplate); shell.Children.Add(root);
         var panel = new Border { Background = new SolidColorBrush(Colors.Transparent), Child = shell,
             CornerRadius = new CornerRadius(App.Appearance.BackplateRadius) };
         if (taskbarAnchor is not null)
         {
-            TaskbarFlyout = new(taskbarAnchor, panel, backplate, FlyoutPlacementMode.TopEdgeAlignedRight, allowWideContent: true);
-            dockBottomGripHost.Visibility = Visibility.Collapsed;
+            TaskbarFlyout = new(taskbarAnchor, panel, backplate, movable: true);
+            InitializeExpandedHeaderMove();
             AutomationProperties.SetName(expand, "放大 AI 面板");
             ToolTipService.SetToolTip(expand, "放大 AI 面板");
         }
+        InitializeDockResize(shell);
         InitializePanel(panel);
         if (taskbarAnchor is not null) InitializeFlyoutFileDrop(taskbarAnchor);
         if (verification && Environment.GetCommandLineArgs().Contains("--compare-no-glass")) backplate.Visibility = Visibility.Collapsed;
@@ -209,7 +210,7 @@ internal sealed partial class AiWindow : PanelWindow
             if (dockWidth != options.Data.DockWidth || dockHeight != options.Data.DockHeight) dockPlacement = null;
             dockWidth = options.Data.DockWidth; dockHeight = options.Data.DockHeight;
         }
-        foreach (var grip in new[] { dockGrip, dockTopGrip, dockBottomGrip }) grip.IsEnabled = !options.ReadOnly;
+        UpdateResizeGrips();
         if (IsOpen && (TaskbarFlyout is not null || !Detached) && !dockResizing) Position();
         {
             providerChoices.Clear();
@@ -226,6 +227,7 @@ internal sealed partial class AiWindow : PanelWindow
         pin.IsChecked = options.Data.Pinned; AiControls.SetIcon(pin,options.Data.Pinned ? "\uE77A" : "\uE718");
         ToolTipService.SetToolTip(pin, options.Data.Pinned ? "取消固定" : "固定 AI 面板");
         if (TaskbarFlyout is null) ((OverlappedPresenter)AppWindow.Presenter).IsAlwaysOnTop = !Detached || options.Data.Pinned;
+        else ApplyFlyoutLayer();
     }
     internal async Task ToggleFromTaskbar(DesktopMonitor monitor, uint pressTime = 0, Native.Point pressPoint = default, FirstOpenTiming? timing = null)
     {
@@ -357,13 +359,11 @@ internal sealed partial class AiWindow : PanelWindow
         try
         {
             using var lease = KeepOpen();
-            EndDockResize(true); SaveFloating(); Detached = detached;
-            foreach (var host in new[] { dockGripHost, dockTopGripHost, dockBottomGripHost })
-                host.Visibility = Detached ? Visibility.Collapsed : Visibility.Visible;
-            dockGrip.Visibility = Detached ? Visibility.Collapsed : Visibility.Visible;
+            EndDockResize(true); EndExpandedMove(true); SaveFloating(); Detached = detached;
+            UpdateResizeGrips();
             if (TaskbarFlyout is not null)
             {
-                dockBottomGripHost.Visibility = Visibility.Collapsed;
+                aiHeader.IsTabStop = Detached;
                 dockPlacement = null;
                 Position();
                 AiControls.SetIcon(expand, Detached ? "\uE73F" : "\uE740");
@@ -428,16 +428,14 @@ internal sealed partial class AiWindow : PanelWindow
     }
     void Position()
     {
-        var work = display.Info.Work;
         var bounds = DockBounds();
         if (TaskbarFlyout is not null && PanelContent is { } panel)
         {
-            double scale = Math.Max(96, display.Dpi) / 96d;
-            double width = bounds.Width / scale, height = bounds.Height / scale;
-            double maxWidth = Math.Max(1, (work.Right - work.Left) / scale - 24);
-            double maxHeight = Math.Max(1, (work.Bottom - work.Top) / scale - 24);
-            panel.Width = Math.Min(maxWidth, Detached ? Math.Max(900, width + 160) : width);
-            panel.Height = Math.Min(maxHeight, Detached ? Math.Max(maxHeight * .82, height + 96) : height);
+            if (Detached) bounds = ExpandedFlyoutBounds();
+            panel.Width = bounds.Width / FlyoutScale;
+            panel.Height = bounds.Height / FlyoutScale;
+            TaskbarFlyout.SetScreenPosition(bounds.X, bounds.Y);
+            ApplyFlyoutLayer();
             return;
         }
         AppWindow.MoveAndResize(new(bounds.X, bounds.Y, bounds.Width, bounds.Height));
@@ -448,5 +446,14 @@ internal sealed partial class AiWindow : PanelWindow
         return dockPlacement ?? AiPolicy.DockBounds(dockWidth, dockHeight,
             new(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top), display.Dpi);
     }
-    internal void UpdateDisplay(DesktopMonitor monitor) { display = monitor; if (IsOpen) { if (Detached && TaskbarFlyout is null) ClampFloating(); else { dockPlacement = null; Position(); } } }
+    internal void UpdateDisplay(DesktopMonitor monitor)
+    {
+        if (monitor != display) { EndDockResize(true); EndExpandedMove(true); }
+        display = monitor;
+        if (IsOpen)
+        {
+            if (Detached && TaskbarFlyout is null) ClampFloating();
+            else { dockPlacement = null; Position(); }
+        }
+    }
 }

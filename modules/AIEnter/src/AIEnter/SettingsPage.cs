@@ -104,7 +104,7 @@ internal sealed partial class SettingsPage : UserControl
             syncing = true; LoadVisualDefaults();
             followCorners.IsOn = UiDefaults.FollowGlobalCorners; radius.Value = UiDefaults.WebCornerRadius;
             resetPanelSize = true; syncing = false; RefreshFields(); Preview(); RefreshDirty();
-            status.Text = "已预览默认外观；保存后恢复面板默认尺寸。";
+            status.Text = "已预览默认外观；保存后恢复面板默认布局。";
         };
         fields.Children.Add(defaults);
         InitializeSettingsTransfer(fields);
@@ -195,7 +195,8 @@ internal sealed partial class SettingsPage : UserControl
                 DockWidth = resetPanelSize ? UiDefaults.DockWidth : options.Data.DockWidth,
                 DockHeight = resetPanelSize ? UiDefaults.DockHeight : options.Data.DockHeight,
                 DockTopOffset = resetPanelSize ? 0 : options.Data.DockTopOffset,
-                Layouts = resetLayouts ? [] : options.Data.Layouts };
+                Layouts = resetLayouts ? [] : options.Data.Layouts,
+                ExpandedLayout = resetPanelSize ? null : options.Data.ExpandedLayout };
             saveOptions(candidate);
             resetPanelSize = resetLayouts = false; App.PreviewAppearance(null); savedSnapshot = Snapshot(); RefreshDirty(); status.Text = "设置已保存。";
         }

@@ -29,12 +29,19 @@ public partial class App
             options.Save(options.Data with { Pinned = true, FloatingPanel = true, DockWidth = 380, DockHeight = 420 });
             var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(255, 67, 153, 87)) };
             background = FixtureWindow(backdrop,
-                new(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top));
+                new(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top), topmost: false);
             var anchor = new Border { Width = 48, Height = 40, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
             var ownerBounds = new RectInt32(work.Right - 280 * scale, work.Bottom - 54 * scale, 230 * scale, 44 * scale);
             var root = new Grid { Background = backdrop.Background };
             root.Children.Add(anchor);
             owner = FixtureWindow(root, ownerBounds);
+            if (Environment.GetCommandLineArgs().Contains("--verify-ai-expanded-layout"))
+            {
+                // Click the fixture before sending Esc. A background-launched process
+                // can show its window even when Activate cannot claim the foreground.
+                var ownerPoint = new Native.Point { X = ownerBounds.X + ownerBounds.Width / 2, Y = ownerBounds.Y + ownerBounds.Height / 2 };
+                await Task.Run(() => AiWindow.DesktopInputFixture.ClickAt(ownerPoint));
+            }
             Action? verifyColors = customColors ? () =>
             {
                 var settings = new SettingsPage(options, value => options.Save(value), null, owner,
@@ -64,12 +71,12 @@ public partial class App
         }
     }
 
-    static Window FixtureWindow(UIElement content, RectInt32 bounds)
+    internal static Window FixtureWindow(UIElement content, RectInt32 bounds, bool topmost = true)
     {
         var window = new Window { Content = content };
         var presenter = (OverlappedPresenter)window.AppWindow.Presenter;
         presenter.SetBorderAndTitleBar(false, false);
-        presenter.IsAlwaysOnTop = true;
+        presenter.IsAlwaysOnTop = topmost;
         window.AppWindow.MoveAndResize(bounds);
         window.Activate();
         return window;
@@ -145,6 +152,10 @@ internal sealed partial class AiWindow
         var toolbar = Environment.GetCommandLineArgs().Contains("--verify-ai-toolbar-contrast")
             ? await VerifyToolbarContrast(backdrop, popup, sample, core, output, liveTransparency, customColors) : null;
         if (liveTransparency) App.PreviewAppearance(null);
+        bool verifyLayout = Environment.GetCommandLineArgs().Contains("--verify-ai-expanded-layout");
+        var expandedLayout = verifyLayout ? await VerifyExpandedLayout(background, popup, core, output) : null;
+        bool verifyPinLayer = Environment.GetCommandLineArgs().Contains("--verify-ai-pin-layer");
+        if (verifyPinLayer) await VerifyExpandedPinLayer(popup, core);
         bool verifyOutsideClick = Environment.GetCommandLineArgs().Contains("--verify-outside-click");
         if (verifyOutsideClick)
         {
@@ -160,10 +171,56 @@ internal sealed partial class AiWindow
             await CloseVerifiedFlyout();
             await Open(display, dockTop);
             await Task.Delay(250);
-            await VerifyExpandedFileDrop(output, FlyoutAt(sample), "after-reopen");
+            var probe = TaskbarFlyout.CanMove ? Center(ExpandedFlyoutBounds()) : sample;
+            await VerifyExpandedFileDrop(output, FlyoutAt(probe), "after-reopen");
         }
         await CloseVerifiedFlyout();
-        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels, toolbar, customColors, compactOutsideClick = verifyOutsideClick, nativeFileDrop = verifyFileDrop, nativeFileDropAfterReopen = verifyFileDrop };
+        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels, toolbar, customColors, expandedLayout, expandedPinLayer = verifyPinLayer, compactOutsideClick = verifyOutsideClick, nativeFileDrop = verifyFileDrop, nativeFileDropAfterReopen = verifyFileDrop };
+    }
+
+    async Task VerifyExpandedPinLayer(nint popup, CoreWebView2 core)
+    {
+        if (!Detached) ToggleDetached();
+        await Task.Delay(220);
+        var owner = GetLayerOwner(popup, OwnerWindow);
+        var ownerTopmost = GetLayerStyle(owner, ExtendedStyleIndex).ToInt64() & TopmostStyle;
+        var bounds = ExpandedFlyoutBounds();
+        var point = new Native.Point { X = bounds.X + 35, Y = bounds.Y + bounds.Height / 2 };
+        var exposed = new Native.Point { X = bounds.X - 35, Y = point.Y };
+        var host = PanelContent!;
+        var pinCenter = pin.TransformToVisual(host).TransformPoint(new(pin.ActualWidth / 2, pin.ActualHeight / 2));
+        var pinPoint = new Native.Point { X = bounds.X + (int)Math.Round(pinCenter.X * FlyoutScale), Y = bounds.Y + (int)Math.Round(pinCenter.Y * FlyoutScale) };
+        var overlap = App.FixtureWindow(new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.Orange) },
+            new(bounds.X - 60, point.Y - 40, 120, 80), topmost: false);
+        try
+        {
+            var overlapHandle = WinRT.Interop.WindowNative.GetWindowHandle(overlap);
+            foreach (bool pinned in new[] { true, false, true, false })
+            {
+                if (options.Data.Pinned != pinned)
+                {
+                    await Task.Run(() => DesktopInputFixture.ClickAt(pinPoint));
+                    await Task.Delay(160);
+                }
+                if (options.Data.Pinned != pinned || FlyoutAt(exposed) != overlapHandle)
+                    throw new InvalidOperationException("The pin click or the overlap fixture was unavailable.");
+                await Task.Run(() => DesktopInputFixture.ClickAt(exposed));
+                await Task.Delay(250);
+                var hit = FlyoutAt(point);
+                var topmost = (GetLayerStyle(popup, ExtendedStyleIndex).ToInt64() & TopmostStyle) != 0;
+                if (topmost != pinned || hit != (pinned ? popup : overlapHandle))
+                    throw new InvalidOperationException($"Expanded flyout layering: pinned={pinned}, topmost={topmost}, hit={hit:X}, popup={popup:X}, overlap={overlapHandle:X}.");
+                if (!IsOpen || AppWindow.IsVisible || GetLayerOwner(popup, OwnerWindow) == 0
+                    || !ReferenceEquals(core, current?.View.CoreWebView2)
+                    || (GetLayerStyle(owner, ExtendedStyleIndex).ToInt64() & TopmostStyle) != ownerTopmost)
+                    throw new InvalidOperationException("Changing the expanded pin affected the taskbar or the flyout lifecycle.");
+            }
+        }
+        finally
+        {
+            overlap.Close();
+            options.Save(options.Data with { Pinned = true, FloatingPanel = true });
+        }
     }
 
     async Task<object> VerifyToolbarContrast(Border backdrop, IntPtr popup, Native.Point sample, CoreWebView2 core, string output,
@@ -312,7 +369,7 @@ internal sealed partial class AiWindow
             throw new InvalidOperationException($"Expanded flyout file drop failed. Open={IsOpen}, test popup={popup:X}, location={flyoutDropLocation}, register={flyoutFileDropResult:X8}, started={source.Started}, enter={dragEnters}, effect={source.Effect}, status={Status}");
     }
 
-    sealed class DesktopInputFixture : System.Windows.Forms.Form
+    internal sealed class DesktopInputFixture : System.Windows.Forms.Form
     {
         internal System.Windows.Forms.DragDropEffects Effect { get; private set; }
         internal bool Started { get; private set; }
@@ -334,7 +391,7 @@ internal sealed partial class AiWindow
             };
         }
 
-        internal static void Drag(Native.Point from, Native.Point to)
+        internal static void Drag(Native.Point from, Native.Point to, bool cancel = false)
         {
             var previous = System.Windows.Forms.Cursor.Position;
             SetDragCursor(from.X, from.Y);
@@ -348,6 +405,12 @@ internal sealed partial class AiWindow
                     Thread.Sleep(25);
                 }
                 Thread.Sleep(160);
+                if (cancel)
+                {
+                    KeyInput(0x1B, 0, 0, UIntPtr.Zero);
+                    KeyInput(0x1B, 0, 0x0002, UIntPtr.Zero);
+                    Thread.Sleep(110);
+                }
             }
             finally
             {
@@ -371,6 +434,7 @@ internal sealed partial class AiWindow
 
         [DllImport("user32.dll", EntryPoint = "SetCursorPos")] static extern bool SetDragCursor(int x, int y);
         [DllImport("user32.dll", EntryPoint = "mouse_event")] static extern void MouseInput(uint flags, uint x, uint y, uint data, UIntPtr extra);
+        [DllImport("user32.dll", EntryPoint = "keybd_event")] static extern void KeyInput(byte key, byte scan, uint flags, UIntPtr extra);
     }
 
     async Task<int> CheckFlyoutCorners(ScreenshotFrame background, IntPtr popup, string output)
@@ -383,25 +447,8 @@ internal sealed partial class AiWindow
         var frame = ScreenshotCapture.Desktop();
         await frame.Crop(bounds.Left - frame.Left, bounds.Top - frame.Top,
             bounds.Right - bounds.Left, bounds.Bottom - bounds.Top).Save(output);
-        // The popup HWND includes invisible presenter margins. Use the opaque
-        // page edges to locate the arranged panel; the glass can blend into the
-        // desktop and a light window can overlap the left edge.
-        int centerX = (bounds.Left + bounds.Right) / 2, centerY = (bounds.Top + bounds.Bottom) / 2;
-        bool IsPanel(int x, int y) => PixelDiff(x, y) > 80;
-        int right = Enumerable.Range(bounds.Left, bounds.Right - bounds.Left).Last(x => IsPanel(x, centerY)) + 1;
-        int bottom = Enumerable.Range(bounds.Top, bounds.Bottom - bounds.Top).Last(y => IsPanel(right - width / 4, y)) + 1;
-        int left = right - width, top = bottom - height;
-        if (left < bounds.Left || top < bounds.Top)
-            throw new InvalidOperationException($"Visible bounds {left},{top}–{right},{bottom}; arranged size {width}×{height}; native bounds {bounds.Left},{bounds.Top}–{bounds.Right},{bounds.Bottom}.");
-        int PixelDiff(int x, int y)
-        {
-            int px = x - frame.Left, py = y - frame.Top;
-            if (px < 0 || px >= frame.Width || py < 0 || py >= frame.Height) return 0;
-            int index = (py * frame.Width + px) * 4;
-            return Math.Max(Math.Abs(frame.Pixels[index] - background.Pixels[index]),
-                Math.Max(Math.Abs(frame.Pixels[index + 1] - background.Pixels[index + 1]),
-                    Math.Abs(frame.Pixels[index + 2] - background.Pixels[index + 2])));
-        }
+        var visible = LocateVisibleFlyout(background, frame, bounds, width, height);
+        int left = visible.X, top = visible.Y, right = visible.X + width, bottom = visible.Y + height;
         int checkedPixels = 0, changedPixels = 0;
         const int margin = 12;
         foreach (bool lower in new[] { false, true })
@@ -419,7 +466,7 @@ internal sealed partial class AiWindow
                 int px = x + column - frame.Left, py = y + row - frame.Top;
                 if (px < 0 || px >= frame.Width || py < 0 || py >= frame.Height) continue;
                 checkedPixels++;
-                if (PixelDiff(x + column, y + row) > 3) changedPixels++;
+                if (FlyoutPixelDiff(frame, background, x + column, y + row) > 3) changedPixels++;
             }
             string corner = (lower ? "bottom" : "top") + (trailing ? "-right" : "-left");
             await frame.Crop(x - frame.Left, y - frame.Top, radius + margin, radius + margin).Save(Path.Combine(output, corner));
@@ -427,6 +474,31 @@ internal sealed partial class AiWindow
         if (checkedPixels < 400 || changedPixels > 0)
             throw new InvalidOperationException($"Unexpected pixels beyond the flyout corners: {changedPixels}/{checkedPixels}; bounds {bounds.Left},{bounds.Top}–{bounds.Right},{bounds.Bottom}; content {host.ActualWidth}×{host.ActualHeight} at {scale}.");
         return checkedPixels;
+    }
+
+    static AiBounds LocateVisibleFlyout(ScreenshotFrame background, ScreenshotFrame frame, Native.Rect bounds, int width, int height)
+    {
+        // The popup HWND includes invisible presenter margins. Use the opaque
+        // page edges to locate the arranged panel; the glass can blend into the
+        // desktop and a light window can overlap the left edge.
+        int centerY = (bounds.Top + bounds.Bottom) / 2;
+        bool IsPanel(int x, int y) => FlyoutPixelDiff(frame, background, x, y) > 80;
+        int right = Enumerable.Range(bounds.Left, bounds.Right - bounds.Left).Last(x => IsPanel(x, centerY)) + 1;
+        int bottom = Enumerable.Range(bounds.Top, bounds.Bottom - bounds.Top).Last(y => IsPanel(right - width / 4, y)) + 1;
+        int left = right - width, top = bottom - height;
+        if (left < bounds.Left || top < bounds.Top)
+            throw new InvalidOperationException($"Visible bounds {left},{top}–{right},{bottom}; arranged size {width}×{height}; native bounds {bounds.Left},{bounds.Top}–{bounds.Right},{bounds.Bottom}.");
+        return new(left, top, width, height);
+    }
+
+    static int FlyoutPixelDiff(ScreenshotFrame frame, ScreenshotFrame background, int x, int y)
+    {
+        int px = x - frame.Left, py = y - frame.Top;
+        if (px < 0 || px >= frame.Width || py < 0 || py >= frame.Height) return 0;
+        int index = (py * frame.Width + px) * 4;
+        return Math.Max(Math.Abs(frame.Pixels[index] - background.Pixels[index]),
+            Math.Max(Math.Abs(frame.Pixels[index + 1] - background.Pixels[index + 1]),
+                Math.Abs(frame.Pixels[index + 2] - background.Pixels[index + 2])));
     }
 
     static IntPtr FlyoutAt(Native.Point sample) => Native.GetAncestor(PopupWindowAtPoint(sample), 2);

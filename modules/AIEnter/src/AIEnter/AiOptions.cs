@@ -9,10 +9,17 @@ internal sealed record AiEndpoint(string Name, string Url)
     internal string Key => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Url)))[..24];
 }
 internal sealed record AiBounds(int X, int Y, int Width, int Height);
-internal enum AiPanelEdge { Left, Top, Bottom }
+internal sealed record AiExpandedLayout(double Width, double Height, string? Display = null, double X = 0, double Y = 0);
+[Flags]
+internal enum AiPanelEdge
+{
+    Left = 1, Top = 2, Right = 4, Bottom = 8,
+    TopLeft = Top | Left, TopRight = Top | Right, BottomLeft = Bottom | Left, BottomRight = Bottom | Right
+}
 internal sealed record AiOptions(int Version = 2, string Provider = UiDefaults.Provider, string CustomName = "自定义 AI", string CustomUrl = "", bool Pinned = UiDefaults.Pinned,
     Dictionary<string, AiBounds>? Layouts = null, double DockWidth = UiDefaults.DockWidth, double DockHeight = UiDefaults.DockHeight, double DockTopOffset = 0,
-    bool FollowGlobalCorners = UiDefaults.FollowGlobalCorners, int WebCornerRadius = UiDefaults.WebCornerRadius, bool FloatingPanel = UiDefaults.FloatingPanel, UiAppearance? Appearance = null, string[]? ProviderOrder = null, AiProvider[]? AddedProviders = null, string? DefaultProvider = null, string Hotkey = UiDefaults.Hotkey);
+    bool FollowGlobalCorners = UiDefaults.FollowGlobalCorners, int WebCornerRadius = UiDefaults.WebCornerRadius, bool FloatingPanel = UiDefaults.FloatingPanel, UiAppearance? Appearance = null, string[]? ProviderOrder = null, AiProvider[]? AddedProviders = null, string? DefaultProvider = null, string Hotkey = UiDefaults.Hotkey,
+    AiExpandedLayout? ExpandedLayout = null);
 internal static partial class AiPolicy
 {
     internal static double CornerRadius(AiOptions options,double global,double width,double height)
@@ -51,6 +58,24 @@ internal static partial class AiPolicy
         int newHeight = (int)Math.Clamp((long)start.Height + (edge == AiPanelEdge.Top ? -(long)delta : delta), minHeight, maxHeight);
         return start with { Y = edge == AiPanelEdge.Top ? bottom - newHeight : start.Y, Height = newHeight };
     }
+    internal static AiBounds ResizeExpandedBounds(AiBounds start, AiBounds work, AiPanelEdge edge, long dx, long dy, double scale)
+    {
+        static (int Position, int Length) ResizeAxis(int position, int length, int lower, int upper, int minimum,
+            bool fromStart, bool fromEnd, long delta)
+        {
+            if (!fromStart && !fromEnd) return (position, length);
+            int opposite = position + length;
+            int available = fromStart ? opposite - lower : upper - position;
+            int resized = (int)Math.Clamp(length + (fromStart ? -delta : delta), Math.Min(minimum, available), available);
+            return (fromStart ? opposite - resized : position, resized);
+        }
+
+        var x = ResizeAxis(start.X, start.Width, work.X, work.X + work.Width, (int)Math.Round(420 * scale),
+            edge.HasFlag(AiPanelEdge.Left), edge.HasFlag(AiPanelEdge.Right), dx);
+        var y = ResizeAxis(start.Y, start.Height, work.Y, work.Y + work.Height, (int)Math.Round(360 * scale),
+            edge.HasFlag(AiPanelEdge.Top), edge.HasFlag(AiPanelEdge.Bottom), dy);
+        return new(x.Position, y.Position, x.Length, y.Length);
+    }
     internal static AiEndpoint Resolve(AiOptions value) => value.Provider switch
     {
         "deepseek" => new("DeepSeek", "https://chat.deepseek.com/"),
@@ -80,6 +105,11 @@ internal static partial class AiPolicy
             || value.Hotkey is null || !HotkeyPolicy.TryNormalize(value.Hotkey, out _)
             || value.Layouts is { Count: > 32 } || value.Layouts?.Any(p => p.Key.Length != 24 || !p.Key.All(Uri.IsHexDigit) || p.Value is null || p.Value.Width is < 100 or > 20000 || p.Value.Height is < 100 or > 20000 || Math.Abs((long)p.Value.X) > 100000 || Math.Abs((long)p.Value.Y) > 100000) == true)
             throw new InvalidDataException("AI 设置无效，请检查名称、网址和窗口位置。");
+        if (value.ExpandedLayout is { } expanded && (!double.IsFinite(expanded.Width) || expanded.Width is < 1 or > 20000
+            || !double.IsFinite(expanded.Height) || expanded.Height is < 1 or > 20000
+            || expanded.Display is { Length: > 128 } || !double.IsFinite(expanded.X) || Math.Abs(expanded.X) > 20000
+            || !double.IsFinite(expanded.Y) || Math.Abs(expanded.Y) > 20000))
+            throw new InvalidDataException("AI 展开面板的尺寸或位置无效。");
         if (value.ProviderOrder is { } order && (order.Length > AvailableProviders(value).Count()
             || order.Any(id => id == null || !AvailableProviders(value).Contains(id)) || order.Distinct(StringComparer.Ordinal).Count() != order.Length))
             throw new InvalidDataException("AI 按钮顺序包含重复或未知服务。");

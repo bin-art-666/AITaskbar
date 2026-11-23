@@ -202,8 +202,8 @@ internal sealed partial class AiWindow
         Check(((Microsoft.UI.Xaml.Media.SolidColorBrush)expand.Background).Color != Windows.UI.Color.FromArgb(255,32,48,64), "Button color preview did not roll back.");
         await CheckDraft();
         int originalTop = AppWindow.Position.Y;
-        BeginDockResize(0, AiPanelEdge.Bottom);
-        MoveDockResize(-80);
+        BeginDockResize(default, AiPanelEdge.Bottom);
+        MoveDockResize(new() { Y = -80 });
         EndDockResize(false);
         Check(AppWindow.Position.Y == originalTop, "Bottom resize moved the opposite edge.");
         await CheckDraft();

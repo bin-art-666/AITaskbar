@@ -54,6 +54,13 @@ try
     Check(AiPolicy.ResizeDockBounds(resizeStart, resizeWork, AiPanelEdge.Bottom, -100, 96) == new AiBounds(1000, 500, 430, 560), "Bottom resize preserves the top edge");
     var limited = AiPolicy.ResizeDockBounds(resizeStart, resizeWork, AiPanelEdge.Bottom, int.MaxValue, 96);
     Check(limited.Y == 500 && limited.Height == 700, "Bottom resize remains inside the work area");
+    Check(AiPolicy.ResizeExpandedBounds(resizeStart, resizeWork, AiPanelEdge.BottomRight, 200, 200, 1)
+        == new AiBounds(1000, 500, 630, 700), "Expanded bottom-right drag clamps to the work area and preserves top-left");
+    Check(AiPolicy.ResizeExpandedBounds(resizeStart, resizeWork, AiPanelEdge.TopLeft, 999, 999, 1)
+        == new AiBounds(1010, 800, 420, 360), "Expanded top-left drag respects the minimum and preserves bottom-right");
+    Check(AiPolicy.ResizeExpandedBounds(new(-1400, -700, 900, 600), new(-1920, -1080, 1920, 1080),
+        AiPanelEdge.TopRight, 600, -500, 1.5) == new AiBounds(-1400, -1080, 1400, 980),
+        "Expanded diagonal sizing stays inside a scaled monitor with negative coordinates");
     Check(AiPolicy.DockWidthPixels(530, 2000, 144) == 795, "Preferred width scales in logical pixels");
     Check(AiPolicy.DockWidthPixels(1000, 700, 192) == 700, "Narrow monitor caps actual width without modifying preference");
     Check(AiPolicy.DockWidthPixels(1, 2000, 96) == 360 && AiPolicy.DockWidthPixels(9999, 2000, 96) == 1000, "Dragging clamps to supported width range");
@@ -115,6 +122,12 @@ try
     var restoredMode = new AiOptionsStore(modePath).Data;
     Check(restoredMode.FloatingPanel && restoredMode.DockWidth == 530 && restoredMode.Layouts![key] == bounds,
         "Restoring floating mode preserves both panel and independent window sizes");
+    var expanded = new AiExpandedLayout(842, 674, @"\\.\DISPLAY1", 38, 62);
+    modes.Save(modes.Data with { ExpandedLayout = expanded });
+    var restoredExpanded = new AiOptionsStore(modePath).Data;
+    Check(restoredExpanded.ExpandedLayout == expanded && restoredExpanded.DockWidth == 530 && restoredExpanded.Layouts![key] == bounds,
+        "Expanded flyout geometry has its own persisted layout");
+    Reject(() => modes.Save(modes.Data with { ExpandedLayout = expanded with { Width = -1 } }));
     var appearancePath = Path.Combine(root, "appearance.json");
     File.WriteAllText(appearancePath, "{\"Provider\":\"deepseek\"}");
     var appearanceStore = new AiOptionsStore(appearancePath);

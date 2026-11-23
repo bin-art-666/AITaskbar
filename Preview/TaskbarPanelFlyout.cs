@@ -3,6 +3,7 @@ using System.Numerics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.UI;
@@ -17,7 +18,9 @@ internal sealed class TaskbarPanelFlyout : IDisposable
 
     private readonly FrameworkElement anchor, content;
     private readonly Border backplate;
-    private readonly Flyout flyout;
+    private readonly Flyout? flyout;
+    private readonly Popup? popup;
+    private (int X, int Y) screenPosition;
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
     private readonly CompositeTransform motion = new();
@@ -32,43 +35,38 @@ internal sealed class TaskbarPanelFlyout : IDisposable
     internal bool IsOpen { get; private set; }
     internal bool IsClosing { get; private set; }
     internal bool CanAnimate => system.AnimationsEnabled && !accessibility.HighContrast;
+    internal bool CanMove => popup is not null;
     internal event Action? Opening, Opened, Dismissing, Closed;
     internal Func<bool>? DismissOnOutside { get; set; }
 
     internal TaskbarPanelFlyout(FrameworkElement anchor, FrameworkElement content, Border backplate,
-        FlyoutPlacementMode placement = FlyoutPlacementMode.Top, bool allowWideContent = false)
+        FlyoutPlacementMode placement = FlyoutPlacementMode.Top, bool movable = false)
     {
         this.anchor = anchor;
         this.content = content;
         this.backplate = backplate;
         content.RenderTransform = motion;
         content.SizeChanged += (_, _) => SetFrame(progress);
-        var popup = new Border { Child = content, Padding = new Thickness(0, 0, 0, Travel) };
+        var surface = new Border { Child = content, Padding = new Thickness(0, 0, 0, Travel) };
+        if (movable)
+        {
+            // The existing outside-click watcher owns dismissal for this taskbar popup.
+            popup = new Popup { Child = surface, ShouldConstrainToRootBounds = false };
+            popup.Opened += (_, _) => OnOpened();
+            popup.Closed += (_, _) => OnClosed();
+            return;
+        }
         var presenter = new Style(typeof(FlyoutPresenter));
         presenter.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
         presenter.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
         presenter.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(0)));
         presenter.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Microsoft.UI.Colors.Transparent)));
         presenter.Setters.Add(new Setter(FlyoutPresenter.IsDefaultShadowEnabledProperty, false));
-        if (allowWideContent)
-        {
-            presenter.Setters.Add(new Setter(FrameworkElement.MaxWidthProperty, double.PositiveInfinity));
-            presenter.Setters.Add(new Setter(FrameworkElement.MaxHeightProperty, double.PositiveInfinity));
-        }
-        flyout = new() { Content = popup, Placement = placement, ShouldConstrainToRootBounds = false,
+        flyout = new() { Content = surface, Placement = placement, ShouldConstrainToRootBounds = false,
             AreOpenCloseAnimationsEnabled = false, FlyoutPresenterStyle = presenter,
             OverlayInputPassThroughElement = anchor };
-        flyout.Opening += (_, _) =>
-        {
-            IsOpen = true;
-            SetFrame(CanAnimate ? 0 : 1);
-            Opening?.Invoke();
-        };
-        flyout.Opened += (_, _) =>
-        {
-            Animate(show: true);
-            Opened?.Invoke();
-        };
+        flyout.Opening += (_, _) => OnOpening();
+        flyout.Opened += (_, _) => OnOpened();
         flyout.Closing += (_, args) =>
         {
             if (!finishClose && !disposed && !explicitHide && DismissOnOutside?.Invoke() == false) { args.Cancel = true; return; }
@@ -76,22 +74,60 @@ internal sealed class TaskbarPanelFlyout : IDisposable
             args.Cancel = true;
             if (!IsClosing) Animate(show: false);
         };
-        flyout.Closed += (_, _) =>
-        {
-            StopAnimation();
-            SetFrame(0);
-            IsOpen = IsClosing = finishClose = explicitHide = false;
-            Closed?.Invoke();
-        };
+        flyout.Closed += (_, _) => OnClosed();
+    }
+
+    private void OnOpening()
+    {
+        IsOpen = true;
+        SetFrame(CanAnimate ? 0 : 1);
+        Opening?.Invoke();
+    }
+    private void OnOpened() { Animate(show: true); Opened?.Invoke(); }
+    private void OnClosed()
+    {
+        StopAnimation();
+        SetFrame(0);
+        IsOpen = IsClosing = finishClose = explicitHide = false;
+        Closed?.Invoke();
+    }
+
+    internal void SetScreenPosition(int x, int y)
+    {
+        if (popup is null) return;
+        screenPosition = (x, y);
+        if (anchor.XamlRoot is not { } root) return;
+        var owner = Microsoft.UI.Win32Interop.GetWindowFromWindowId(root.ContentIslandEnvironment.AppWindowId);
+        var origin = new AIEnter.Native.Point();
+        if (!ClientToScreen(owner, ref origin)) return;
+        popup.HorizontalOffset = (x - origin.X) / root.RasterizationScale;
+        popup.VerticalOffset = (y - origin.Y) / root.RasterizationScale;
     }
 
     internal void Show(bool activate = true)
     {
-        if (IsClosing) CancelClosing();
-        else if (!IsOpen) flyout.ShowAt(anchor, new FlyoutShowOptions
-        { Placement = flyout.Placement, ShowMode = activate ? FlyoutShowMode.Standard : FlyoutShowMode.Transient });
+        if (IsClosing) { CancelClosing(); return; }
+        if (IsOpen || disposed) return;
+        if (popup is not null)
+        {
+            if (anchor.XamlRoot is not { } root) return;
+            popup.XamlRoot = root;
+            SetScreenPosition(screenPosition.X, screenPosition.Y);
+            OnOpening();
+            popup.IsOpen = true;
+            if (activate && FocusManager.FindFirstFocusableElement(content) is Control first)
+                first.Focus(FocusState.Programmatic);
+        }
+        else if (flyout is not null) flyout.ShowAt(anchor, new FlyoutShowOptions
+            { Placement = flyout.Placement, ShowMode = activate ? FlyoutShowMode.Standard : FlyoutShowMode.Transient });
     }
-    internal void Hide() { if (IsOpen) { explicitHide = true; flyout.Hide(); } }
+    internal void Hide()
+    {
+        if (!IsOpen) return;
+        explicitHide = true;
+        if (popup is null) flyout?.Hide();
+        else if (!IsClosing) Animate(show: false);
+    }
 
     internal void CancelClosing()
     {
@@ -146,7 +182,12 @@ internal sealed class TaskbarPanelFlyout : IDisposable
         SetFrame(transitionTo);
         if (!IsClosing) return;
         finishClose = true;
-        flyout.Hide();
+        if (popup is not null)
+        {
+            Dismissing?.Invoke();
+            popup.IsOpen = false;
+        }
+        else flyout?.Hide();
     }
 
     private void StopAnimation()
@@ -210,7 +251,8 @@ internal sealed class TaskbarPanelFlyout : IDisposable
         if (enabled == (desktopBackdrop is not null)) return;
         desktopBackdrop = enabled ? new AIEnter.DesktopGlassBackdrop() : null;
         SetFrame(progress);
-        flyout.SystemBackdrop = desktopBackdrop;
+        if (popup is not null) popup.SystemBackdrop = desktopBackdrop;
+        else if (flyout is not null) flyout.SystemBackdrop = desktopBackdrop;
     }
 
     internal static bool IsLight(Color color) => (color.R * 299 + color.G * 587 + color.B * 114) >= 155000;
@@ -223,8 +265,17 @@ internal sealed class TaskbarPanelFlyout : IDisposable
     public void Dispose()
     {
         disposed = true;
-        Hide();
+        if (popup is { IsOpen: true })
+        {
+            Dismissing?.Invoke();
+            popup.IsOpen = false;
+        }
+        else Hide();
         StopAnimation();
-        flyout.SystemBackdrop = null;
+        if (popup is not null) popup.SystemBackdrop = null;
+        else if (flyout is not null) flyout.SystemBackdrop = null;
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ClientToScreen(IntPtr window, ref AIEnter.Native.Point point);
 }
