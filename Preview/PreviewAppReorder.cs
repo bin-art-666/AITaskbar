@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.Foundation;
 using Windows.System;
+using Windows.UI.ViewManagement;
 
 namespace AITaskbar;
 
@@ -109,6 +110,7 @@ internal sealed partial class PreviewApplicationStrip
         var drag = appDrag = new(views, slots, source, bounds, transform, neighbors, system.AnimationsEnabled && !accessibility.HighContrast);
         for (int index = 0; index < views.Length; index++) views[index].Button.RenderTransform = drag.Transforms[index];
         press.View.Button.Opacity = 0;
+        attentionBadges.Reposition();
         suppressedClick = press.View.Button;
         press.View.Button.Focus(FocusState.Pointer);
         DismissThumbnails();
@@ -131,6 +133,15 @@ internal sealed partial class PreviewApplicationStrip
         var (active, background) = TaskbarAppFeedback.DotColors(feedbackStyle, system, accessibility.HighContrast);
         feedback.ShowState(IndicatorState(view.Group.Windows.Count > 0, view.Group.Windows.Any(window => window.Handle == activeWindow)),
             active, background, feedbackLight);
+        if (HasAppAttention(view.Group))
+        {
+            var badge = TaskbarAttentionIndicator.CreateBadge();
+            if (accessibility.HighContrast)
+                TaskbarAttentionIndicator.ColorBadge(badge, system.UIElementColor(UIElementType.Highlight));
+            Canvas.SetLeft(badge, TaskbarAttentionIndicator.BadgeLeft(iconSize));
+            Canvas.SetTop(badge, TaskbarAppFeedback.TopSpace - TaskbarAttentionIndicator.BadgeOverhang);
+            feedback.Surface.Children.Add(badge);
+        }
         return feedback.Surface;
     }
 
@@ -146,6 +157,7 @@ internal sealed partial class PreviewApplicationStrip
             while (target > 0 && point.X <= Boundary(target - 1) - AppBoundaryTolerance) target--;
         }
         RetargetNeighbors(drag, target);
+        if (!drag.Animate) attentionBadges.Reposition();
 
         // Boundaries use the original slots so a moving neighbor cannot move its own hit threshold.
         double Boundary(int left) => drag.Slots[left < drag.Source ? left : left + 1].X + iconSize / 2d;
@@ -217,6 +229,7 @@ internal sealed partial class PreviewApplicationStrip
         double shift = EaseOut(drag.ShiftStarted, ShiftDurationMs);
         for (int index = 0; index < drag.Transforms.Length; index++)
             drag.Transforms[index].X = Mix(drag.From[index], drag.To[index], shift);
+        attentionBadges.Reposition();
         if (drag.LandStarted is not { } landing)
         {
             double lift = EaseOut(drag.LiftStarted, LiftDurationMs);
@@ -253,6 +266,7 @@ internal sealed partial class PreviewApplicationStrip
             drag.Transforms[index].X = drag.BaseOffset[index];
         drag.Views[drag.Source].Button.Opacity = 1;
         AppDragSurface.Children.Clear();
+        attentionBadges.Reposition();
         iconHover.Suspend(false);
     }
 

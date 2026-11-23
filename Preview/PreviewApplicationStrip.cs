@@ -35,6 +35,7 @@ internal sealed partial class PreviewApplicationStrip
     private readonly AccessibilitySettings accessibility = new();
     private readonly AppMenuIcons appMenuIcons;
     private readonly TaskbarIconHoverLayer iconHover;
+    private readonly TaskbarAttentionBadgeLayer attentionBadges = new();
     private readonly Dictionary<ElementTheme, Style> menuStyles = [];
     private readonly WindowMotion windowMotion;
     private TitleBarMinimizeHook? titleBarMinimize;
@@ -73,6 +74,8 @@ internal sealed partial class PreviewApplicationStrip
     private bool? dark, contrast;
     public StackPanel Surface => items;
     internal Canvas HoverSurface => iconHover.Surface;
+    internal Canvas AttentionPulseSurface => attentionBadges.PulseSurface;
+    internal Canvas AttentionBadgeSurface => attentionBadges.Surface;
     internal Button AppCenterButton { get; }
     private IEnumerable<AppButton> Shown => pinnedApps.Buttons.Concat(runningApps.Buttons);
     private IEnumerable<AppButton> Rendered => pinnedApps.Buttons.Concat(runningTiles.Values.Select(tile => tile.View));
@@ -156,6 +159,7 @@ internal sealed partial class PreviewApplicationStrip
         var nextGroups = runningOrder.Apply(AppGroups.Build(pins.Items, RunningWindows.List()));
         var transition = CaptureMembershipChange(nextGroups);
         groups = nextGroups;
+        PruneAppAttention();
         if (groups.Any(group => group.Windows.Any(window => window.Handle == foregroundWindow)))
             foreground = foregroundWindow;
         else if (!AIEnter.Native.PanelHasFocus(owner))
@@ -246,7 +250,17 @@ internal sealed partial class PreviewApplicationStrip
         bool colorChanged = iconLayout.ColorMode != layout.ColorMode;
         bool outlineChanged = iconLayout.ShowIconOutline != layout.ShowIconOutline;
         bool menuColorChanged = iconLayout.MenuColorMode != layout.MenuColorMode;
+        bool attentionChanged = iconLayout.AppAttention != layout.AppAttention;
         iconLayout = layout;
+        if (attentionChanged)
+        {
+            if (layout.AppAttention == AppAttentionMode.Off)
+            {
+                attentionWindows.Clear();
+                lastAttentionPulse.Clear();
+            }
+            UpdateIndicators();
+        }
         SetThumbnailWidth(layout.ThumbnailWidth);
         SetThumbnailAnimation(layout.ThumbnailAnimationMs);
         if (colorChanged || menuColorChanged) openFlyout?.Hide();
@@ -478,6 +492,7 @@ internal sealed partial class PreviewApplicationStrip
             tile.View.Button.Opacity = PreviewIconLayout.EdgeOpacity(left, iconSize, width);
         }
         iconHover.Reposition();
+        attentionBadges.Reposition();
     }
 
     private void StopScrollAnimation()
@@ -677,15 +692,23 @@ internal sealed partial class PreviewApplicationStrip
 
     private void UpdateIndicators()
     {
+        if (attentionWindows.Count > 0) ClearWindowAttention(RunningWindows.RawForeground());
         var (activeColor, backgroundColor) = TaskbarAppFeedback.DotColors(feedbackStyle, system, accessibility.HighContrast);
+        bool pulseAttention = CanPulseAttention;
+        Color? attentionHighlight = accessibility.HighContrast ? system.UIElementColor(UIElementType.Highlight) : null;
         foreach (var view in Rendered)
         {
             bool running = view.Group.Windows.Count > 0;
             bool active = view.Group.Windows.Any(window => window.Handle == foreground);
             view.Feedback.ShowState(IndicatorState(running, active), activeColor, backgroundColor, feedbackLight);
-            AutomationProperties.SetItemStatus(view.Button, active ? "当前前台应用" : running
-                ? $"正在运行，{view.Group.Windows.Count} 个窗口" : "已固定，未运行");
+            bool needsAttention = HasAppAttention(view.Group);
+            attentionBadges.Set(view.IconPlate, view.Button, view.Feedback.Surface,
+                view.Group.Pin is null ? runningApps.Panel : null, needsAttention, pulseAttention, attentionHighlight);
+            string status = active ? "当前前台应用" : running
+                ? $"正在运行，{view.Group.Windows.Count} 个窗口" : "已固定，未运行";
+            AutomationProperties.SetItemStatus(view.Button, needsAttention ? status + "，有应用提醒" : status);
         }
+        attentionBadges.Reposition();
     }
 
     private static AppWindowState IndicatorState(bool running, bool active) =>

@@ -53,6 +53,15 @@ internal sealed partial class TaskbarSettingsWindow
             (IconScrollAnimation.Relaxed, "舒缓")
         ];
         foreach (var mode in modes) animation.Items.Add(mode.Label);
+        var attention = new ComboBox { MinWidth = 118 };
+        AutomationProperties.SetName(attention, "应用提醒");
+        (AppAttentionMode Value, string Label)[] attentionModes =
+        [
+            (AppAttentionMode.PulseAndDot, "柔光＋圆点"),
+            (AppAttentionMode.DotOnly, "仅圆点"),
+            (AppAttentionMode.Off, "关闭")
+        ];
+        foreach (var mode in attentionModes) attention.Items.Add(mode.Label);
         var windowAnimation = new ComboBox { MinWidth = 118 };
         AutomationProperties.SetName(windowAnimation, "窗口开合动画");
         (WindowAnimationStyle Value, string Label)[] windowModes =
@@ -86,6 +95,7 @@ internal sealed partial class TaskbarSettingsWindow
             iconOutline.IsOn = app.IconLayout.ShowIconOutline;
             menuColors.SelectedIndex = Array.FindIndex(menuModes, mode => mode.Value == app.IconLayout.MenuColorMode);
             animation.SelectedIndex = Array.FindIndex(modes, mode => mode.Value == app.IconLayout.Animation);
+            attention.SelectedIndex = Array.FindIndex(attentionModes, mode => mode.Value == app.IconLayout.AppAttention);
             windowAnimation.SelectedIndex = Array.FindIndex(windowModes, mode => mode.Value == app.IconLayout.WindowAnimation);
             windowSpeed.IsEnabled = app.IconLayout.WindowAnimation == WindowAnimationStyle.Curved;
             windowSpeed.Value = app.IconLayout.EffectiveWindowDurationMs;
@@ -148,6 +158,14 @@ internal sealed partial class TaskbarSettingsWindow
             app.TrySetIconLayout(app.IconLayout with { WindowAnimation = windowModes[windowAnimation.SelectedIndex].Value });
             Sync();
         };
+        attention.SelectionChanged += (_, _) =>
+        {
+            if (syncing || attention.SelectedIndex < 0) return;
+            var mode = attentionModes[attention.SelectedIndex].Value;
+            if (mode == app.IconLayout.AppAttention) return;
+            app.TrySetIconLayout(app.IconLayout with { AppAttention = mode });
+            Sync();
+        };
         windowSpeed.ValueChanged += (_, args) =>
         {
             if (syncing || !windowSpeed.IsEnabled) return;
@@ -194,6 +212,7 @@ internal sealed partial class TaskbarSettingsWindow
         motion.Children.Add(scrollPreview.Surface);
         motion.Children.Add(SettingRow("窗口开合动画", "适用于预览栏和窗口标题栏的开合操作。", windowAnimation));
         motion.Children.Add(SettingRow("窗口开合速度", "曲面动画可调节为 200–1000 毫秒。Windows 风格使用 200 毫秒。", Actions(windowSpeed, windowSpeedValue)));
+        motion.Children.Add(SettingRow("应用提醒", "后台窗口发出任务栏注意信号时显示提醒。系统关闭动画时仅显示圆点。", attention));
 
         BuildWindowThumbnailSettings(thumbnails);
 

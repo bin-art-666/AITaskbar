@@ -87,6 +87,7 @@ internal sealed partial class PreviewApplicationStrip
         }
         foreach (var icon in previous)
             if (icon.Opacity > .01) AddMembershipMotion(icon, null, icon.Position, snapshot.Foreground);
+        attentionBadges.Reposition();
 
         if (membershipMotions.Count == 0 && membershipChrome.Count == 0) return;
         iconHover.Suspend(true);
@@ -154,6 +155,7 @@ internal sealed partial class PreviewApplicationStrip
             if (ReferenceEquals(element.RenderTransform, offset)) element.RenderTransform = null;
         membershipMotions.Clear();
         membershipChrome.Clear();
+        attentionBadges.Reposition();
         iconHover.Suspend(false);
     }
 

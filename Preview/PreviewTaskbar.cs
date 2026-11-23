@@ -95,7 +95,9 @@ internal sealed class PreviewTaskbar : Window
         right.Children.Add(icons.AiEntrance);
 
         strip.Children.Add(tasks.HoverSurface);
+        strip.Children.Add(tasks.AttentionPulseSurface);
         strip.Children.Add(tasks.Surface);
+        strip.Children.Add(tasks.AttentionBadgeSurface);
         strip.Children.Add(tasks.AppDragSurface);
         strip.Children.Add(left);
         strip.Children.Add(right);
@@ -191,7 +193,7 @@ internal sealed class PreviewTaskbar : Window
             Content = surface;
             visual.Refresh();
             bar = new(handle, DispatcherQueue, app.TaskbarHeight, app.TaskbarCoversWindows,
-                tasks.RememberForeground, error => { Close(); reportFailure(error); });
+                tasks.RememberForeground, tasks.UpdateAppAttention, error => { Close(); reportFailure(error); });
             tasks.Refresh();
             refresh.Start();
         }

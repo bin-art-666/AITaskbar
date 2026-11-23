@@ -8,25 +8,29 @@ internal sealed class DesktopAppBar : IDisposable
 {
     private const uint Add = 0, Remove = 1, QueryPosition = 2, SetPosition = 3, Activate = 6, WindowPositionChanged = 9;
     private const uint BottomEdge = 3, NoActivate = 0x0010, NoMoveOrSize = 0x0003;
+    private const nuint ShellFlash = 0x8006, ShellActivated = 4, ShellRudeActivated = 0x8004;
     private readonly nint handle;
     private readonly DispatcherQueue dispatcher;
     private readonly Action<Exception> reportFailure;
     private readonly Action beforeMouseActivation;
+    private readonly Action<nint, bool> appAttentionChanged;
     private readonly SubclassProcedure callback;
     private readonly uint notification = RegisterWindowMessage("AITaskbar.Preview.AppBar");
     private readonly uint taskbarCreated = RegisterWindowMessage("TaskbarCreated");
+    private readonly uint shellHook = RegisterWindowMessage("SHELLHOOK");
     private Native.Rect? proposed, reserved;
     private int heightDip;
     internal bool CoversWindows { get; private set; }
-    private bool registered, disposed, queued, shellRestarted, fullscreen;
+    private bool registered, shellHookRegistered, disposed, queued, shellRestarted, fullscreen;
 
     public DesktopAppBar(nint handle, DispatcherQueue dispatcher, int height, bool coversWindows,
-        Action beforeMouseActivation, Action<Exception> reportFailure)
+        Action beforeMouseActivation, Action<nint, bool> appAttentionChanged, Action<Exception> reportFailure)
     {
         this.handle = handle;
         this.dispatcher = dispatcher;
         this.reportFailure = reportFailure;
         this.beforeMouseActivation = beforeMouseActivation;
+        this.appAttentionChanged = appAttentionChanged;
         heightDip = height;
         CoversWindows = coversWindows;
         callback = WndProc;
@@ -36,6 +40,7 @@ internal sealed class DesktopAppBar : IDisposable
         {
             Register();
             Position();
+            shellHookRegistered = shellHook != 0 && RegisterShellHookWindow(handle);
         }
         catch
         {
@@ -131,6 +136,12 @@ internal sealed class DesktopAppBar : IDisposable
         if (!disposed)
         {
             if (message == 0x0021) beforeMouseActivation(); // WM_MOUSEACTIVATE
+            else if (shellHookRegistered && message == shellHook && lParam != 0 &&
+                wParam is ShellFlash or ShellActivated or ShellRudeActivated)
+            {
+                bool flashing = wParam == ShellFlash;
+                dispatcher.TryEnqueue(() => { if (!disposed) appAttentionChanged(lParam, flashing); });
+            }
             else if (message == taskbarCreated) QueuePosition(newShell: true);
             else if (message == 0x007e || message == 0x02e0) QueuePosition(); // Display or DPI change
             else if (registered && message == notification)
@@ -157,6 +168,7 @@ internal sealed class DesktopAppBar : IDisposable
     {
         if (disposed) return;
         disposed = true;
+        if (shellHookRegistered) DeregisterShellHookWindow(handle);
         if (registered)
         {
             var data = Data();
@@ -180,6 +192,8 @@ internal sealed class DesktopAppBar : IDisposable
     private delegate nint SubclassProcedure(nint hwnd, uint message, nuint wParam, nint lParam, nuint id, nuint data);
     [DllImport("shell32.dll")] private static extern nuint SHAppBarMessage(uint message, ref AppBarData data);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string name);
+    [DllImport("user32.dll")] private static extern bool RegisterShellHookWindow(nint hwnd);
+    [DllImport("user32.dll")] private static extern bool DeregisterShellHookWindow(nint hwnd);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(nint hwnd, nint after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(nint hwnd, out Native.Rect bounds);
     [DllImport("comctl32.dll")] private static extern bool SetWindowSubclass(nint hwnd, SubclassProcedure proc, nuint id, nuint data);

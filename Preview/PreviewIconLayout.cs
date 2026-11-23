@@ -5,6 +5,7 @@ namespace AITaskbar;
 
 internal enum IconScrollAnimation { Off, Fast, Standard, Relaxed }
 internal enum WindowAnimationStyle { Curved, WindowsDefault, WindowsStyle }
+internal enum AppAttentionMode { PulseAndDot, DotOnly, Off }
 internal enum IconColorMode { Light, Dark }
 internal enum AppMenuColorMode { FollowTaskbar, Light, Dark }
 
@@ -31,6 +32,8 @@ internal sealed record PreviewIconLayout
     public AppMenuColorMode MenuColorMode { get; init; } = AppMenuColorMode.FollowTaskbar;
     [JsonConverter(typeof(JsonStringEnumConverter<IconScrollAnimation>))]
     public IconScrollAnimation Animation { get; init; } = IconScrollAnimation.Standard;
+    [JsonConverter(typeof(JsonStringEnumConverter<AppAttentionMode>))]
+    public AppAttentionMode AppAttention { get; init; } = AppAttentionMode.PulseAndDot;
     [JsonConverter(typeof(JsonStringEnumConverter<WindowAnimationStyle>))]
     public WindowAnimationStyle WindowAnimation { get; init; } = WindowAnimationStyle.WindowsDefault;
     public int WindowDurationMs { get; init; } = DefaultWindowDurationMs;
@@ -69,6 +72,7 @@ internal sealed record PreviewIconLayout
                     ColorMode = Enum.IsDefined(value.ColorMode) ? value.ColorMode : Default.ColorMode,
                     MenuColorMode = Enum.IsDefined(value.MenuColorMode) ? value.MenuColorMode : Default.MenuColorMode,
                     Animation = Enum.IsDefined(value.Animation) ? value.Animation : Default.Animation,
+                    AppAttention = Enum.IsDefined(value.AppAttention) ? value.AppAttention : Default.AppAttention,
                     WindowAnimation = Enum.IsDefined(value.WindowAnimation) ? value.WindowAnimation : Default.WindowAnimation,
                     WindowDurationMs = Math.Clamp(duration, MinWindowDurationMs, MaxWindowDurationMs)
                 };
