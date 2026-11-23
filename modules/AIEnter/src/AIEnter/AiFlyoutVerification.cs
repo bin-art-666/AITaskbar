@@ -24,7 +24,8 @@ public partial class App
             var monitor = Native.Monitors().First(m => m.Primary);
             var work = monitor.Info.Work;
             int scale = Math.Max(1, (int)Math.Round(monitor.Dpi / 96d));
-            var options = new AiOptionsStore(Path.Combine(DataDirectory, "flyout-ai.json"));
+            bool customColors = Environment.GetCommandLineArgs().Contains("--verify-ai-custom-backplate");
+            var options = customColors ? Ai.Options : new AiOptionsStore(Path.Combine(DataDirectory, "flyout-ai.json"));
             options.Save(options.Data with { Pinned = true, FloatingPanel = true, DockWidth = 380, DockHeight = 420 });
             var backdrop = new Border { Background = new SolidColorBrush(Color.FromArgb(255, 67, 153, 87)) };
             background = FixtureWindow(backdrop,
@@ -34,13 +35,19 @@ public partial class App
             var root = new Grid { Background = backdrop.Background };
             root.Children.Add(anchor);
             owner = FixtureWindow(root, ownerBounds);
+            Action? verifyColors = customColors ? () =>
+            {
+                var settings = new SettingsPage(options, value => options.Save(value), null, owner,
+                    new AITaskbar.SettingsPaneWidths(DataDirectory, _ => { }));
+                settings.VerifyBackplateColorSettings(DataDirectory);
+            } : null;
             await Task.Delay(250);
             var backgroundFrame = ScreenshotCapture.Desktop();
             panel = new AiWindow(options, DataDirectory, monitor, () => { }, verification: true, taskbarAnchor: anchor);
             options.Changed += panel.ApplyOptions;
             await panel.Open(monitor, work.Top);
             var result = await panel.VerifyTaskbarFlyout(backgroundFrame,
-                new Native.Point { X = ownerBounds.X + ownerBounds.Width - 80 * scale, Y = ownerBounds.Y - 100 * scale }, DataDirectory, backdrop);
+                new Native.Point { X = ownerBounds.X + ownerBounds.Width - 80 * scale, Y = ownerBounds.Y - 100 * scale }, DataDirectory, backdrop, verifyColors);
             File.WriteAllText(resultPath, JsonSerializer.Serialize(result));
         }
         catch (Exception error)
@@ -69,9 +76,42 @@ public partial class App
     }
 }
 
+internal sealed partial class SettingsPage
+{
+    internal void VerifyBackplateColorSettings(string directory)
+    {
+        static void Check(bool condition)
+        {
+            if (!condition) throw new InvalidOperationException("Backplate color preview, save or cancel did not preserve the expected settings.");
+        }
+
+        Check(backplateColorMode.SelectedIndex == 0 && backplateColorFields.Visibility == Visibility.Collapsed);
+        backplateColorMode.SelectedIndex = 1;
+        SetBackplateColor(false, "#20486C");
+        Check(App.Appearance.BackplateColorFor(false) == "#20486C" && App.Appearance.BackplateColorFor(true) == "");
+        DiscardDraft();
+        Check(backplateColorMode.SelectedIndex == 0 && !ReadAppearance().CustomBackplate && !IsDirty);
+        backplateColorMode.SelectedIndex = 1;
+        SetBackplateColor(true, "#FFE0B0");
+        Check(App.Appearance.BackplateColorFor(false) == "" && App.Appearance.BackplateColorFor(true) == "#FFE0B0");
+        SetBackplateColor(false, "#20486C");
+        Save();
+        var saved = new AiOptionsStore(Path.Combine(directory, "ai.json")).Data.Appearance;
+        Check(saved is { CustomBackplate: true, LightBackplateColor: "#20486C", DarkBackplateColor: "#FFE0B0" } && !IsDirty);
+        SetBackplateColor(false, "");
+        Check(App.Appearance.BackplateColorFor(false) == "");
+        DiscardDraft();
+        Check(App.Appearance.BackplateColorFor(false) == "#20486C" && !IsDirty);
+        backplateColorMode.SelectedIndex = 0;
+        Check(App.Appearance.BackplateColorFor(false) == "" && ReadAppearance().LightBackplateColor == "#20486C");
+        ResetPreview();
+        Check(ReadAppearance() == saved && App.Appearance == saved);
+    }
+}
+
 internal sealed partial class AiWindow
 {
-    internal async Task<object> VerifyTaskbarFlyout(ScreenshotFrame background, Native.Point sample, string output, Border backdrop)
+    internal async Task<object> VerifyTaskbarFlyout(ScreenshotFrame background, Native.Point sample, string output, Border backdrop, Action? verifyColors)
     {
         if (current?.View.CoreWebView2 is not { } core || !IsOpen || TaskbarFlyout is null)
             throw new InvalidOperationException("The taskbar flyout or WebView2 did not open.");
@@ -98,10 +138,12 @@ internal sealed partial class AiWindow
                 throw new InvalidOperationException("Resizing changed the draft or scroll position.");
             totalCornerPixels += await CheckFlyoutCorners(background, popup, Path.Combine(output, expanded ? "expanded" : "compact"));
         }
+        verifyColors?.Invoke();
+        bool customColors = verifyColors is not null;
         bool liveTransparency = Environment.GetCommandLineArgs().Contains("--verify-ai-toolbar-high-transparency");
-        if (liveTransparency) App.PreviewAppearance(new UiAppearance(BackplateTransparency: 41, BackplateBlur: 47));
+        if (liveTransparency) App.PreviewAppearance(App.Appearance with { BackplateTransparency = 41, BackplateBlur = 47 });
         var toolbar = Environment.GetCommandLineArgs().Contains("--verify-ai-toolbar-contrast")
-            ? await VerifyToolbarContrast(backdrop, popup, sample, core, output, liveTransparency) : null;
+            ? await VerifyToolbarContrast(backdrop, popup, sample, core, output, liveTransparency, customColors) : null;
         if (liveTransparency) App.PreviewAppearance(null);
         bool verifyOutsideClick = Environment.GetCommandLineArgs().Contains("--verify-outside-click");
         if (verifyOutsideClick)
@@ -121,11 +163,11 @@ internal sealed partial class AiWindow
             await VerifyExpandedFileDrop(output, FlyoutAt(sample), "after-reopen");
         }
         await CloseVerifiedFlyout();
-        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels, toolbar, compactOutsideClick = verifyOutsideClick, nativeFileDrop = verifyFileDrop, nativeFileDropAfterReopen = verifyFileDrop };
+        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels, toolbar, customColors, compactOutsideClick = verifyOutsideClick, nativeFileDrop = verifyFileDrop, nativeFileDropAfterReopen = verifyFileDrop };
     }
 
     async Task<object> VerifyToolbarContrast(Border backdrop, IntPtr popup, Native.Point sample, CoreWebView2 core, string output,
-        bool liveTransparency)
+        bool liveTransparency, bool customColors)
     {
         var white = Microsoft.UI.Colors.White;
         var black = Microsoft.UI.Colors.Black;
@@ -151,6 +193,14 @@ internal sealed partial class AiWindow
                     SetTaskbarPalette(theme, theme == ElementTheme.Light
                         ? Color.FromArgb(255, 229, 241, 249) : Color.FromArgb(255, 22, 33, 51));
                     await Task.Delay(180);
+                    if (customColors)
+                    {
+                        var configured = PanelTheme.PaletteColor(UiAppearance.ColorValue(
+                            App.Appearance.BackplateColorFor(theme == ElementTheme.Dark), 0));
+                        var rendered = backplateTint.Color;
+                        if ((configured.R, configured.G, configured.B) != (rendered.R, rendered.G, rendered.B))
+                            throw new InvalidOperationException("The taskbar theme did not select the exact saved backplate color.");
+                    }
                     if (aiHeader.ActualTheme != theme || FlyoutAt(sample) != popup || AppWindow.IsVisible
                         || !ReferenceEquals(core, current?.View.CoreWebView2)
                         || await core.ExecuteScriptAsync("window.scrollY") != "180"
@@ -164,7 +214,7 @@ internal sealed partial class AiWindow
                         {
                             var fill = ((SolidColorBrush)button.Resources[prefix + "Background" + state]).Color;
                             var text = ((SolidColorBrush)button.Resources[prefix + "Foreground" + state]).Color;
-                            if (liveTransparency && theme == ElementTheme.Dark && state == "" && text != white)
+                            if (liveTransparency && !customColors && theme == ElementTheme.Dark && state == "" && text != white)
                                 throw new InvalidOperationException("Dark toolbar buttons lost their white foreground at high transparency.");
                             foreach (var desktop in new[] { black, white })
                             {
@@ -333,16 +383,16 @@ internal sealed partial class AiWindow
         var frame = ScreenshotCapture.Desktop();
         await frame.Crop(bounds.Left - frame.Left, bounds.Top - frame.Top,
             bounds.Right - bounds.Left, bounds.Bottom - bounds.Top).Save(output);
-        // The popup HWND includes invisible presenter margins. Locate the solid edges along the center lines.
+        // The popup HWND includes invisible presenter margins. Use the opaque
+        // page edges to locate the arranged panel; the glass can blend into the
+        // desktop and a light window can overlap the left edge.
         int centerX = (bounds.Left + bounds.Right) / 2, centerY = (bounds.Top + bounds.Bottom) / 2;
         bool IsPanel(int x, int y) => PixelDiff(x, y) > 80;
-        int left = Enumerable.Range(bounds.Left, bounds.Right - bounds.Left).First(x => IsPanel(x, centerY));
-        int top = Enumerable.Range(bounds.Top, bounds.Bottom - bounds.Top).First(y => IsPanel(centerX, y));
-        int right = left + width, bottom = top + height;
-        int visibleRight = Enumerable.Range(bounds.Left, bounds.Right - bounds.Left).Last(x => IsPanel(x, centerY)) + 1;
-        int visibleBottom = Enumerable.Range(bounds.Top, bounds.Bottom - bounds.Top).Last(y => IsPanel(centerX, y)) + 1;
-        if (Math.Abs(visibleRight - right) > 4 || Math.Abs(visibleBottom - bottom) > 4)
-            throw new InvalidOperationException($"Visible bounds {left},{top}–{visibleRight},{visibleBottom}; arranged size {width}×{height}; native bounds {bounds.Left},{bounds.Top}–{bounds.Right},{bounds.Bottom}.");
+        int right = Enumerable.Range(bounds.Left, bounds.Right - bounds.Left).Last(x => IsPanel(x, centerY)) + 1;
+        int bottom = Enumerable.Range(bounds.Top, bounds.Bottom - bounds.Top).Last(y => IsPanel(right - width / 4, y)) + 1;
+        int left = right - width, top = bottom - height;
+        if (left < bounds.Left || top < bounds.Top)
+            throw new InvalidOperationException($"Visible bounds {left},{top}–{right},{bottom}; arranged size {width}×{height}; native bounds {bounds.Left},{bounds.Top}–{bounds.Right},{bounds.Bottom}.");
         int PixelDiff(int x, int y)
         {
             int px = x - frame.Left, py = y - frame.Top;

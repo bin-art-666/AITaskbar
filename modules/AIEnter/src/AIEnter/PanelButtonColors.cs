@@ -11,17 +11,30 @@ internal static partial class PanelTheme
     static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ButtonBase, Dictionary<string, SolidColorBrush>> buttonBrushes = new();
     static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ButtonBase, ToolbarPalette> toolbarPalettes = new();
     internal static readonly IReadOnlyList<string> ButtonStates = Array.AsReadOnly(new[] { "", "PointerOver", "Pressed", "Checked", "CheckedPointerOver", "CheckedPressed" });
-    internal sealed record ToolbarPalette(ElementTheme Theme, Color Tint);
+    internal sealed record ToolbarPalette(bool Dark, Color Tint);
     const double MinimumToolbarContrast = 4.6; // Leave room for rounding in the compositor.
 
-    internal static void SetToolbarPalette(ButtonBase button, ToolbarPalette palette)
+    internal static void SetToolbarPalette(ButtonBase button, ToolbarPalette? palette)
     {
-        toolbarPalettes.Remove(button);
-        toolbarPalettes.Add(button, palette);
+        bool wasLinked = toolbarPalettes.Remove(button);
+        if (palette is not null) toolbarPalettes.Add(button, palette);
         ApplyButtonColors(button);
+        if (wasLinked && palette is null) AiControls.RestoreIconForeground(button);
     }
 
     internal static bool HasToolbarPalette(ButtonBase button) => toolbarPalettes.TryGetValue(button, out _);
+
+    internal static ToolbarPalette ResolveToolbarPalette(Color tint, bool dark, string custom)
+    {
+        if (custom.Length == 0) return new(dark, ReadableToolbarTint(tint, dark));
+        tint = WithAlpha(PaletteColor(UiAppearance.ColorValue(custom, 0)), tint.A);
+        var opaque = WithAlpha(tint, 255);
+        var black = Microsoft.UI.Colors.Black;
+        var white = Microsoft.UI.Colors.White;
+        if (Contrast(dark ? white : black, opaque) < MinimumToolbarContrast)
+            dark = Contrast(white, opaque) > Contrast(black, opaque);
+        return new(dark, RaiseOpacity(tint, dark ? white : black, black, white));
+    }
 
     internal static Color ReadableToolbarTint(Color tint, bool dark)
     {
@@ -31,13 +44,13 @@ internal static partial class PanelTheme
         return RaiseOpacity(tint, foreground, Microsoft.UI.Colors.Black, Microsoft.UI.Colors.White);
     }
 
-    static (Color Background, Color Foreground) ReadableButton(Color background, ToolbarPalette toolbar, bool selected)
+    internal static (Color Background, Color Foreground) ReadableButton(Color background, ToolbarPalette toolbar, bool selected)
     {
         var overBlack = Composite(toolbar.Tint, Microsoft.UI.Colors.Black);
         var overWhite = Composite(toolbar.Tint, Microsoft.UI.Colors.White);
         var black = Microsoft.UI.Colors.Black;
         var white = Microsoft.UI.Colors.White;
-        var preferred = toolbar.Theme == ElementTheme.Dark ? white : black;
+        var preferred = toolbar.Dark ? white : black;
         var alternative = preferred == black ? white : black;
         if (WorstContrast(preferred, background, overBlack, overWhite) >= MinimumToolbarContrast) return (background, preferred);
         if (WorstContrast(alternative, background, overBlack, overWhite) >= MinimumToolbarContrast) return (background, alternative);
@@ -103,7 +116,7 @@ internal static partial class PanelTheme
         double a = Luminance(first), b = Luminance(second);
         return (Math.Max(a, b) + .05) / (Math.Min(a, b) + .05);
     }
-    static Color PaletteColor(uint value) => Color.FromArgb((byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value);
+    internal static Color PaletteColor(uint value) => Color.FromArgb((byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value);
     static Color ReadableText(Color background, bool dark)
     {
         double a = background.A / 255d;
@@ -124,7 +137,7 @@ internal static partial class PanelTheme
             AiControls.RefreshToolbarIcon(button);
             return;
         }
-        bool dark = (toolbar?.Theme ?? button.ActualTheme) == ElementTheme.Dark;
+        bool dark = toolbar?.Dark ?? (button.ActualTheme == ElementTheme.Dark);
         var normal = PaletteColor(UiAppearance.ColorValue(App.Appearance.ButtonColor, dark ? 0x0FFFFFFFu : 0x1CFFFFFFu));
         uint accent = Application.Current.Resources.TryGetValue("SystemAccentColor", out var accentValue) && accentValue is Color color
             ? (0xFF000000u | (uint)color.R << 16 | (uint)color.G << 8 | color.B) : 0xFF0067C0u;

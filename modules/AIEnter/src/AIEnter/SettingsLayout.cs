@@ -58,14 +58,13 @@ internal sealed partial class SettingsPage
                 else if (title == "截图") { pageName = "任务栏"; groupTitle = title; }
                 else if (title == "全局快捷键") { pageName = "窗口与操作"; groupTitle = title; }
                 else if (title == "管理 AI 与顶栏排序") { pageName = "AI 服务"; groupTitle = "AI 列表与顺序"; }
-                else if (title == "窗口外观") { pageName = "外观"; groupTitle = "窗口外观"; }
+                else if (title == "顶栏背板") { pageName = "外观"; groupTitle = title; }
                 else if (title == "顶栏按钮颜色") { pageName = "外观"; groupTitle = title; }
                 else if (title == "设置备份") { pageName = "备份与恢复"; groupTitle = title; }
                 continue;
             }
             if (ReferenceEquals(element, provider)) { Flush(); pageName = "AI 服务"; groupTitle = "默认 AI"; }
             if (ReferenceEquals(element, floatingMode)) { Flush(); pageName = "窗口与操作"; groupTitle = "窗口行为"; }
-            if (ReferenceEquals(element, backplateTransparency)) { Flush(); pageName = "外观"; groupTitle = "顶栏背板"; }
             if (ReferenceEquals(element, buttonRadius)) { Flush(); pageName = "外观"; groupTitle = "按钮与提示"; }
             if (ReferenceEquals(element, followCorners)) { Flush(); pageName = "外观"; groupTitle = "网页圆角"; }
             if (ReferenceEquals(element, taskbarSize)) { Flush(); pageName = "任务栏"; groupTitle = "任务栏入口"; }
@@ -115,6 +114,7 @@ internal sealed partial class SettingsPage
         previewPlate.SetSurfaceContent(content);
         var sample = new StackPanel { Spacing = 8 };
         sample.Children.Add(Section("实时预览"));
+        sample.Children.Add(backplatePreviewTone);
         sample.Children.Add(PanelTheme.Hint("按钮、底部状态提示和背板会随设置即时更新。"));
         var previewBackdrop = new Grid { MinHeight = 110 };
         previewBackdrop.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -141,15 +141,41 @@ internal sealed partial class SettingsPage
         previewPlate.Padding = new Thickness(appearance.WindowPadding + 8);
         previewSelectedButton.CornerRadius = previewNormalButton.CornerRadius = previewStatusButton.CornerRadius = new CornerRadius(appearance.ButtonRadius);
         previewSelectedButton.Height = previewNormalButton.Height = previewStatusButton.Height = appearance.ButtonSize;
-        previewPlate.UpdateAppearance(appearance);
-        previewPlate.BorderBrush = new SolidColorBrush(HighContrast ? TextColor() : Windows.UI.Color.FromArgb(255, 218, 228, 231));
-        var normal = HighContrast ? SystemColor(Windows.UI.ViewManagement.UIColorType.Background, Microsoft.UI.Colors.White) : ColorValue(appearance.ButtonColor, 0x1C14DDFF);
-        var accent = HighContrast ? SystemColor(Windows.UI.ViewManagement.UIColorType.Accent, Microsoft.UI.Colors.DodgerBlue) : ColorValue(appearance.SelectedButtonColor, 0xFF32D4EB);
+        bool highContrast = HighContrast;
+        var systemBackground = highContrast ? SystemColor(Windows.UI.ViewManagement.UIColorType.Background, Microsoft.UI.Colors.White) : (Windows.UI.Color?)null;
+        bool dark = backplatePreviewTone.SelectedIndex == 1;
+        var neutral = PanelTheme.PaletteColor(PreviewBackplateBase(dark));
+        neutral.A = new Windows.UI.ViewManagement.UISettings().AdvancedEffectsEnabled ? PanelTheme.BackplateColor(appearance).A : (byte)255;
+        var palette = !highContrast && appearance.CustomBackplate
+            ? PanelTheme.ResolveToolbarPalette(neutral, dark, appearance.BackplateColorFor(dark)) : null;
+        previewPlate.UpdateAppearance(appearance, systemBackground ?? palette?.Tint);
+        previewPlate.BorderBrush = new SolidColorBrush(highContrast ? TextColor() : Windows.UI.Color.FromArgb(255, 218, 228, 231));
+        var normal = systemBackground ?? ColorValue(appearance.ButtonColor, 0x1C14DDFF);
+        var accent = highContrast ? SystemColor(Windows.UI.ViewManagement.UIColorType.Accent, Microsoft.UI.Colors.DodgerBlue) : ColorValue(appearance.SelectedButtonColor, 0xFF32D4EB);
+        var normalText = highContrast ? new SolidColorBrush(TextColor()) : null;
+        var selectedText = normalText;
+        if (palette is not null)
+        {
+            var readableNormal = PanelTheme.ReadableButton(normal, palette, selected: false);
+            var readableSelected = PanelTheme.ReadableButton(accent, palette, selected: true);
+            normal = readableNormal.Background;
+            accent = readableSelected.Background;
+            normalText = new SolidColorBrush(readableNormal.Foreground);
+            selectedText = new SolidColorBrush(readableSelected.Foreground);
+        }
+        SetPreviewInk((TextBlock)previewNormalButton.Child, normalText);
+        SetPreviewInk((TextBlock)previewSelectedButton.Child, selectedText);
         previewSelectedButton.Background = previewStatusButton.Background = new SolidColorBrush(accent);
         previewNormalButton.Background = new SolidColorBrush(normal);
         previewSelectedButton.BorderThickness = previewNormalButton.BorderThickness = previewStatusButton.BorderThickness = new Thickness(1);
         previewSelectedButton.BorderBrush = previewStatusButton.BorderBrush = new SolidColorBrush(HighContrast ? TextColor() : accent);
         previewNormalButton.BorderBrush = new SolidColorBrush(HighContrast ? TextColor() : normal);
+    }
+
+    static void SetPreviewInk(TextBlock label, Brush? ink)
+    {
+        if (ink is null) label.ClearValue(TextBlock.ForegroundProperty);
+        else label.Foreground = ink;
     }
 
     void RestorePage(string page)

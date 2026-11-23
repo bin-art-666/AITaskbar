@@ -26,16 +26,17 @@ internal sealed partial class SettingsPage
     }
     void UpdateColorLabels()
     {
-        void Label(Button button, string title, string value, uint fallback)
-        {
-            uint color = UiAppearance.ColorValue(value, fallback);
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            row.Children.Add(new Border { Width = 20, Height = 20, CornerRadius = new CornerRadius(4), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Gray), Background = new SolidColorBrush(Color.FromArgb((byte)(color >> 24),(byte)(color >> 16),(byte)(color >> 8),(byte)color)) });
-            row.Children.Add(new TextBlock { Text = title + "：" + (value.Length == 0 ? "跟随系统" : value), VerticalAlignment = VerticalAlignment.Center });
-            button.Content = row;
-        }
-        Label(normalColorButton, "普通按钮", normalButtonColor, 0x1CFFFFFF);
-        Label(selectedColorButton, "选中 AI 按钮", selectedButtonColor, 0xFF0067C0);
+        SetColorLabel(normalColorButton, "普通按钮", normalButtonColor, 0x1CFFFFFF, "跟随系统");
+        SetColorLabel(selectedColorButton, "选中 AI 按钮", selectedButtonColor, 0xFF0067C0, "跟随系统");
+    }
+    static void SetColorLabel(Button button, string title, string value, uint fallback, string automatic)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(new Border { Width = 20, Height = 20, CornerRadius = new CornerRadius(4), BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+            Background = new SolidColorBrush(PanelTheme.PaletteColor(UiAppearance.ColorValue(value, fallback))) });
+        row.Children.Add(new TextBlock { Text = title + "：" + (value.Length == 0 ? automatic : value), VerticalAlignment = VerticalAlignment.Center });
+        button.Content = row;
     }
     void ChooseButtonColor(bool selected)
     {

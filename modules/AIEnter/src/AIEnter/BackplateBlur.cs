@@ -120,11 +120,12 @@ internal sealed class BackplateSurface : ContentControl, IDisposable
 
     internal void SetSurfaceContent(UIElement child) => content.Content = child;
 
-    internal void UpdateAppearance(UiAppearance appearance)
+    internal void UpdateAppearance(UiAppearance appearance, Windows.UI.Color? overrideTint = null)
     {
         tint.CornerRadius = CornerRadius;
-        tint.Background = new SolidColorBrush(PanelTheme.BackplateColor(appearance));
-        blur.Update(appearance.BackplateBlur, CornerRadius);
+        var color = overrideTint ?? PanelTheme.BackplateColor(appearance);
+        tint.Background = new SolidColorBrush(color);
+        blur.Update(overrideTint is { A: 255 } ? 0 : appearance.BackplateBlur, CornerRadius);
     }
 
     public void Dispose() => blur.Dispose();

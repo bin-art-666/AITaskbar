@@ -85,4 +85,10 @@ internal static class AiControls
             return;
         }
     }
+
+    internal static void RestoreIconForeground(ButtonBase button)
+    {
+        if (button.Content is Viewbox { Child: Canvas canvas } && canvas.Children[0] is Microsoft.UI.Xaml.Shapes.Path path)
+            path.SetBinding(Microsoft.UI.Xaml.Shapes.Shape.StrokeProperty, new Binding { Source = button, Path = new PropertyPath("Foreground") });
+    }
 }

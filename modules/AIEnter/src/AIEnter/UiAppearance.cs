@@ -2,8 +2,10 @@ namespace AIEnter;
 
 internal sealed record UiAppearance(int ButtonRadius = UiDefaults.ButtonRadius, int ButtonSize = UiDefaults.ButtonSize, int WindowPadding = UiDefaults.WindowPadding,
     int TaskbarIconSize = UiDefaults.TaskbarIconSize, bool GlowEnabled = UiDefaults.GlowEnabled, int GlowRange = UiDefaults.GlowRange, int GlowIntensity = UiDefaults.GlowIntensity, int BackplateRadius = UiDefaults.BackplateRadius, string ButtonColor = UiDefaults.ButtonColor, string SelectedButtonColor = UiDefaults.SelectedButtonColor,
-    int BackplateTransparency = UiDefaults.BackplateTransparency, int BackplateBlur = UiDefaults.BackplateBlur, int FlowSpeed = UiDefaults.FlowSpeed, bool ScreenshotDoubleClick = true, int ScreenshotSeconds = 20, string ScreenshotFolder = "")
+    int BackplateTransparency = UiDefaults.BackplateTransparency, int BackplateBlur = UiDefaults.BackplateBlur, int FlowSpeed = UiDefaults.FlowSpeed, bool ScreenshotDoubleClick = true, int ScreenshotSeconds = 20, string ScreenshotFolder = "",
+    bool CustomBackplate = false, string LightBackplateColor = "", string DarkBackplateColor = "")
 {
+    internal string BackplateColorFor(bool dark) => CustomBackplate ? dark ? DarkBackplateColor : LightBackplateColor : "";
     internal static bool ValidColor(string? value) => value != null && (value.Length == 0
         || (value.Length is 7 or 9 && value[0] == '#' && value.AsSpan(1).ToString().All(Uri.IsHexDigit)));
     internal static uint ColorValue(string value, uint fallback) => value.Length == 0 ? fallback
@@ -20,5 +22,8 @@ internal sealed record UiAppearance(int ButtonRadius = UiDefaults.ButtonRadius, 
             throw new InvalidDataException("截图目录需为完整的本地路径，留空使用图片目录。");
         if (!ValidColor(ButtonColor) || !ValidColor(SelectedButtonColor))
             throw new InvalidDataException("按钮颜色需为 #RRGGBB 或 #AARRGGBB。");
+        if (LightBackplateColor is not { Length: 0 or 7 } || !ValidColor(LightBackplateColor)
+            || DarkBackplateColor is not { Length: 0 or 7 } || !ValidColor(DarkBackplateColor))
+            throw new InvalidDataException("背板颜色需为 #RRGGBB，留空则沿用当前主题。");
     }
 }

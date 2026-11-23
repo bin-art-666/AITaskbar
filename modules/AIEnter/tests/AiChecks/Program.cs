@@ -122,6 +122,14 @@ try
     var maximumAppearance = new UiAppearance(20, 44, 16, 36, true, 12, 100, 40);
     appearanceStore.Save(appearanceStore.Data with { Appearance = maximumAppearance });
     Check(new AiOptionsStore(appearancePath).Data.Appearance == maximumAppearance, "Appearance settings survive reload");
+    var customBackplate = maximumAppearance with { CustomBackplate = true, LightBackplateColor = "#F0E8DA" };
+    appearanceStore.Save(appearanceStore.Data with { Appearance = customBackplate });
+    var loadedBackplate = new AiOptionsStore(appearancePath).Data.Appearance!;
+    Check(loadedBackplate == customBackplate && loadedBackplate.BackplateColorFor(false) == "#F0E8DA"
+        && loadedBackplate.BackplateColorFor(true) == "", "Each backplate color is optional and survives reload");
+    Check((loadedBackplate with { CustomBackplate = false }).BackplateColorFor(false) == "",
+        "Following the taskbar ignores the saved custom tint");
+    Reject(() => appearanceStore.Save(appearanceStore.Data with { Appearance = customBackplate with { DarkBackplateColor = "#80112233" } }));
     Check(new UiAppearance().BackplateRadius == 20, "Missing backplate setting uses the approved default");
     foreach (var invalid in new[] { maximumAppearance with { BackplateRadius = 11 }, maximumAppearance with { BackplateRadius = 41 }, maximumAppearance with { ButtonRadius = 21 }, maximumAppearance with { ButtonSize = 27 },
         maximumAppearance with { ButtonSize = 45 }, maximumAppearance with { WindowPadding = 17 }, maximumAppearance with { TaskbarIconSize = 15 },

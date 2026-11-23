@@ -79,7 +79,8 @@ internal sealed partial class SettingsPage : UserControl
         fields.Children.Add(PanelTheme.Hint("需要包含 Ctrl、Alt 或 Win。保存时会检测系统占用；冲突不会替换当前快捷键。"));
         InitializeProviderManagement(fields);
         fields.Children.Add(floatingMode); fields.Children.Add(pinned);
-        fields.Children.Add(Section("窗口外观"));
+        fields.Children.Add(Section("顶栏背板"));
+        InitializeBackplateColorSettings(fields);
         fields.Children.Add(backplateTransparency); fields.Children.Add(backplateBlur); fields.Children.Add(backplateRadius);
         fields.Children.Add(PanelTheme.Hint("透明度越高越通透；模糊度控制背景虚化。透明度为 0 时背板完全不透明，会遮住模糊效果；模糊度为 0 时关闭虚化。"));
         fields.Children.Add(buttonRadius); fields.Children.Add(buttonSize); fields.Children.Add(padding);
@@ -146,11 +147,13 @@ internal sealed partial class SettingsPage : UserControl
         var d = new UiAppearance();
         LoadAppearance(ReadAppearance() with { ButtonRadius = d.ButtonRadius, ButtonSize = d.ButtonSize,
             WindowPadding = d.WindowPadding, BackplateRadius = d.BackplateRadius, ButtonColor = d.ButtonColor,
-            SelectedButtonColor = d.SelectedButtonColor, BackplateTransparency = d.BackplateTransparency, BackplateBlur = d.BackplateBlur });
+            SelectedButtonColor = d.SelectedButtonColor, BackplateTransparency = d.BackplateTransparency, BackplateBlur = d.BackplateBlur,
+            CustomBackplate = d.CustomBackplate, LightBackplateColor = d.LightBackplateColor, DarkBackplateColor = d.DarkBackplateColor });
     }
     void LoadAppearance(UiAppearance value)
     {
         LoadButtonColors(value);
+        LoadBackplateColors(value);
         backplateRadius.Value = value.BackplateRadius; backplateTransparency.Value = value.BackplateTransparency; backplateBlur.Value = value.BackplateBlur;
         buttonRadius.Value = value.ButtonRadius; buttonSize.Value = value.ButtonSize;
         padding.Value = value.WindowPadding; taskbarSize.Value = value.TaskbarIconSize; UpdateTaskbarSizeLabel();
@@ -160,7 +163,8 @@ internal sealed partial class SettingsPage : UserControl
     }
     void UpdateTaskbarSizeLabel() { }
     UiAppearance ReadAppearance() => new((int)buttonRadius.Value, (int)buttonSize.Value, (int)padding.Value,
-        (int)taskbarSize.Value, glow.IsOn, (int)glowRange.Value, (int)glowIntensity.Value, (int)backplateRadius.Value, normalButtonColor, selectedButtonColor, (int)backplateTransparency.Value, (int)backplateBlur.Value, (int)flowSpeed.Value, screenshotDoubleClick.IsOn, (int)screenshotSeconds.Value, screenshotFolder.Text.Trim());
+        (int)taskbarSize.Value, glow.IsOn, (int)glowRange.Value, (int)glowIntensity.Value, (int)backplateRadius.Value, normalButtonColor, selectedButtonColor, (int)backplateTransparency.Value, (int)backplateBlur.Value, (int)flowSpeed.Value, screenshotDoubleClick.IsOn, (int)screenshotSeconds.Value, screenshotFolder.Text.Trim(),
+        backplateColorMode.SelectedIndex == 1, lightBackplateColor, darkBackplateColor);
     void Preview()
     {
         if (syncing) return;
