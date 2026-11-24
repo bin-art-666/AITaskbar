@@ -86,8 +86,8 @@ internal static class RunningWindows
 
     internal static bool IsMinimized(RunningWindow window) => IsIconic(window.Handle);
 
-    internal static bool Minimize(RunningWindow window) =>
-        IsCurrent(window) && ShowWindowAsync(window.Handle, 6); // SW_MINIMIZE
+    internal static bool Minimize(RunningWindow window, bool activateNext = true) =>
+        IsCurrent(window) && ShowWindowAsync(window.Handle, activateNext ? 6 : 7); // SW_MINIMIZE / SW_SHOWMINNOACTIVE
 
     internal static bool RequestRestore(RunningWindow window, bool activate = true) =>
         IsCurrent(window) && (!IsMinimized(window) || ShowWindowAsync(window.Handle, activate ? 9 : 4)); // SW_RESTORE / SW_SHOWNOACTIVATE
@@ -119,8 +119,8 @@ internal static class RunningWindows
     internal static bool HideForTransition(RunningWindow window, bool wasMinimized) =>
         IsCurrent(window) && IsMinimized(window) == wasMinimized && ShowWindowAsync(window.Handle, 0); // SW_HIDE
 
-    internal static bool ShowAfterHide(RunningWindow window, bool minimized) =>
-        OwnsHandle(window) && ShowWindowAsync(window.Handle, minimized ? 7 : 9); // SW_SHOWMINNOACTIVE / SW_RESTORE
+    internal static bool ShowAfterHide(RunningWindow window, bool minimized, bool activate = true) =>
+        OwnsHandle(window) && ShowWindowAsync(window.Handle, minimized ? 7 : activate ? 9 : 4);
 
     internal static void ReshowAfterInterruptedTransition(RunningWindow window)
     {
