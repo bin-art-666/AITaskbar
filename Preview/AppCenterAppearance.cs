@@ -8,6 +8,7 @@ internal sealed record AppCenterIconStyle
     internal const int LengthMin = 4, LengthMax = 100, LapMin = 5, LapMax = 40;
 
     public bool ShowInTaskbar { get; init; } = true;
+    public bool AnimateOutline { get; init; }
     public int Size { get; init; } = 65;
     public int Radius { get; init; } = 15;
     public int Gap { get; init; } = 9;
@@ -26,8 +27,10 @@ internal sealed record AppCenterIconStyle
 
 internal sealed record AppCenterPanelStyle
 {
+    internal const QuickBackdrop DefaultBackdrop = QuickBackdrop.Dark;
+
     public bool Spacious { get; init; }
-    public QuickBackdrop Backdrop { get; init; } = QuickBackdrop.FollowTaskbar;
+    public QuickBackdrop Backdrop { get; init; } = DefaultBackdrop;
     public bool ManualOrder { get; init; }
 }
 
@@ -48,7 +51,7 @@ internal sealed record AppCenterAppearance
                 {
                     Icon = (value.Icon ?? new()).Normalize(),
                     Panel = panel.Backdrop is QuickBackdrop.Light or QuickBackdrop.Dark or QuickBackdrop.FollowTaskbar
-                        ? panel : panel with { Backdrop = QuickBackdrop.FollowTaskbar }
+                        ? panel : panel with { Backdrop = AppCenterPanelStyle.DefaultBackdrop }
                 };
             }
         }

@@ -54,6 +54,7 @@ internal sealed partial class PreviewApplicationStrip
         VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed
     };
     private AppGroup[] groups = [];
+    internal IReadOnlyList<AppGroup> Groups => groups;
     private nint foreground;
     private (nint Window, long Started) mouseActivation;
     private int iconSize;
@@ -119,7 +120,7 @@ internal sealed partial class PreviewApplicationStrip
         appCenterIcon.SetOutlineVisible(iconLayout.ShowIconOutline);
         appCenterIcon.Apply(appCenterStyle);
         AppCenterButton = IconButton("应用中心", appCenterIcon);
-        TrackIconHover(AppCenterButton, appCenterIcon);
+        iconHover.TrackButton(AppCenterButton, appCenterIcon);
         AppCenterButton.Margin = new Thickness(0, 0, iconLayout.Gap, 0);
         AppCenterButton.Visibility = appCenterStyle.ShowInTaskbar ? Visibility.Visible : Visibility.Collapsed;
         AppCenterButton.VerticalContentAlignment = VerticalAlignment.Top;
@@ -132,7 +133,7 @@ internal sealed partial class PreviewApplicationStrip
         taskViewIcon = new TaskViewIcon(iconSize);
         taskViewIcon.ApplyOutline(iconLayout, accessibility.HighContrast);
         taskViewButton = IconButton("任务视图", taskViewIcon);
-        TrackIconHover(taskViewButton, taskViewIcon);
+        iconHover.TrackButton(taskViewButton, taskViewIcon);
         taskViewButton.VerticalContentAlignment = VerticalAlignment.Top;
         ToolTipService.SetToolTip(taskViewButton, "任务视图（Win + Tab）");
         taskViewButton.Click += (_, _) => OpenTaskView();
@@ -619,7 +620,7 @@ internal sealed partial class PreviewApplicationStrip
         };
         var feedback = new TaskbarAppFeedback(plate, iconSize);
         feedback.ApplyStyle(feedbackStyle);
-        TrackIconHover(button, plate, group.Pin is null ? runningApps.Panel : null);
+        iconHover.TrackButton(button, plate, group.Pin is null ? runningApps.Panel : null);
         button.Content = feedback.Surface;
         nint? pressedForeground = null;
         button.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
@@ -643,15 +644,6 @@ internal sealed partial class PreviewApplicationStrip
         EnableAppReordering(button, group.Pin is null ? runningApps : pinnedApps);
         SetAppMenu(view);
         return view;
-    }
-
-    private void TrackIconHover(Button button, FrameworkElement icon, FrameworkElement? scrollViewport = null)
-    {
-        button.Resources["ButtonBackgroundPointerOver"] = button.Background;
-        button.Resources["ButtonBackgroundPressed"] = button.Background;
-        button.Resources["ButtonBorderBrushPointerOver"] = button.Background;
-        button.Resources["ButtonBorderBrushPressed"] = button.Background;
-        iconHover.Track(icon, scrollViewport);
     }
 
     private Button IconButton(string name, object content, bool glyph = false)

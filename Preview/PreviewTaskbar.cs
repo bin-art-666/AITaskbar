@@ -15,6 +15,7 @@ internal sealed class PreviewTaskbar : Window
     private readonly DesktopAppBar bar;
     private readonly PinnedApps pins;
     private readonly DispatcherQueueTimer refresh;
+    private readonly DispatcherQueueTimer appCenterWarmup;
     private readonly PreviewApplicationStrip tasks;
     private readonly TaskbarSystemTray tray;
     private readonly ShowDesktopButton showDesktop;
@@ -65,17 +66,32 @@ internal sealed class PreviewTaskbar : Window
         };
         void ToggleAppCenter()
         {
-            if (appCenter is not null) { appCenter.Close(); return; }
+            appCenterWarmup.Stop();
             try
             {
                 tasks.DismissThumbnails();
-                var window = new AppCenterWindow(app, AppWindow, pins, root, tasks.Refresh);
-                appCenter = window;
-                tasks.SetAppCenterExpanded(true);
-                window.Closed += (_, _) => { appCenter = null; tasks.SetAppCenterExpanded(false); };
+                GetAppCenter().ToggleVisibility();
             }
             catch (Exception error) { reportFailure(error); Report("无法打开应用中心。"); }
         }
+        AppCenterWindow GetAppCenter()
+        {
+            if (appCenter is { } existing) return existing;
+            var window = new AppCenterWindow(app, AppWindow, pins, root, () => tasks.Groups, tasks.Refresh);
+            appCenter = window;
+            window.ExpandedChanged += tasks.SetAppCenterExpanded;
+            window.Closed += (_, _) => { appCenter = null; tasks.SetAppCenterExpanded(false); };
+            return window;
+        }
+        appCenterWarmup = DispatcherQueue.CreateTimer();
+        appCenterWarmup.Interval = TimeSpan.FromMilliseconds(1400);
+        appCenterWarmup.IsRepeating = false;
+        appCenterWarmup.Tick += (_, _) =>
+        {
+            if (closed || !app.CurrentAppCenterAppearance.Icon.ShowInTaskbar) return;
+            try { _ = GetAppCenter(); }
+            catch (Exception error) { reportFailure(error); }
+        };
         ConfigureHaloDrop(app.HaloModule, halo, Report);
         AcceptDrop(ai, AIEnter.DropPayload.Supported, async view =>
         {
@@ -191,9 +207,10 @@ internal sealed class PreviewTaskbar : Window
         Closed += (_, _) =>
         {
             closed = true;
+            appCenterWarmup.Stop();
             aiService.DetachTaskbar(ai);
             app.HaloModule.DetachTaskbar(halo);
-            appCenter?.Close();
+            appCenter?.HideAndClose();
             tray.Dispose();
             systemTaskbar.Dispose();
             refresh.Stop();
@@ -228,6 +245,7 @@ internal sealed class PreviewTaskbar : Window
         // WinUI can initially move the window back into the now smaller work area.
         bar.Reposition();
         tasks.EnableTitleBarMinimize();
+        appCenterWarmup.Start();
     }
 
     internal void SetIconSize(int size)
@@ -283,10 +301,18 @@ internal sealed class PreviewTaskbar : Window
     internal void SetAppCenterIcon(AppCenterIconStyle style)
     {
         tasks.SetAppCenterIcon(style);
-        if (!style.ShowInTaskbar) appCenter?.Close();
+        if (!style.ShowInTaskbar)
+        {
+            appCenterWarmup.Stop();
+            appCenter?.HideAndClose();
+        }
         else appCenter?.RefreshStyle();
     }
-    internal void SetAppFeedback(TaskbarAppFeedbackStyle style) => tasks.SetAppFeedback(style);
+    internal void SetAppFeedback(TaskbarAppFeedbackStyle style)
+    {
+        tasks.SetAppFeedback(style);
+        appCenter?.SetAppFeedback(style);
+    }
     internal void SetIconLayout(PreviewIconLayout layout)
     {
         tasks.SetIconLayout(layout);

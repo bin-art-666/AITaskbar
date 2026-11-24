@@ -22,8 +22,16 @@ internal sealed record AppCenterBackplate(ElementTheme Theme, Color Tint, Color 
         var barTint = bar is null || bar.Material == "normal" ? barNeutral : PreviewBarAppearance.FromAbgr(bar.Abgr);
         var barSolid = AIEnter.PanelTheme.Composite(barTint, barNeutral);
         bool barGlass = system.AdvancedEffectsEnabled && bar is { Material: "blur" or "acrylic" or "clear" };
+        var taskbarTint = barGlass ? barTint : barSolid;
+        var darkText = Color.FromArgb(255, 241, 247, 244);
 
-        bool dark = mode == QuickBackdrop.Dark || mode == QuickBackdrop.FollowTaskbar && barDark;
+        if (mode == QuickBackdrop.Dark)
+        {
+            var black = Microsoft.UI.Colors.Black;
+            return new(ElementTheme.Dark, black, black, darkText, taskbarTint, 0);
+        }
+
+        bool dark = mode == QuickBackdrop.FollowTaskbar && barDark;
         Color tint, solid;
         float blur;
         if (mode == QuickBackdrop.FollowTaskbar)
@@ -37,7 +45,7 @@ internal sealed record AppCenterBackplate(ElementTheme Theme, Color Tint, Color 
         else
         {
             var material = new AIEnter.MaterialOptions();
-            var (alpha, rgb) = material.FlatColor(dark);
+            var (alpha, rgb) = material.FlatColor(dark: false);
             solid = AIEnter.PanelTheme.PaletteColor(0xFF000000u | rgb);
             tint = solid;
             if (system.AdvancedEffectsEnabled)
@@ -47,6 +55,6 @@ internal sealed record AppCenterBackplate(ElementTheme Theme, Color Tint, Color 
         }
 
         return new(dark ? ElementTheme.Dark : ElementTheme.Light, tint, solid,
-            dark ? Color.FromArgb(255, 241, 247, 244) : Color.FromArgb(255, 25, 37, 35), barGlass ? barTint : barSolid, blur);
+            dark ? darkText : Color.FromArgb(255, 25, 37, 35), taskbarTint, blur);
     }
 }

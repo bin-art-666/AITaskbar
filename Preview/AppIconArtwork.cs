@@ -15,7 +15,18 @@ internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage LightGra
     internal static Windows.UI.Color FallbackColor(IconColorMode mode) => mode == IconColorMode.Dark
         ? Windows.UI.Color.FromArgb(255, 234, 240, 248) : Windows.UI.Color.FromArgb(255, 39, 46, 56);
 
-    public static AppIconArtwork? Load(string? executable, string? appId = null)
+    internal sealed record Prepared(byte[] Original, byte[] Light, byte[] Dark, bool HasPlate)
+    {
+        internal AppIconArtwork Create()
+        {
+            var original = ToImage(Original);
+            var light = ReferenceEquals(Light, Original) ? original : ToImage(Light);
+            var dark = ReferenceEquals(Dark, Light) ? light : ReferenceEquals(Dark, Original) ? original : ToImage(Dark);
+            return new(original, light, dark, HasPlate);
+        }
+    }
+
+    internal static Prepared? Prepare(string? executable, string? appId)
     {
         using var bitmap = LoadArtwork(executable, appId);
         if (bitmap is null) return null;
@@ -23,25 +34,26 @@ internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage LightGra
             ? PackagedAppIcon.LoadStoreIconForLightBackground() : null;
         var artwork = storeIcon ?? bitmap;
         var (bounds, hasPlate, luminance) = Measure(artwork);
-        var original = ToImage(bitmap);
         if (bounds.IsEmpty) return null;
+        var original = Encode(bitmap);
         if (hasPlate && executable is not null) bounds = RemoveTtCloudFrame(executable, artwork, bounds);
         using var foreground = artwork.Clone(bounds, PixelFormat.Format32bppArgb);
         if (hasPlate)
         {
             using var plate = RoundedPlate(foreground);
-            var image = ToImage(plate);
+            var image = Encode(plate);
             return new(original, image, image, true);
         }
 
-        var graphic = ToImage(foreground);
+        var graphic = bounds == new Rectangle(0, 0, bitmap.Width, bitmap.Height) && storeIcon is null
+            ? original : Encode(foreground);
         bool chatGpt = StringComparer.OrdinalIgnoreCase.Equals(appId, PackagedAppPin.ChatGptId);
         var light = luminance >= .8 ? ContrastGraphic(foreground, darkPlate: false, chatGpt) : graphic;
         var dark = luminance <= .30 ? ContrastGraphic(foreground, darkPlate: true, chatGpt) : graphic;
         return new(original, light, dark, false);
     }
 
-    private static BitmapImage ContrastGraphic(Bitmap foreground, bool darkPlate, bool monochrome)
+    private static byte[] ContrastGraphic(Bitmap foreground, bool darkPlate, bool monochrome)
     {
         using var adjusted = new Bitmap(foreground.Width, foreground.Height, PixelFormat.Format32bppArgb);
         for (int y = 0; y < foreground.Height; y++)
@@ -51,7 +63,7 @@ internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage LightGra
             if (pixel.A == 0) continue;
             adjusted.SetPixel(x, y, Color.FromArgb(pixel.A, Adjust(pixel.R), Adjust(pixel.G), Adjust(pixel.B)));
         }
-        return ToImage(adjusted);
+        return Encode(adjusted);
 
         // The ChatGPT mark is monochrome. For colored marks keep the hue and shift only toward the contrasting shade.
         int Adjust(byte channel) => monochrome ? 255 - channel :
@@ -69,6 +81,7 @@ internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage LightGra
 
     private static Bitmap? LoadBitmap(string executable)
     {
+        if (!File.Exists(executable)) return null;
         if (StringComparer.OrdinalIgnoreCase.Equals(executable, RunningWindows.SystemSettingsExecutable))
         {
             string images = Path.Combine(Path.GetDirectoryName(executable)!, "images");
@@ -194,11 +207,16 @@ internal sealed record AppIconArtwork(BitmapImage Original, BitmapImage LightGra
             samples.Select(color => color.B).Order().ElementAt(middle));
     }
 
-    private static BitmapImage ToImage(Bitmap bitmap)
+    private static byte[] Encode(Bitmap bitmap)
     {
         using var stream = new MemoryStream();
         bitmap.Save(stream, ImageFormat.Png);
-        stream.Position = 0;
+        return stream.ToArray();
+    }
+
+    private static BitmapImage ToImage(byte[] png)
+    {
+        using var stream = new MemoryStream(png, writable: false);
         using var imageStream = stream.AsRandomAccessStream();
         var image = new BitmapImage();
         image.SetSource(imageStream);

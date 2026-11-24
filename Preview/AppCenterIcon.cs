@@ -57,7 +57,8 @@ internal sealed class AppCenterIcon : Grid
     internal void Apply(AppCenterIconStyle next)
     {
         if (next == style) return;
-        bool animationChanged = next.LapTenths != style.LapTenths || next.LineLength != style.LineLength;
+        bool animationChanged = next.AnimateOutline != style.AnimateOutline ||
+            next.LapTenths != style.LapTenths || next.LineLength != style.LineLength;
         style = next;
         RefreshGeometry();
         if (animationChanged) RefreshEdge();
@@ -115,9 +116,10 @@ internal sealed class AppCenterIcon : Grid
 
     private void RefreshEdge()
     {
-        if (visual is not null) visual.IsVisible = expanded && loaded;
+        bool visible = style.AnimateOutline && expanded && loaded;
+        if (visual is not null) visual.IsVisible = visible;
         edge?.StopAnimation(nameof(CompositionGeometry.TrimOffset));
-        if (!expanded || !loaded) return;
+        if (!visible) return;
         var compositor = ElementCompositionPreview.GetElementVisual(this).Compositor;
         if (edge is null)
         {

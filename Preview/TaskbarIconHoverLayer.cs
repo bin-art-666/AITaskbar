@@ -25,6 +25,15 @@ internal sealed class TaskbarIconHoverLayer
         Surface.LayoutUpdated += (_, _) => Reposition();
     }
 
+    internal void TrackButton(Button button, FrameworkElement artwork, FrameworkElement? scrollViewport = null)
+    {
+        button.Resources["ButtonBackgroundPointerOver"] = button.Background;
+        button.Resources["ButtonBackgroundPressed"] = button.Background;
+        button.Resources["ButtonBorderBrushPointerOver"] = button.Background;
+        button.Resources["ButtonBorderBrushPressed"] = button.Background;
+        Track(artwork, scrollViewport);
+    }
+
     internal void Track(FrameworkElement target, FrameworkElement? scrollViewport = null)
     {
         target.PointerEntered += (_, args) =>

@@ -22,9 +22,11 @@ internal sealed class AppCenterSettingsPage : Grid
         Header = "在任务栏显示应用中心", OnContent = "显示", OffContent = "隐藏"
     };
     private readonly ToggleButton animate = new() { Content = "预览展开状态" };
+    private readonly ToggleSwitch animateOutline = new() { Header = "展开时显示动态描边" };
     private readonly Border samplePanel = new() { CornerRadius = new CornerRadius(10), MaxWidth = 430,
         HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly StackPanel sampleRows = new() { Padding = new Thickness(14) };
+    private readonly TextBox sampleSearch = AppCenterSearch.Create(compact: true);
     private readonly Border sampleTaskbar = new();
     private readonly SolidColorBrush sampleText = new();
     private readonly List<Action> syncSliders = [];
@@ -99,7 +101,7 @@ internal sealed class AppCenterSettingsPage : Grid
         body.Children.Add(showInTaskbar);
         var sample = new Button { Content = sampleIcon, Padding = new Thickness(6), VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(sample, "应用中心图标预览");
-        sample.Click += (_, _) => animate.IsChecked = animate.IsChecked != true;
+        sample.Click += (_, _) => { if (animate.IsEnabled) animate.IsChecked = animate.IsChecked != true; };
         animate.Checked += (_, _) => UpdatePreview(true);
         animate.Unchecked += (_, _) => UpdatePreview(false);
         void UpdatePreview(bool expanded)
@@ -119,11 +121,17 @@ internal sealed class AppCenterSettingsPage : Grid
         AddSlider(body, "白色方块间距", 0, AppCenterIconStyle.GapMax,
             icon => icon.Gap, (icon, value) => icon with { Gap = value });
         body.Children.Add(Heading("展开动画"));
+        AutomationProperties.SetName(animateOutline, "展开时显示动态描边");
+        animateOutline.Toggled += (_, _) =>
+        {
+            if (!syncing) Apply(draft with { Icon = draft.Icon with { AnimateOutline = animateOutline.IsOn } });
+        };
+        body.Children.Add(animateOutline);
         AddSlider(body, "白线长度", AppCenterIconStyle.LengthMin, AppCenterIconStyle.LengthMax,
-            icon => icon.LineLength, (icon, value) => icon with { LineLength = value });
+            icon => icon.LineLength, (icon, value) => icon with { LineLength = value }, enabled: icon => icon.AnimateOutline);
         AddSlider(body, "绕圈用时", AppCenterIconStyle.LapMin, AppCenterIconStyle.LapMax,
             icon => icon.LapTenths, (icon, value) => icon with { LapTenths = value },
-            value => (value / 10d).ToString("0.#", CultureInfo.CurrentCulture) + " 秒/圈");
+            value => (value / 10d).ToString("0.#", CultureInfo.CurrentCulture) + " 秒/圈", icon => icon.AnimateOutline);
         body.Children.Add(DefaultButton(() => Apply(draft with { Icon = new() })));
         return SettingsNavigation.Subpage("图标设计", body);
     }
@@ -167,7 +175,7 @@ internal sealed class AppCenterSettingsPage : Grid
 
     private void AddSlider(StackPanel page, string name, int minimum, int maximum,
         Func<AppCenterIconStyle, int> get, Func<AppCenterIconStyle, int, AppCenterIconStyle> set,
-        Func<int, string>? format = null)
+        Func<int, string>? format = null, Func<AppCenterIconStyle, bool>? enabled = null)
     {
         format ??= value => value + "%";
         var slider = new Slider { Minimum = minimum, Maximum = maximum, StepFrequency = 1 };
@@ -180,6 +188,7 @@ internal sealed class AppCenterSettingsPage : Grid
         syncSliders.Add(() =>
         {
             int value = get(draft.Icon);
+            slider.IsEnabled = enabled?.Invoke(draft.Icon) ?? true;
             slider.Value = value;
             valueText.Text = format(value);
         });
@@ -198,6 +207,7 @@ internal sealed class AppCenterSettingsPage : Grid
     {
         syncing = true;
         showInTaskbar.IsOn = draft.Icon.ShowInTaskbar;
+        animateOutline.IsOn = animate.IsEnabled = draft.Icon.AnimateOutline;
         foreach (var sync in syncSliders) sync();
         density.SelectedIndex = draft.Panel.Spacious ? 1 : 0;
         background.SelectedIndex = (int)draft.Panel.Backdrop;
@@ -216,6 +226,7 @@ internal sealed class AppCenterSettingsPage : Grid
     {
         var palette = AppCenterBackplate.Resolve(draft.Panel.Backdrop, app.BarAppearance, colors, accessibility.HighContrast);
         samplePanel.RequestedTheme = palette.Theme;
+        AppCenterSearch.ApplyTheme(sampleSearch, palette.Theme == ElementTheme.Dark, accessibility.HighContrast);
         // The same light and dark desktop sample sits behind each tint.
         var scene = new LinearGradientBrush { StartPoint = new(.12, .32), EndPoint = new(.96, .72) };
         double softness = Math.Clamp(palette.Blur / 90d, .01, .33);
@@ -233,8 +244,11 @@ internal sealed class AppCenterSettingsPage : Grid
     {
         var explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
         const string terminal = "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App";
-        sampleRows.Children.Add(new TextBox { PlaceholderText = "搜索应用", IsReadOnly = true, IsTabStop = false,
-            HorizontalAlignment = HorizontalAlignment.Center, Width = 140, CornerRadius = new CornerRadius(6) });
+        sampleSearch.IsReadOnly = true;
+        sampleSearch.IsTabStop = false;
+        sampleSearch.HorizontalAlignment = HorizontalAlignment.Center;
+        sampleSearch.Width = 148;
+        sampleRows.Children.Add(sampleSearch);
         var pinned = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, HorizontalAlignment = HorizontalAlignment.Center };
         pinned.Children.Add(new SymbolIcon(Symbol.Pin) { Foreground = sampleText });
         pinned.Children.Add(SampleTile("资源管理器", explorer, null, "\uE8B7"));
