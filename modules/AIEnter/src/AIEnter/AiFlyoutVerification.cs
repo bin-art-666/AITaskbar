@@ -16,7 +16,7 @@ public partial class App
     async Task VerifyAiFlyout()
     {
         AiWindow? panel = null;
-        Window? owner = null, background = null;
+        Window? owner = null, background = null, entranceWindow = null;
         string resultPath = Path.Combine(DataDirectory, "flyout-result.json");
         try
         {
@@ -35,6 +35,18 @@ public partial class App
             var root = new Grid { Background = backdrop.Background };
             root.Children.Add(anchor);
             owner = FixtureWindow(root, ownerBounds);
+            bool verifyRecall = Environment.GetCommandLineArgs().Contains("--verify-ai-taskbar-recall");
+            var entrance = new Native.Point { X = work.Left + 52 * scale, Y = work.Bottom - 32 * scale };
+            int entranceClicks = 0;
+            if (verifyRecall)
+            {
+                var taskbarButton = new Button { Content = "AI", HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+                var entranceRoot = new Grid();
+                entranceRoot.Children.Add(taskbarButton);
+                entranceWindow = FixtureWindow(entranceRoot, new(entrance.X - 22 * scale, entrance.Y - 18 * scale, 44 * scale, 36 * scale));
+                PanelToggleTargets.Register(entranceWindow, taskbarButton);
+                taskbarButton.Click += async (_, _) => { entranceClicks++; await panel!.ToggleFromTaskbar(monitor); };
+            }
             if (Environment.GetCommandLineArgs().Contains("--verify-ai-expanded-layout"))
             {
                 // Click the fixture before sending Esc. A background-launched process
@@ -54,7 +66,7 @@ public partial class App
             options.Changed += panel.ApplyOptions;
             await panel.Open(monitor, work.Top);
             var result = await panel.VerifyTaskbarFlyout(backgroundFrame,
-                new Native.Point { X = ownerBounds.X + ownerBounds.Width - 80 * scale, Y = ownerBounds.Y - 100 * scale }, DataDirectory, backdrop, verifyColors);
+                new Native.Point { X = ownerBounds.X + ownerBounds.Width - 80 * scale, Y = ownerBounds.Y - 100 * scale }, entrance, () => entranceClicks, DataDirectory, backdrop, verifyColors);
             File.WriteAllText(resultPath, JsonSerializer.Serialize(result));
         }
         catch (Exception error)
@@ -65,6 +77,7 @@ public partial class App
         finally
         {
             panel?.Destroy();
+            entranceWindow?.Close();
             owner?.Close();
             background?.Close();
             Exit();
@@ -118,7 +131,7 @@ internal sealed partial class SettingsPage
 
 internal sealed partial class AiWindow
 {
-    internal async Task<object> VerifyTaskbarFlyout(ScreenshotFrame background, Native.Point sample, string output, Border backdrop, Action? verifyColors)
+    internal async Task<object> VerifyTaskbarFlyout(ScreenshotFrame background, Native.Point sample, Native.Point entrance, Func<int> entranceClicks, string output, Border backdrop, Action? verifyColors)
     {
         if (current?.View.CoreWebView2 is not { } core || !IsOpen || TaskbarFlyout is null)
             throw new InvalidOperationException("The taskbar flyout or WebView2 did not open.");
@@ -156,6 +169,14 @@ internal sealed partial class AiWindow
         var expandedLayout = verifyLayout ? await VerifyExpandedLayout(background, popup, core, output) : null;
         bool verifyPinLayer = Environment.GetCommandLineArgs().Contains("--verify-ai-pin-layer");
         if (verifyPinLayer) await VerifyExpandedPinLayer(popup, core);
+        bool verifyRecall = Environment.GetCommandLineArgs().Contains("--verify-ai-taskbar-recall");
+        if (verifyRecall)
+        {
+            await VerifyTaskbarRecall(entrance, entranceClicks, popup, core);
+            await Open(display, dockTop);
+            await Task.Delay(250);
+            popup = FlyoutAt(sample);
+        }
         bool verifyOutsideClick = Environment.GetCommandLineArgs().Contains("--verify-outside-click");
         if (verifyOutsideClick)
         {
@@ -175,7 +196,48 @@ internal sealed partial class AiWindow
             await VerifyExpandedFileDrop(output, FlyoutAt(probe), "after-reopen");
         }
         await CloseVerifiedFlyout();
-        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels, toolbar, customColors, expandedLayout, expandedPinLayer = verifyPinLayer, clickRaisesUnpinnedFlyout = verifyPinLayer, compactOutsideClick = verifyOutsideClick, nativeFileDrop = verifyFileDrop, nativeFileDropAfterReopen = verifyFileDrop };
+        return new { passed = true, sameFlyout = true, sameBrowser = true, draftPreserved = true, scrollPreserved = true, noIndependentWindow = true, cornerPixels = totalCornerPixels, toolbar, customColors, expandedLayout, expandedPinLayer = verifyPinLayer, clickRaisesUnpinnedFlyout = verifyPinLayer, taskbarRecallsCoveredFlyout = verifyRecall, taskbarClosesFrontFlyout = verifyRecall, compactOutsideClick = verifyOutsideClick, nativeFileDrop = verifyFileDrop, nativeFileDropAfterReopen = verifyFileDrop };
+    }
+
+    async Task VerifyTaskbarRecall(Native.Point entrance, Func<int> entranceClicks, nint popup, CoreWebView2 core)
+    {
+        options.Save(options.Data with { FloatingPanel = false, Pinned = false });
+        await Task.Delay(250);
+        var bounds = ExpandedFlyoutBounds();
+        var center = Center(bounds);
+        var cover = App.FixtureWindow(new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.Orange) },
+            new(bounds.X - 24, bounds.Y, bounds.Width + 24, bounds.Height), topmost: false);
+        try
+        {
+            var coverHandle = WinRT.Interop.WindowNative.GetWindowHandle(cover);
+            await Task.Run(() => DesktopInputFixture.ClickAt(new Native.Point { X = bounds.X - 12, Y = center.Y }));
+            await Task.Delay(200);
+            if (FlyoutAt(center) != coverHandle || !IsOpen || !PanelToggleTargets.Contains(entrance))
+                throw new InvalidOperationException("The expanded flyout is not covered or the taskbar fixture cannot be clicked.");
+
+            var clicks = entranceClicks();
+            await Task.Run(() => DesktopInputFixture.ClickAt(entrance));
+            await Task.Delay(350);
+            if (entranceClicks() != clicks + 1) throw new InvalidOperationException("The taskbar fixture did not receive the recall click.");
+            var hit = FlyoutAt(center);
+            bool topmost = (GetLayerStyle(popup, ExtendedStyleIndex).ToInt64() & TopmostStyle) != 0;
+            if (!IsOpen || hit != popup || ExpandedFlyoutBounds() != bounds || AppWindow.IsVisible || options.Data.Pinned || topmost)
+                throw new InvalidOperationException($"One taskbar click did not recall the same expanded flyout. Open={IsOpen}, hit={hit:X}, popup={popup:X}, native popup={layeredFlyout:X}, cover={coverHandle:X}, topmost={topmost}.");
+            if (!ReferenceEquals(core, current?.View.CoreWebView2) || await core.ExecuteScriptAsync("window.scrollY") != "180"
+                || JsonSerializer.Deserialize<string>(await core.ExecuteScriptAsync("document.getElementById('draft').value")) != "保留这条草稿")
+                throw new InvalidOperationException("Recalling the flyout changed its draft or scroll position.");
+
+            await Task.Run(() => DesktopInputFixture.ClickAt(entrance));
+            await Task.Delay(350);
+            if (entranceClicks() != clicks + 2) throw new InvalidOperationException("The taskbar fixture did not receive the close click.");
+            if (IsOpen || TaskbarFlyout!.IsOpen || FlyoutAt(center) != coverHandle)
+                throw new InvalidOperationException("Clicking the taskbar with the flyout in front did not close it.");
+        }
+        finally
+        {
+            cover.Close();
+            options.Save(options.Data with { Pinned = true, FloatingPanel = true });
+        }
     }
 
     async Task VerifyExpandedPinLayer(nint popup, CoreWebView2 core)
@@ -439,8 +501,11 @@ internal sealed partial class AiWindow
             SetDragCursor(point.X, point.Y);
             try
             {
+                Thread.Sleep(45);
                 MouseInput(0x0002, 0, 0, 0, UIntPtr.Zero);
+                Thread.Sleep(45);
                 MouseInput(0x0004, 0, 0, 0, UIntPtr.Zero);
+                Thread.Sleep(45);
             }
             finally { SetDragCursor(previous.X, previous.Y); }
         }

@@ -233,7 +233,11 @@ internal sealed partial class AiWindow : PanelWindow
     {
         if (ModalActive || DragActive) return;
         bool minimized = TaskbarFlyout is null && ((OverlappedPresenter)AppWindow.Presenter).State == OverlappedPresenterState.Minimized;
-        if (IsOpen && !minimized) { Hide(); return; }
+        if (IsOpen && !minimized)
+        {
+            if (!RecallCoveredExpandedFlyout()) Hide();
+            return;
+        }
         if (!minimized && pressTime != 0 && DismissedByPress(pressTime, pressPoint)) return;
         if (minimized) ((OverlappedPresenter)AppWindow.Presenter).Restore();
         await Open(monitor, monitor.Info.Work.Top, timing: timing);
