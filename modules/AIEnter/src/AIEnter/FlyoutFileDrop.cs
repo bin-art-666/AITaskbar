@@ -14,12 +14,17 @@ interface IFlyoutOleDropTarget
 }
 
 // Windowed WinUI flyouts can miss XAML drag events. Register their own HWND for shell files.
-sealed class FlyoutFileDrop(Func<bool> canAccept, Action<bool> showHint, Func<string[], bool> receive, int maximumFiles = 12) : IFlyoutOleDropTarget, IDisposable
+enum FlyoutDropStage { Enter, Over, Drop }
+
+sealed class FlyoutFileDrop(Func<bool> canAccept, Action<bool> showHint, Func<string[], bool> receive, int maximumFiles = 12,
+    Func<FlyoutDropStage, IDataObject?, Native.Point, uint, bool>? extendedDrop = null) : IFlyoutOleDropTarget, IDisposable
 {
     const uint Copy = 1;
+    const uint Link = 4;
     const short FileDropFormat = 15;
     IntPtr window;
     bool hasFiles;
+    bool extended;
 
     static FORMATETC FileFormat => new()
     {
@@ -43,12 +48,15 @@ sealed class FlyoutFileDrop(Func<bool> canAccept, Action<bool> showHint, Func<st
     {
         var format = FileFormat;
         hasFiles = data.QueryGetData(ref format) == 0;
+        extended = extendedDrop?.Invoke(FlyoutDropStage.Enter, data, point, keys) == true;
         return DragOver(keys, point, ref effect);
     }
 
     public int DragOver(uint keys, Native.Point point, ref uint effect)
     {
-        effect &= hasFiles && canAccept() ? Copy : 0;
+        effect = extended
+            ? extendedDrop!(FlyoutDropStage.Over, null, point, keys) ? ExtendedEffect(effect) : 0
+            : hasFiles && canAccept() ? effect & Copy : 0;
         showHint(effect != 0);
         return 0;
     }
@@ -56,12 +64,20 @@ sealed class FlyoutFileDrop(Func<bool> canAccept, Action<bool> showHint, Func<st
     public int DragLeave()
     {
         hasFiles = false;
+        extended = false;
         showHint(false);
         return 0;
     }
 
     public int Drop(IDataObject data, uint keys, Native.Point point, ref uint effect)
     {
+        if (extended)
+        {
+            uint allowed = ExtendedEffect(effect);
+            try { effect = allowed != 0 && extendedDrop!(FlyoutDropStage.Drop, data, point, keys) ? allowed : 0; }
+            finally { DragLeave(); }
+            return 0;
+        }
         bool accept = hasFiles && (effect & Copy) != 0 && canAccept();
         effect = 0;
         DragLeave();
@@ -90,6 +106,8 @@ sealed class FlyoutFileDrop(Func<bool> canAccept, Action<bool> showHint, Func<st
         catch (COMException) { }
         return 0;
     }
+
+    static uint ExtendedEffect(uint effect) => (effect & Copy) != 0 ? Copy : effect & Link;
 
     public void Dispose()
     {

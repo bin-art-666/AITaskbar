@@ -20,6 +20,7 @@ internal sealed partial class StationWindow
     PreparedDrag? preparedDrag;
     IDisposable? pointerDragLease;
     bool outgoingHandoff;
+    bool nativeReturnCancelled, nativeReturnInside, nativeReturnCopy;
     Microsoft.UI.Dispatching.DispatcherQueueTimer? flyoutDragBoundary;
     Native.Point flyoutCardOrigin;
     PointerPoint? flyoutPointer;
@@ -52,7 +53,11 @@ internal sealed partial class StationWindow
         {
             flyoutDragBoundary = DispatcherQueue.CreateTimer();
             flyoutDragBoundary.Interval = TimeSpan.FromMilliseconds(20);
-            flyoutDragBoundary.Tick += (_, _) => TrackFlyoutCard();
+            flyoutDragBoundary.Tick += (_, _) =>
+            {
+                if (outgoingHandoff) TrackReturningCard();
+                else TrackFlyoutCard();
+            };
             Closed += (_, _) => flyoutDragBoundary.Stop();
         }
         root.PreviewKeyDown += (_, e) => {
@@ -203,6 +208,7 @@ internal sealed partial class StationWindow
         var items = Selected();
         var preparation = preparedDrag is { } pending && pending.Items.SequenceEqual(items) ? pending.Files : null;
         outgoingHandoff = true;
+        LibraryDrag? flyoutDrag = null;
         flyoutDragBoundary?.Stop();
         using var handoffLease = KeepOpenForDrag();
         FinishPointerDrag(clearPreparation: false);
@@ -219,10 +225,26 @@ internal sealed partial class StationWindow
                 using var manager = DragDropManager.GetForIsland(island);
                 outgoingPreview = ApplyDragBitmap(dragPreviewCapture, (bitmap, anchor) => operation.SetDragUIContentFromSoftwareBitmap(bitmap, anchor));
                 HideDragPreview();
+                flyoutDrag = BeginNativeLibraryDrag(operation.Data, App.Station.LibraryRoot, items, ((StationItem)card.Tag).Id);
+                nativeReturnCancelled = false;
+                nativeReturnInside = false;
+                flyoutDragBoundary?.Start();
                 if (App.Verification) RecordExport("starting WinUI drag");
                 var result = await operation.StartAsync(manager, nativePoint);
                 if (App.Verification) RecordExport(result.ToString());
-                Notify(result == DataPackageOperation.Copy ? "已交给目标窗口，记录保留" : "已取消拖动，记录保留");
+                if (result == DataPackageOperation.None && !flyoutDrag.HandledInside && nativeReturnInside && !nativeReturnCancelled
+                    && (Native.GetAsyncKeyState(1) & 0x8000) == 0 && TryGetReturningPoint(out var point, out _))
+                {
+                    if (App.Verification) TraceInternalDrop("Pointer", point);
+                    var commit = PrepareInternalDrop(flyoutDrag, point, nativeReturnCopy);
+                    if (commit is not null)
+                    {
+                        flyoutDrag.HandledInside = true;
+                        await commit();
+                    }
+                }
+                if (!flyoutDrag.HandledInside)
+                    Notify(result == DataPackageOperation.Copy ? "已交给目标窗口，记录保留" : "已取消拖动，记录保留");
             }
             else if (nativePoint is not null)
             {
@@ -233,7 +255,9 @@ internal sealed partial class StationWindow
         catch (Exception error) { if (App.Verification) RecordExport(error.ToString()); Notify(error.Message, true); }
         finally
         {
-            if (ActiveNativeLibraryDrag is { Source.RootId: null } nativeDrag && nativeDrag.Anchor == ((StationItem)card.Tag).Id)
+            flyoutDragBoundary?.Stop();
+            if (flyoutDrag is not null) { EndNativeLibraryDrag(flyoutDrag); ClearDropTarget(); }
+            else if (ActiveNativeLibraryDrag is { Source.RootId: null } nativeDrag && nativeDrag.Anchor == ((StationItem)card.Tag).Id)
                 EndNativeLibraryDrag(nativeDrag);
             outgoingPreview?.Dispose();
             outgoingPreview = null;
@@ -244,6 +268,32 @@ internal sealed partial class StationWindow
             QueuePendingCardRebuild();
             UpdateSelectionDetails();
         }
+    }
+
+    void TrackReturningCard()
+    {
+        if (ActiveNativeLibraryDrag is not { HandledInside: false, Source.RootId: null }) return;
+        if ((Native.GetAsyncKeyState((int)VirtualKey.Escape) & 0x8000) != 0) nativeReturnCancelled = true;
+        if (nativeReturnCancelled || !TryGetReturningPoint(out var point, out bool copy))
+        {
+            nativeReturnInside = false;
+            ClearDropTarget();
+        }
+        else if ((Native.GetAsyncKeyState(1) & 0x8000) != 0)
+        {
+            nativeReturnInside = true;
+            nativeReturnCopy = copy;
+            UpdateDropTarget(point, copy);
+        }
+    }
+
+    bool TryGetReturningPoint(out Point point, out bool copy)
+    {
+        point = default;
+        copy = (Native.GetAsyncKeyState((int)VirtualKey.Control) & 0x8000) != 0;
+        if (!GetCursorPos(out var cursor) || Native.GetAncestor(FlyoutWindowAtPoint(cursor), 2) != InteractionWindow) return false;
+        point = FlyoutGridPoint(cursor.X, cursor.Y);
+        return CanDropInGrid(point);
     }
 
     void RecordExport(string value)

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
 using AITaskbar;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -120,8 +121,64 @@ internal sealed partial class StationWindow
                 var directory = browser?.CurrentDirectory;
                 return DispatcherQueue.TryEnqueue(async () => await ReceiveShellFiles(paths, browser, directory));
             },
-            StationStore.MaximumCapacity);
+            StationStore.MaximumCapacity, HandleExtendedDrop);
         if (target.Register(popup) >= 0) shellFileDrop = target;
+    }
+
+    bool HandleExtendedDrop(AIEnter.FlyoutDropStage stage, IDataObject? data, AIEnter.Native.Point cursor, uint keys)
+    {
+        try
+        {
+            // While this source is in the native drag loop, the re-entering OLE drag is its own operation.
+            var own = outgoingHandoff && ActiveNativeLibraryDrag is { Source.RootId: null } drag ? drag : null;
+            bool canReceive = IsOpen && !destroyed && !TaskbarFlyout!.IsClosing && !ShowingSettings
+                && !ModalActive && !App.Station.ReadOnly && folderBrowser is null;
+            if (stage == AIEnter.FlyoutDropStage.Enter)
+                return own is not null || data is not null && BrowserDrop.Supports(data);
+            if (!canReceive) return false;
+            if (own is not null)
+            {
+                if (own.HandledInside || nativeReturnCancelled) return false;
+                var point = FlyoutGridPoint(cursor.X, cursor.Y);
+                bool copy = (keys & 8) != 0; // MK_CONTROL
+                if (stage == AIEnter.FlyoutDropStage.Over) return UpdateDropTarget(point, copy);
+                if (App.Verification) TraceInternalDrop("OLE", point);
+                var commit = PrepareInternalDrop(own, point, copy);
+                if (commit is null || !DispatcherQueue.TryEnqueue(async () => await Run(commit))) return false;
+                own.HandledInside = true;
+                return true;
+            }
+            if (DragActive) return false;
+            if (stage == AIEnter.FlyoutDropStage.Over) return true;
+            var payload = data is null ? null : BrowserDrop.Read(data);
+            return payload is not null && DispatcherQueue.TryEnqueue(async () => await ReceiveBrowserDrop(payload));
+        }
+        catch (Exception error)
+        {
+            App.Log(error);
+            return false;
+        }
+    }
+
+    Windows.Foundation.Point FlyoutGridPoint(int x, int y)
+    {
+        var bounds = CurrentBounds();
+        double scale = WindowLayoutScale;
+        var grid = files.TransformToVisual(root).TransformPoint(default);
+        return new((x - bounds.X) / scale - grid.X, (y - bounds.Y) / scale - grid.Y);
+    }
+
+    async Task ReceiveBrowserDrop(BrowserDrop payload)
+    {
+        using var lease = KeepOpenForDrag();
+        using var bitmap = payload.Image is null ? null : new Windows.Storage.Streams.InMemoryRandomAccessStream();
+        try
+        {
+            if (!await Receive(await payload.Package(bitmap))) return;
+            openedForDrop = false;
+            ConfirmIncomingDrop();
+        }
+        catch (Exception error) { ReportImportFailure(ImportFailure(error)); Notify(error.Message, true); }
     }
 
     async Task ReceiveShellFiles(string[] paths, FolderBrowser? browser, string? directory)

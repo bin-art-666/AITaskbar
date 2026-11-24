@@ -92,7 +92,7 @@ internal sealed partial class StationWindow
                     if (insertion.Visibility == Visibility.Visible || libraryDrop.HasCandidate) UpdateDropTarget(orderPointer, copyDrag);
                 });
         };
-        root.DragLeave += (_, _) => ClearDropTarget();
+        root.DragLeave += (_, _) => { if (!outgoingHandoff || flyoutDragBoundary == null) ClearDropTarget(); };
         Closed += (_, _) => ClearDropTarget();
     }
     bool CanReorderGrid => !ShowingSettings && !Searching && !App.Station.ReadOnly;
@@ -101,7 +101,8 @@ internal sealed partial class StationWindow
 
     void TrackInternalDrop(DragEventArgs e)
     {
-        var point = e.GetPosition(files);
+        if (outgoingHandoff && nativeReturnCancelled) { e.AcceptedOperation = DataPackageOperation.None; return; }
+        var point = InternalDragPoint(e);
         bool copy = e.Modifiers.HasFlag(DragDropModifiers.Control);
         if (!HasLibraryDragIdentity(e.DataView) || ActiveNativeLibraryDrag is not { } drag || !UpdateDropTarget(point, copy)) {
             e.AcceptedOperation = DataPackageOperation.None;
@@ -195,33 +196,52 @@ internal sealed partial class StationWindow
         copy ? CopyLibrarySelection(drag.Source, destination, drag.Items) : MoveLibrarySelection(drag.Source, destination, drag.Items));
     async Task CompleteInternalDrop(DragEventArgs e)
     {
-        var point = e.GetPosition(files);
-        bool copy = e.Modifiers.HasFlag(DragDropModifiers.Control);
+        e.AcceptedOperation = DataPackageOperation.None;
+        if (outgoingHandoff && nativeReturnCancelled || !HasLibraryDragIdentity(e.DataView)
+            || ActiveNativeLibraryDrag is not { HandledInside: false } drag) return;
+        var point = InternalDragPoint(e);
+        if (App.Verification) TraceInternalDrop("XAML", point);
+        var commit = PrepareInternalDrop(drag, point, e.Modifiers.HasFlag(DragDropModifiers.Control));
+        if (commit is null) return;
+        var deferral = e.GetDeferral();
+        try {
+            if (!await MatchesNativeLibraryDrag(e.DataView, drag) || drag.HandledInside) return;
+            drag.HandledInside = true;
+            await commit();
+            e.AcceptedOperation = DataPackageOperation.Copy;
+        } catch (Exception error) { e.AcceptedOperation = DataPackageOperation.None; Notify(error.Message, true); }
+        finally { deferral.Complete(); }
+    }
+
+    Point InternalDragPoint(DragEventArgs e) => TaskbarFlyout is not null && outgoingHandoff && GetCursorPos(out var cursor)
+        ? FlyoutGridPoint(cursor.X, cursor.Y) : e.GetPosition(files);
+
+    void TraceInternalDrop(string route, Point point)
+    {
+        GetCursorPos(out var cursor);
+        var grid = GridTarget(point, false);
+        File.AppendAllText(Path.Combine(App.DataDirectory, "halo-flyout-progress.log"),
+            $"{route} internal drop: {point.X:F1},{point.Y:F1}, actual screen {cursor.X},{cursor.Y}, cell {grid}\n");
+    }
+
+    Func<Task>? PrepareInternalDrop(LibraryDrag drag, Point point, bool copy)
+    {
         var target = GridTarget(point, false);
         var folderTarget = FolderDropOnRelease(point);
         var spot = MainFolderSpot(point);
         var destination = libraryDrop.Release(spot);
         ClearDropTarget();
-        e.AcceptedOperation = DataPackageOperation.None;
-        if (!HasLibraryDragIdentity(e.DataView) || ActiveNativeLibraryDrag is not { } drag || spot != null && destination == null) return;
+        if (spot != null && destination == null) return null;
         var sameDirectory = SameLibraryLocation(drag.Source, App.Station.LibraryRoot);
         var placement = copy && sameDirectory && destination == null ? MainCopyPlacement(point, drag.Items, drag.Anchor) : null;
         if (placement != null || copy && sameDirectory && destination == null && CanCopyIntoSortedMain(point, drag.Items))
             destination = App.Station.LibraryRoot;
         if (destination == null && !sameDirectory && !ShowingSettings && !App.Station.ReadOnly
             && CanDropFolderSelectionAtDesktop(drag, point, copy)) destination = App.Station.LibraryRoot;
-        if (copy && destination == null) return;
-        if (destination == null && (!sameDirectory || !CanDropInGrid(point) && folderTarget == null)) return;
-        var deferral = e.GetDeferral();
-        try {
-            if (!await MatchesNativeLibraryDrag(e.DataView, drag)) return;
-            drag.HandledInside = true;
-            if (copy) await CopyLibrarySelection(drag.Source, destination!, drag.Items, placement);
-            else if (destination != null) await MoveLibrarySelection(drag.Source, destination, drag.Items);
-            else await CommitGridDrop(drag.Items.Select(i => i.Id).ToArray(), target, folderTarget);
-            e.AcceptedOperation = DataPackageOperation.Copy;
-        } catch (Exception error) { e.AcceptedOperation = DataPackageOperation.None; Notify(error.Message, true); }
-        finally { deferral.Complete(); }
+        if (copy) return destination is null ? null : () => CopyLibrarySelection(drag.Source, destination, drag.Items, placement);
+        if (destination != null) return () => MoveLibrarySelection(drag.Source, destination, drag.Items);
+        return sameDirectory && (CanDropInGrid(point) || folderTarget != null)
+            ? () => CommitGridDrop(drag.Items.Select(i => i.Id).ToArray(), target, folderTarget) : null;
     }
     async Task MoveDraggedItems(Guid[] ids, (int Column, int Row) target)
     {

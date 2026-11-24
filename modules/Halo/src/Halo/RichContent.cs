@@ -11,6 +11,15 @@ internal static partial class RichContent
     static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(250);
     static Regex Pattern(string pattern) => new(pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline, MatchTimeout);
     internal static bool IsSingleAnchor(string html) => Pattern(@"^\s*<a\b[^>]*>.*?</a>\s*$").IsMatch(Fragment(html));
+    internal static string? SingleImageSource(string html)
+    {
+        try
+        {
+            var match = Pattern("""^\s*(?:<a\b[^>]*>\s*)?<img\b[^>]*?\s+src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>\s*(?:</a\s*>)?\s*$""").Match(Fragment(html));
+            return match.Success ? WebUtility.HtmlDecode(match.Groups.Cast<Group>().Skip(1).First(group => group.Success).Value) : null;
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidDataException or RegexMatchTimeoutException) { return null; }
+    }
     static string Fragment(string html) {
         if (html.Length > 2_000_000) throw new InvalidDataException("网页摘录过大，请缩小选区。");
         try { return HtmlFormatHelper.GetStaticFragment(html); }

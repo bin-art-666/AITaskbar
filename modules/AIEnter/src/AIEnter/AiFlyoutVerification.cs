@@ -467,18 +467,41 @@ internal sealed partial class AiWindow
             };
         }
 
-        internal static void Drag(Native.Point from, Native.Point to, bool cancel = false, bool sendNativeMovement = false)
+        internal static void Drag(Native.Point from, Native.Point to, bool cancel = false, bool sendNativeMovement = false,
+            Native.Point? via = null, bool control = false, int finalHoldMs = 160)
         {
             var previous = System.Windows.Forms.Cursor.Position;
             var desktop = sendNativeMovement ? System.Windows.Forms.SystemInformation.VirtualScreen : default;
             SetDragCursor(from.X, from.Y);
+            Thread.Sleep(55);
+            if (control) KeyInput(0x11, 0, 0, UIntPtr.Zero);
             MouseInput(0x0002, 0, 0, 0, UIntPtr.Zero);
             try
             {
                 Thread.Sleep(180);
+                if (via is { } outside) { Move(from, outside); Thread.Sleep(380); }
+                Move(via ?? from, to);
+                Thread.Sleep(finalHoldMs);
+                if (cancel)
+                {
+                    KeyInput(0x1B, 0, 0, UIntPtr.Zero);
+                    Thread.Sleep(110);
+                    KeyInput(0x1B, 0, 0x0002, UIntPtr.Zero);
+                }
+            }
+            finally
+            {
+                MouseInput(0x0004, 0, 0, 0, UIntPtr.Zero);
+                if (control) { Thread.Sleep(100); KeyInput(0x11, 0, 0x0002, UIntPtr.Zero); }
+                Thread.Sleep(via is null ? 150 : 650);
+                SetDragCursor(previous.X, previous.Y);
+            }
+
+            void Move(Native.Point start, Native.Point end)
+            {
                 for (int step = 1; step <= 10; step++)
                 {
-                    int x = from.X + (to.X - from.X) * step / 10, y = from.Y + (to.Y - from.Y) * step / 10;
+                    int x = start.X + (end.X - start.X) * step / 10, y = start.Y + (end.Y - start.Y) * step / 10;
                     if (sendNativeMovement)
                     {
                         MouseInput(0xC001, (uint)((x - desktop.Left + .5) * 65536 / desktop.Width),
@@ -488,19 +511,6 @@ internal sealed partial class AiWindow
                     else SetDragCursor(x, y);
                     Thread.Sleep(25);
                 }
-                Thread.Sleep(160);
-                if (cancel)
-                {
-                    KeyInput(0x1B, 0, 0, UIntPtr.Zero);
-                    KeyInput(0x1B, 0, 0x0002, UIntPtr.Zero);
-                    Thread.Sleep(110);
-                }
-            }
-            finally
-            {
-                MouseInput(0x0004, 0, 0, 0, UIntPtr.Zero);
-                Thread.Sleep(150);
-                SetDragCursor(previous.X, previous.Y);
             }
         }
 

@@ -18,7 +18,18 @@ public partial class App
         try
         {
             Directory.CreateDirectory(DataDirectory);
-            Settings.Save(Settings.Data with { Pinned = false, Detached = false, DetachedHideOnBlur = false });
+            if (Environment.GetCommandLineArgs().Contains("--verify-halo-flyout-browser"))
+            {
+                await VerifyBrowserDrops(checks);
+                return;
+            }
+            if (Environment.GetCommandLineArgs().Contains("--verify-halo-flyout-folder-explorer"))
+            {
+                await VerifyFolderExplorerDrop(checks);
+                return;
+            }
+            bool transfersOnly = Environment.GetCommandLineArgs().Contains("--verify-halo-flyout-files-only");
+            Settings.Save(Settings.Data with { Pinned = transfersOnly, Detached = transfersOnly, DetachedHideOnBlur = false });
             var folder = Directory.CreateDirectory(Path.Combine(DataDirectory, "样例文件夹")).FullName;
             for (int i = 0; i < 220; i++)
                 await File.WriteAllTextAsync(Path.Combine(folder, $"样例-{i:000}.txt"), "隔离验证");
@@ -43,6 +54,12 @@ public partial class App
                 if (!passed) throw new InvalidOperationException(name);
                 checks.Add(name);
                 File.AppendAllText(Path.Combine(DataDirectory, "halo-flyout-progress.log"), name + "\n");
+            }
+            if (transfersOnly)
+            {
+                await Panel.VerifyFlyoutTransfers(work, DataDirectory, Check);
+                await Settings.Flush();
+                return;
             }
             var entrance = InputCoordinate(work.Left + 6 + (int)Math.Round(anchor.ActualWidth * anchor.XamlRoot.RasterizationScale / 2), work.Bottom - 29);
             await Panel.VerifyFlyoutWindow(frame, entrance, Check);
@@ -304,14 +321,18 @@ internal sealed partial class StationWindow
         check("ImportedCardIsLaidOut", card.IsLoaded && card.ActualWidth > 10 && card.ActualHeight > 10);
         var position = card.TransformToVisual(root).TransformPoint(new(card.ActualWidth / 2, card.ActualHeight / 2));
         var from = InputPoint(bounds.X + (int)Math.Round(position.X * WindowLayoutScale), bounds.Y + (int)Math.Round(position.Y * WindowLayoutScale));
-        var ready = new TaskCompletionSource<(System.Windows.Forms.Form Form, nint Handle, System.Drawing.Point Point)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ready = new TaskCompletionSource<(System.Windows.Forms.Form Form, nint Handle, System.Drawing.Point Point,
+            System.Drawing.Point Invalid)>(TaskCreationOptions.RunContinuationsAsynchronously);
         var delivered = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         int presses = 0, moves = 0, enters = 0;
         card.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => presses++), true);
         card.AddHandler(UIElement.PointerMovedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => moves++), true);
-        void AllowCopy(object? _, System.Windows.Forms.DragEventArgs e)
+        void AllowCopy(object? sender, System.Windows.Forms.DragEventArgs e)
         {
-            if (e.Data?.GetDataPresent(System.Windows.Forms.DataFormats.FileDrop) == true) e.Effect = System.Windows.Forms.DragDropEffects.Copy;
+            var form = (System.Windows.Forms.Form)sender!;
+            e.Effect = form.PointToClient(new(e.X, e.Y)).Y < form.ClientSize.Height * 2 / 3
+                && e.Data?.GetDataPresent(System.Windows.Forms.DataFormats.FileDrop) == true
+                ? System.Windows.Forms.DragDropEffects.Copy : System.Windows.Forms.DragDropEffects.None;
         }
         // Run the drop recipient on another STA, as Explorer is independent of Halo's UI dispatcher.
         var receiver = new Thread(() =>
@@ -319,16 +340,22 @@ internal sealed partial class StationWindow
             using var destination = new System.Windows.Forms.Form { AllowDrop = true, TopMost = true, ShowInTaskbar = false,
                 FormBorderStyle = System.Windows.Forms.FormBorderStyle.None, StartPosition = System.Windows.Forms.FormStartPosition.Manual,
                 Bounds = new(work.Left + 14, work.Top + 310, 190, 110) };
-            destination.Shown += (_, _) => ready.SetResult((destination, destination.Handle, destination.PointToScreen(
-                new System.Drawing.Point(destination.ClientSize.Width / 2, destination.ClientSize.Height / 2))));
-            destination.DragEnter += (_, e) => { Interlocked.Increment(ref enters); AllowCopy(null, e); };
+            destination.Shown += (_, _) => ready.SetResult((destination, destination.Handle,
+                destination.PointToScreen(new(destination.ClientSize.Width / 2, destination.ClientSize.Height / 3)),
+                destination.PointToScreen(new(destination.ClientSize.Width / 2, destination.ClientSize.Height * 5 / 6))));
+            destination.DragEnter += (sender, e) => { Interlocked.Increment(ref enters); AllowCopy(sender, e); };
             destination.DragOver += AllowCopy;
-            destination.DragDrop += (_, e) => delivered.TrySetResult(e.Data?.GetData(System.Windows.Forms.DataFormats.FileDrop) as string[] ?? []);
+            destination.DragDrop += (sender, e) =>
+            {
+                AllowCopy(sender, e);
+                if (e.Effect == System.Windows.Forms.DragDropEffects.Copy)
+                    delivered.TrySetResult(e.Data?.GetData(System.Windows.Forms.DataFormats.FileDrop) as string[] ?? []);
+            };
             System.Windows.Forms.Application.Run(destination);
         }) { IsBackground = true };
         receiver.SetApartmentState(ApartmentState.STA);
         receiver.Start();
-        var (receiverWindow, receiverHandle, target) = await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+        var (receiverWindow, receiverHandle, target, invalidTarget) = await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
         try
         {
             check("OutgoingDragStartsOnTheHaloPopup", At(from.X, from.Y) == flyoutLayer?.Handle);
@@ -340,9 +367,8 @@ internal sealed partial class StationWindow
             check("SystemFileDragOutExportsOwnedCopy", true);
             await Task.Delay(250);
             delivered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            var outsideDropTarget = InputPoint(target.X, target.Y + 130);
-            check("CancelDropPointIsOutsideReceiverAndHalo", At(outsideDropTarget.X, outsideDropTarget.Y) != receiverHandle
-                && At(outsideDropTarget.X, outsideDropTarget.Y) != flyoutLayer?.Handle);
+            var outsideDropTarget = InputPoint(invalidTarget.X, invalidTarget.Y);
+            check("CancelDropPointIsInTheRejectingFixtureArea", At(outsideDropTarget.X, outsideDropTarget.Y) == receiverHandle);
             await Task.Run(() => InputFixture.Drag(from, outsideDropTarget, sendNativeMovement: true));
             await Task.Delay(250);
             check("CancelledSystemDragDoesNotDeliverOrLeavePreview", !delivered.Task.IsCompleted && !DragActive
@@ -360,8 +386,41 @@ internal sealed partial class StationWindow
         finally { receiverWindow.BeginInvoke(receiverWindow.Close); }
         source.Close();
         await VerifyMainLibraryDrop(check);
+        await VerifyReturningFolderDrop(imported!, check);
         var browser = folderBrowser;
         check("DragSettlesWithoutRecreatingPanel", IsOpen && flyoutLayer?.Handle != 0 && browser == folderBrowser);
+    }
+
+    async Task VerifyReturningFolderDrop(StationItem item, Action<string, bool> check)
+    {
+        await Task.Delay(250);
+        var source = files.Items.OfType<GridViewItem>().Single(card => ((StationItem)card.Tag).Id == item.Id);
+        var folderCard = files.Items.OfType<GridViewItem>().First(card => Path.GetFileName(((StationItem)card.Tag).Value) == "样例文件夹");
+        var folder = (StationItem)folderCard.Tag;
+        var published = Path.Combine(folder.Value, Path.GetFileName(item.Value));
+        var bounds = CurrentBounds();
+        AIEnter.Native.Point Center(GridViewItem card)
+        {
+            var point = card.TransformToVisual(root).TransformPoint(new(card.ActualWidth / 2, card.ActualHeight / 2));
+            return InputPoint(bounds.X + (int)Math.Round(point.X * WindowLayoutScale), bounds.Y + (int)Math.Round(point.Y * WindowLayoutScale));
+        }
+        var from = Center(source);
+        var to = Center(folderCard);
+        var outside = InputPoint(bounds.X + bounds.Width + 45, from.Y);
+        File.AppendAllText(Path.Combine(App.DataDirectory, "halo-flyout-progress.log"),
+            $"Folder return: from {from.X},{from.Y} via {outside.X},{outside.Y} to {to.X},{to.Y}; target window {At(to.X, to.Y)}/{InteractionWindow}\n");
+        await Task.Run(() => InputFixture.Drag(from, to, sendNativeMovement: true, via: outside, finalHoldMs: 650));
+        await Task.Delay(550);
+        check("ReturningWithoutCtrlMovesIntoFolder", !File.Exists(item.Value) && File.Exists(published)
+            && App.Station.Items.All(existing => existing.Id != item.Id));
+        await UndoLibraryMove();
+        await Task.Delay(500);
+        source = files.Items.OfType<GridViewItem>().Single(card => ((StationItem)card.Tag).Id == item.Id);
+        from = Center(source);
+        await Task.Run(() => InputFixture.Drag(from, to, sendNativeMovement: true, via: outside, control: true, finalHoldMs: 650));
+        await Task.Delay(600);
+        check("ReturningWithCtrlCopiesIntoFolder", File.Exists(item.Value) && File.Exists(published)
+            && File.ReadAllBytes(item.Value).SequenceEqual(File.ReadAllBytes(published)));
     }
 
     async Task VerifyPointerOrdering(Guid importedId, RectInt32 bounds, Action<string, bool> check)
@@ -382,5 +441,22 @@ internal sealed partial class StationWindow
         check("MouseDragReordersAnExistingCardWithoutImporting", App.Station.Items.Count == 2
             && App.Station.Layout(detached, GridColumns(), App.Settings.Data.NewestFirst).Cells
                 .Any(cell => cell.Id == importedId && cell.Column == emptyColumn && cell.Row == 0));
+
+        var current = App.Station.Layout(detached, GridColumns(), App.Settings.Data.NewestFirst);
+        int returnColumn = Enumerable.Range(0, availableColumns).Last(column => !current.Cells.Any(cell => cell.Column == column && cell.Row == 0));
+        var returned = gridPanel.TransformToVisual(root).TransformPoint(new((returnColumn + .5) * GridAppearance.CellWidth, GridAppearance.CellHeight * .55));
+        position = movedCard.TransformToVisual(root).TransformPoint(new(movedCard.ActualWidth / 2, movedCard.ActualHeight / 2));
+        from = InputPoint(bounds.X + (int)Math.Round(position.X * WindowLayoutScale), bounds.Y + (int)Math.Round(position.Y * WindowLayoutScale));
+        to = InputPoint(bounds.X + (int)Math.Round(returned.X * WindowLayoutScale), bounds.Y + (int)Math.Round(returned.Y * WindowLayoutScale));
+        var outside = InputPoint(bounds.X + bounds.Width + 45, from.Y);
+        File.AppendAllText(Path.Combine(App.DataDirectory, "halo-flyout-progress.log"),
+            $"Returning drag: from {from.X},{from.Y} via {outside.X},{outside.Y} to {to.X},{to.Y}; cell {returnColumn},0\n");
+        verifiedShellExport = null;
+        await Task.Run(() => InputFixture.Drag(from, to, sendNativeMovement: true, via: outside));
+        await Task.Delay(550);
+        bool sameItemMoved = App.Station.Items.Count == 2 && App.Station.Layout(detached, GridColumns(), App.Settings.Data.NewestFirst).Cells
+            .Any(cell => cell.Id == importedId && cell.Column == returnColumn && cell.Row == 0);
+        if (!sameItemMoved) throw new InvalidOperationException($"Returning drag did not move the original card. Native result={verifiedShellExport}, status={status.Text}.");
+        check("ReturningNativeDragReordersOriginalCard", verifiedShellExport == nameof(Windows.ApplicationModel.DataTransfer.DataPackageOperation.Copy));
     }
 }
