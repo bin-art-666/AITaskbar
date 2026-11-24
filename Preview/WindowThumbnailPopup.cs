@@ -17,7 +17,7 @@ internal sealed partial class WindowThumbnailPopup : Window
     private const int Padding = WindowThumbnailLayout.Padding, Gap = WindowThumbnailLayout.Gap;
     private const uint Destination = 1, ThumbnailOpacity = 4, VisibilityFlag = 8;
     private readonly Canvas panel = new();
-    private const float BackplateRadius = 14, BackplateBlur = 8.5f;
+    private const float BackplateRadius = PopupBackplatePalette.Radius;
     private readonly Border backplate = new() { CornerRadius = new CornerRadius(BackplateRadius) };
     private readonly SolidColorBrush tintBrush = new();
     private readonly AIEnter.DesktopGlassBackdrop glass = new(transparentWindow: true);
@@ -83,13 +83,10 @@ internal sealed partial class WindowThumbnailPopup : Window
         RebuildPages();
     }
 
-    internal void SetTheme(ElementTheme theme, Color background) =>
-        SetTheme(theme, TaskbarPanelFlyout.Alpha(background, 208), background, BackplateBlur);
-
-    internal void SetTheme(ElementTheme theme, Color tint, Color solid, float blur)
+    internal void SetTheme(PopupBackplatePalette appearance)
     {
-        palette = (tint, solid, blur);
-        backplate.RequestedTheme = theme;
+        palette = (appearance.Tint, appearance.Solid, appearance.Blur);
+        backplate.RequestedTheme = appearance.Theme;
         RefreshBackplate();
     }
 

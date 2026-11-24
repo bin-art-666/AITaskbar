@@ -8,7 +8,7 @@ using BackdropTarget = Microsoft.UI.Composition.ICompositionSupportsSystemBackdr
 
 namespace AIEnter;
 
-internal sealed class DesktopGlassBackdrop(bool transparentWindow = false) : SystemBackdrop
+internal sealed class DesktopGlassBackdrop(bool transparentWindow = false, bool allowGlassFallback = false) : SystemBackdrop
 {
     private Compositor? compositor;
     private BackdropTarget? target;
@@ -104,7 +104,7 @@ internal sealed class DesktopGlassBackdrop(bool transparentWindow = false) : Sys
         if (blurAmount > 0 && !failed && glass is null)
         {
             try { CreateGlass(); }
-            catch (COMException) when (transparentWindow)
+            catch (COMException) when (transparentWindow || allowGlassFallback)
             {
                 failed = true;
                 ReleaseGlass();

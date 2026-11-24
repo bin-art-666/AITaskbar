@@ -36,7 +36,7 @@ internal sealed partial class PreviewApplicationStrip
     private readonly AppMenuIcons appMenuIcons;
     private readonly TaskbarIconHoverLayer iconHover;
     private readonly TaskbarAttentionBadgeLayer attentionBadges = new();
-    private readonly Dictionary<ElementTheme, Style> menuStyles = [];
+    private readonly AppMenuBackplates menuBackplates;
     private readonly WindowMotion windowMotion;
     private TitleBarMinimizeHook? titleBarMinimize;
     private CancellationTokenSource? windowAction;
@@ -113,6 +113,7 @@ internal sealed partial class PreviewApplicationStrip
         attentionRetryTimer.Interval = TimeSpan.FromMilliseconds(180);
         attentionRetryTimer.Tick += (_, _) => RetryAppAttention();
         appMenuIcons = new(system, accessibility);
+        menuBackplates = new(system, accessibility, () => ResolvePopupPalette(Surface.ActualTheme));
         iconHover = new(system.AnimationsEnabled && !accessibility.HighContrast);
         appCenterIcon = new AppCenterIcon(iconSize);
         appCenterIcon.SetOutlineVisible(iconLayout.ShowIconOutline);
@@ -273,7 +274,7 @@ internal sealed partial class PreviewApplicationStrip
         }
         if (menuColorChanged)
         {
-            UpdateThumbnailTheme(Surface.ActualTheme);
+            UpdatePopupTheme(Surface.ActualTheme);
             foreach (var view in Rendered) SetAppMenu(view);
         }
         if (!gapChanged && (!scrollChanged || scrollStarted is null)) return;
@@ -674,7 +675,7 @@ internal sealed partial class PreviewApplicationStrip
         dark = useDark;
         contrast = highContrast;
         taskViewIcon.ApplyOutline(iconLayout, highContrast);
-        UpdateThumbnailTheme(Surface.ActualTheme);
+        UpdatePopupTheme(Surface.ActualTheme);
         var edge = highContrast ? system.GetColorValue(UIColorType.Foreground)
             : useDark ? Color.FromArgb(48, 255, 255, 255) : Color.FromArgb(70, 35, 58, 84);
         separator.Background = new SolidColorBrush(edge);
@@ -865,18 +866,6 @@ internal sealed partial class PreviewApplicationStrip
     private MenuFlyout NewMenu()
     {
         var menu = new MenuFlyout { Placement = FlyoutPlacementMode.Top };
-        var theme = MenuTheme;
-        if (theme != ElementTheme.Default)
-        {
-            if (!menuStyles.TryGetValue(theme, out var style))
-            {
-                style = new Style(typeof(MenuFlyoutPresenter));
-                style.Setters.Add(new Setter(FrameworkElement.RequestedThemeProperty, theme));
-                style.Setters.Add(new Setter(Control.BackgroundProperty, MenuBackground(theme)));
-                menuStyles.Add(theme, style);
-            }
-            menu.MenuFlyoutPresenterStyle = style;
-        }
         menu.Opening += (_, _) => { DismissThumbnails(); openFlyout = menu; };
         menu.Closed += (_, _) =>
         {
@@ -897,7 +886,7 @@ internal sealed partial class PreviewApplicationStrip
     internal static SolidColorBrush MenuBackground(ElementTheme theme) => new(theme == ElementTheme.Dark
         ? Color.FromArgb(255, 37, 44, 57) : Color.FromArgb(255, 245, 248, 252));
 
-    private (ElementTheme Theme, Color Tint, Color Solid, float Blur)? thumbnailTaskbarPalette;
+    private PopupBackplatePalette? taskbarPopupPalette;
 
     internal void SetThumbnailTaskbarPalette(ElementTheme theme, Color solid, LumaBar.BarAppearance? appearance)
     {
@@ -913,33 +902,29 @@ internal sealed partial class PreviewApplicationStrip
                 _ => 0
             };
         }
-        var palette = (theme, tint, solid, blur);
-        if (thumbnailTaskbarPalette == palette) return;
-        thumbnailTaskbarPalette = palette;
-        if (iconLayout.MenuColorMode == AppMenuColorMode.FollowTaskbar) UpdateThumbnailTheme(theme);
+        var palette = new PopupBackplatePalette(theme, tint, solid, blur);
+        if (taskbarPopupPalette == palette) return;
+        taskbarPopupPalette = palette;
+        if (iconLayout.MenuColorMode == AppMenuColorMode.FollowTaskbar) UpdatePopupTheme(theme);
     }
 
-    private void UpdateThumbnailTheme(ElementTheme taskbarTheme)
+    private PopupBackplatePalette ResolvePopupPalette(ElementTheme taskbarTheme)
     {
-        if (thumbnails is null) return;
         if (accessibility.HighContrast)
         {
-            thumbnails.SetTheme(ElementTheme.Default, system.GetColorValue(UIColorType.Background));
-            return;
+            var background = system.GetColorValue(UIColorType.Background);
+            return new(ElementTheme.Default, background, background, 0);
         }
         var theme = MenuTheme;
-        if (theme != ElementTheme.Default)
-        {
-            thumbnails.SetTheme(theme, MenuBackground(theme).Color);
-            return;
-        }
-        if (thumbnailTaskbarPalette is { } palette)
-        {
-            thumbnails.SetTheme(palette.Theme, palette.Tint, palette.Solid, palette.Blur);
-            return;
-        }
-        thumbnails.SetTheme(taskbarTheme, taskbarTheme == ElementTheme.Dark
+        if (theme != ElementTheme.Default) return PopupBackplatePalette.Fixed(theme, MenuBackground(theme).Color);
+        return taskbarPopupPalette ?? PopupBackplatePalette.Fixed(taskbarTheme, taskbarTheme == ElementTheme.Dark
             ? Color.FromArgb(255, 34, 38, 45) : Color.FromArgb(255, 243, 247, 251));
+    }
+
+    private void UpdatePopupTheme(ElementTheme taskbarTheme)
+    {
+        thumbnails?.SetTheme(ResolvePopupPalette(taskbarTheme));
+        menuBackplates.Refresh();
     }
 
     private void ScheduleHover(int milliseconds)
@@ -974,7 +959,7 @@ internal sealed partial class PreviewApplicationStrip
             {
                 HoverDurationMs = thumbnailAnimationMs
             };
-            UpdateThumbnailTheme(anchor.ActualTheme);
+            thumbnails.SetTheme(ResolvePopupPalette(anchor.ActualTheme));
             hoverAnchor = anchor as Button;
             thumbnails.Open(owner, anchor, group.Windows, thumbnailWidth,
                 window =>
@@ -1039,6 +1024,8 @@ internal sealed partial class PreviewApplicationStrip
         windowMotion.Clear();
         StopScrollAnimation();
         DismissThumbnails();
+        openFlyout?.Hide();
+        menuBackplates.Dispose();
         thumbnails?.Close();
         thumbnails = null;
     }
@@ -1093,6 +1080,7 @@ internal sealed partial class PreviewApplicationStrip
             var current = windowMotion.HasRectangularRequest ? groups : AppGroups.Build(pins.Items, RunningWindows.List());
             var group = FindApp(current, view.Group.Key) ?? view.Group;
             int recentPosition = Populate(group, current, readRecent: true);
+            if (menu.Items.Count > 0) menuBackplates.Watch(menu.Items[0]);
             if (group.Windows.Count == 0 || RecentBrowserFor(group.Executable) is not { } browser || !ShowsRecentSessions(browser)) return;
             var tabs = await BrowserRecentSessions.ReadAsync(browser);
             if (tabs.Length == 0 || request != opening || !ReferenceEquals(openFlyout, menu) ||
@@ -1120,7 +1108,7 @@ internal sealed partial class PreviewApplicationStrip
         var recent = RecentMenu("最近关闭");
         foreach (var tab in tabs)
             recent.Items.Add(AppMenuItem(tab.Title, AppMenuIcon.RecentFile, () => _ = RestoreBrowserTabAsync(browser, tab.SessionId)));
-        ApplySubmenuTheme(recent);
+        menuBackplates.Watch(recent.Items[0]);
         return recent;
     }
 
@@ -1143,7 +1131,7 @@ internal sealed partial class PreviewApplicationStrip
                 Launch(group, new Uri(path).AbsoluteUri);
             }));
         }
-        ApplySubmenuTheme(recent);
+        menuBackplates.Watch(recent.Items[0]);
         menu.Items.Add(recent);
     }
 
@@ -1153,24 +1141,6 @@ internal sealed partial class PreviewApplicationStrip
         RequestedTheme = MenuTheme,
         Icon = appMenuIcons.Create(AppMenuIcon.RecentFile, iconLayout.ColorMode)
     };
-
-    private void ApplySubmenuTheme(MenuFlyoutSubItem submenu)
-    {
-        var theme = MenuTheme;
-        if (theme == ElementTheme.Default || submenu.Items.Count == 0) return;
-        // WinUI creates a separate presenter for nested menus without exposing a style property.
-        submenu.Items[0].Loaded += (sender, _) =>
-        {
-            for (var parent = VisualTreeHelper.GetParent((DependencyObject)sender); parent is not null;
-                parent = VisualTreeHelper.GetParent(parent))
-            {
-                if (parent is not MenuFlyoutPresenter presenter) continue;
-                presenter.RequestedTheme = theme;
-                presenter.Background = MenuBackground(theme);
-                break;
-            }
-        };
-    }
 
     private MenuFlyoutItem AppMenuItem(string text, AppMenuIcon icon, Action action, bool enabled = true)
     {
