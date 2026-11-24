@@ -302,8 +302,11 @@ internal sealed partial class WindowThumbnailPopup
     {
         bounds = next;
         var size = new System.Numerics.Vector2((float)(next.Width / scale), (float)(next.Height / scale));
-        glass.SetShape(size, size, BackplateRadius);
+        float radius = Math.Min(BackplateRadius, Math.Min(size.X, size.Y) / 2);
+        // Fill the whole region so independently antialiased edges cannot leave a bright seam.
+        glass.SetShape(size, size, radius: 0);
         PositionPopup();
+        ClipWindowCorners(next.Width, next.Height, radius);
     }
 
     private void PositionPopup()

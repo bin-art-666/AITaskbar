@@ -18,7 +18,7 @@ internal sealed partial class WindowThumbnailPopup : Window
     private const uint Destination = 1, ThumbnailOpacity = 4, VisibilityFlag = 8;
     private readonly Canvas panel = new();
     private const float BackplateRadius = PopupBackplatePalette.Radius;
-    private readonly Border backplate = new() { CornerRadius = new CornerRadius(BackplateRadius) };
+    private readonly Border backplate = new();
     private readonly SolidColorBrush tintBrush = new();
     private readonly AIEnter.DesktopGlassBackdrop glass = new(transparentWindow: true);
     private (Color Tint, Color Solid, float Blur)? palette;
@@ -27,6 +27,7 @@ internal sealed partial class WindowThumbnailPopup : Window
     private readonly List<Source> windows = [];
     private WindowThumbnailLayout.Page[] pages = [];
     private RectInt32 anchor, workArea, bounds, positionedBounds;
+    private (int Width, int Height, int Radius)? windowShape;
     private double scale;
     private int page, requestedWidth;
     private bool visible, above;
@@ -46,6 +47,8 @@ internal sealed partial class WindowThumbnailPopup : Window
         presenter.IsAlwaysOnTop = true;
         handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
         Native.RemoveWindowFrame(handle);
+        int doNotRound = 1; // DWMWCP_DONOTROUND: the native window region defines the only rounded edge.
+        Native.DwmSetWindowAttribute(handle, 33, ref doNotRound, sizeof(int));
         panel.PointerEntered += (_, _) => { enter(); ResumeHover(); };
         panel.PointerExited += (_, _) => leave();
         backplate.Background = tintBrush;
@@ -342,6 +345,18 @@ internal sealed partial class WindowThumbnailPopup : Window
 
     private int Pixel(double dip) => (int)Math.Round(dip * scale);
 
+    private void ClipWindowCorners(int width, int height, float radius)
+    {
+        var shape = (Width: width, Height: height, Radius: Pixel(radius));
+        if (windowShape == shape) return;
+        int diameter = shape.Radius * 2;
+        var region = CreateRoundRectRgn(0, 0, width, height, diameter, diameter);
+        if (region == 0) return;
+        // DWM thumbnails and the window backdrop sit outside the XAML visual tree.
+        if (SetWindowRgn(handle, region, true) != 0) windowShape = shape;
+        else DeleteObject(region);
+    }
+
     private void ClearThumbnails()
     {
         ClearCardAnimation();
@@ -363,6 +378,10 @@ internal sealed partial class WindowThumbnailPopup : Window
     [DllImport("user32.dll")] private static extern bool ClientToScreen(nint hwnd, ref Native.Point point);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Native.Point point);
     [DllImport("dwmapi.dll")] private static extern int DwmRegisterThumbnail(nint destination, nint source, out nint thumbnail);
+    [DllImport("gdi32.dll")] private static extern nint CreateRoundRectRgn(int left, int top, int right, int bottom,
+        int ellipseWidth, int ellipseHeight);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(nint region);
+    [DllImport("user32.dll")] private static extern int SetWindowRgn(nint window, nint region, bool redraw);
     [DllImport("dwmapi.dll")] private static extern int DwmQueryThumbnailSourceSize(nint thumbnail, out SizeInt32 size);
     [DllImport("dwmapi.dll")] private static extern int DwmUpdateThumbnailProperties(nint thumbnail, in ThumbnailProperties properties);
     [DllImport("dwmapi.dll")] private static extern int DwmUnregisterThumbnail(nint thumbnail);
