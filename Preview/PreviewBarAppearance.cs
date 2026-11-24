@@ -13,12 +13,15 @@ namespace AITaskbar;
 
 internal sealed class PreviewBarAppearance : IDisposable
 {
+    private const int TintStopCount = 5;
+    private const double TintSweepFraction = .45;
     private readonly Window window;
     private readonly DispatcherQueue dispatcher;
     private readonly AppearanceHost host;
     private readonly Border surface;
     private readonly Canvas lightLayer = new() { IsHitTestVisible = false };
-    private readonly Border fadingTint = new() { IsHitTestVisible = false, Opacity = 0 };
+    private readonly SolidColorBrush tintBrush = new(Microsoft.UI.Colors.Transparent);
+    private readonly LinearGradientBrush tintGradient = new() { StartPoint = new(0, 0), EndPoint = new(0, 1) };
     private readonly Border topLine = new() { IsHitTestVisible = false, VerticalAlignment = VerticalAlignment.Top,
         Visibility = Visibility.Collapsed };
     private readonly Image cursorLight = new() { Visibility = Visibility.Collapsed };
@@ -29,11 +32,12 @@ internal sealed class PreviewBarAppearance : IDisposable
     private Halo.GlassBackdrop? desktopBackdrop;
     private string? backdropKind;
     private LumaBar.BarAppearance? last;
-    private bool? lastContrast, lastEffects, lastLight;
+    private bool? lastContrast, lastEffects, lastLight, lastAnimations;
     private double lastScale;
     private (int Diameter, bool Light, int Strength) sprite;
-    private Color? previousTint;
+    private Color? targetTint;
     private Storyboard? tintTransition;
+    private bool detachBackdropAfterTint;
     private bool disposed;
     public bool? IsLight => lastLight;
 
@@ -47,10 +51,12 @@ internal sealed class PreviewBarAppearance : IDisposable
         this.updateIconTone = updateIconTone;
         lightLayer.Children.Add(cursorLight);
         var layers = new Grid();
-        layers.Children.Add(fadingTint);
         layers.Children.Add(lightLayer);
         layers.Children.Add(content);
         layers.Children.Add(topLine);
+        for (int i = 0; i < TintStopCount; i++)
+            tintGradient.GradientStops.Add(new GradientStop { Offset = i / (TintStopCount - 1d) });
+        surface.Background = tintBrush;
         surface.Child = layers;
         surface.SizeChanged += (_, _) => lightLayer.Clip = new RectangleGeometry { Rect = new(0, 0, surface.ActualWidth, surface.ActualHeight) };
         surface.ActualThemeChanged += (_, _) => Refresh();
@@ -68,15 +74,19 @@ internal sealed class PreviewBarAppearance : IDisposable
         var appearance = host.CurrentBarAppearance;
         bool contrast = accessibility.HighContrast;
         bool effects = system.AdvancedEffectsEnabled;
+        bool animations = !contrast && system.AnimationsEnabled;
         bool light = contrast || appearance is null
             ? surface.ActualTheme != ElementTheme.Dark : appearance.Tone == LumaBar.Tone.Light;
         double scale = surface.XamlRoot?.RasterizationScale ?? 1;
-        if (last == appearance && lastContrast == contrast && lastEffects == effects && lastLight == light && lastScale == scale) return;
+        if (last == appearance && lastContrast == contrast && lastEffects == effects && lastLight == light &&
+            lastScale == scale && lastAnimations == animations) return;
+        bool animateTint = animations && lastContrast == false && lastEffects == effects && backdropKind != "acrylic";
         last = appearance;
         lastContrast = contrast;
         lastEffects = effects;
         lastLight = light;
         lastScale = scale;
+        lastAnimations = animations;
         surface.RequestedTheme = contrast || appearance is null
             ? ElementTheme.Default : light ? ElementTheme.Light : ElementTheme.Dark;
         updateIconTone(light, appearance);
@@ -92,18 +102,24 @@ internal sealed class PreviewBarAppearance : IDisposable
             topLine.Background = new SolidColorBrush(contrast ? system.GetColorValue(UIColorType.Foreground) :
                 light ? Color.FromArgb(90, 93, 110, 138) : DarkLine(displayTint, normal, kind is "normal" or "opaque" || !effects));
         }
+        Color background = displayTint;
+        int tintDuration = animateTint ? appearance?.TransitionMilliseconds ?? 0 : 0;
+        detachBackdropAfterTint = false;
         if (contrast || kind is "normal" or "opaque" || !effects)
         {
-            SetBackdrop(null);
-            surface.Background = new SolidColorBrush(contrast ? system.GetColorValue(UIColorType.Background)
-                : kind == "normal" ? normal : SolidTint(tint, normal));
+            // Keep the glass behind the gradient until the new tint covers it completely.
+            detachBackdropAfterTint = tintDuration > 0 && backdropKind == "desktop";
+            if (!detachBackdropAfterTint) SetBackdrop(null);
+            if (contrast) background = system.GetColorValue(UIColorType.Background);
         }
         else if (kind == "acrylic" && DesktopAcrylicController.IsSupported())
         {
             SetBackdrop("acrylic");
             backdrop!.Update(new Halo.MaterialOptions(Thin: true, TintOpacity: tint.A / 255f,
                 LuminosityOpacity: .65f, FollowTheme: false, TintHex: $"#{tint.R:X2}{tint.G:X2}{tint.B:X2}"));
-            surface.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            // The acrylic controller already supplies this material's tint.
+            background = Microsoft.UI.Colors.Transparent;
+            tintDuration = 0;
         }
         else
         {
@@ -117,34 +133,70 @@ internal sealed class PreviewBarAppearance : IDisposable
             desktopBackdrop.UpdateBlur(kind == "blur" ? appearance!.Blur : kind == "acrylic" ? 30 : 0,
                 keepBackdropAtZero: kind == "blur" && tint.A != 0);
             SetBackdrop("desktop");
-            surface.Background = new SolidColorBrush(tint);
         }
         if (contrast || appearance?.MouseGlow != true || appearance.GlowStrength == 0)
             cursorLight.Visibility = Visibility.Collapsed;
-        UpdateTransition(contrast ? null : displayTint, contrast || !system.AnimationsEnabled
-            ? 0 : appearance?.TransitionMilliseconds ?? 0);
+        UpdateTint(background, tintDuration);
     }
 
-    private void UpdateTransition(Color? tint, int milliseconds)
+    private void UpdateTint(Color tint, int milliseconds)
     {
-        if (milliseconds > 0 && tint == previousTint) return;
-        tintTransition?.Stop();
-        tintTransition = null;
-        if (milliseconds > 0 && tint is not null && previousTint is { } previous)
+        if (milliseconds <= 0 || targetTint is null)
         {
-            fadingTint.Background = new SolidColorBrush(previous);
-            var fade = new DoubleAnimation
-            {
-                From = 1, To = 0, Duration = TimeSpan.FromMilliseconds(milliseconds),
-                FillBehavior = FillBehavior.Stop
-            };
-            Storyboard.SetTarget(fade, fadingTint);
-            Storyboard.SetTargetProperty(fade, nameof(UIElement.Opacity));
-            tintTransition = new Storyboard();
-            tintTransition.Children.Add(fade);
-            tintTransition.Begin();
+            FinishTint(tint);
+            return;
         }
-        previousTint = tint;
+        if (tint == targetTint)
+        {
+            if (tintTransition is null) FinishTint(tint);
+            return;
+        }
+
+        // Capture every stop before replacing the storyboard so reversals keep the visible gradient.
+        Span<Color> startingColors = stackalloc Color[TintStopCount];
+        for (int i = 0; i < startingColors.Length; i++)
+            startingColors[i] = tintTransition is null ? tintBrush.Color : tintGradient.GradientStops[i].Color;
+        tintTransition?.Stop();
+
+        var transition = new Storyboard();
+        var blendDuration = TimeSpan.FromMilliseconds(milliseconds * (1 - TintSweepFraction));
+        for (int i = 0; i < startingColors.Length; i++)
+        {
+            var stop = tintGradient.GradientStops[i];
+            stop.Color = startingColors[i];
+            var blend = new ColorAnimation
+            {
+                From = stop.Color, To = tint, Duration = blendDuration,
+                BeginTime = TimeSpan.FromMilliseconds(milliseconds * TintSweepFraction * stop.Offset),
+                EnableDependentAnimation = true
+            };
+            Storyboard.SetTarget(blend, stop);
+            Storyboard.SetTargetProperty(blend, nameof(GradientStop.Color));
+            transition.Children.Add(blend);
+        }
+        surface.Background = tintGradient;
+        targetTint = tint;
+        tintTransition = transition;
+        transition.Completed += (_, _) =>
+        {
+            if (ReferenceEquals(tintTransition, transition)) FinishTint(tint);
+        };
+        transition.Begin();
+    }
+
+    private void FinishTint(Color tint)
+    {
+        var transition = tintTransition;
+        tintTransition = null;
+        targetTint = tint;
+        tintBrush.Color = tint;
+        surface.Background = tintBrush;
+        transition?.Stop();
+        if (detachBackdropAfterTint)
+        {
+            detachBackdropAfterTint = false;
+            SetBackdrop(null);
+        }
     }
 
     private void SetBackdrop(string? kind)
@@ -205,7 +257,9 @@ internal sealed class PreviewBarAppearance : IDisposable
     public void Dispose()
     {
         disposed = true;
-        tintTransition?.Stop();
+        var transition = tintTransition;
+        tintTransition = null;
+        transition?.Stop();
         host.BarAppearanceChanged -= OnAppearanceChanged;
         desktopBackdrop?.ReleaseRetainedTransparentResources();
     }
