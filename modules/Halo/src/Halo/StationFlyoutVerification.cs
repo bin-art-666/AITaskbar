@@ -18,6 +18,11 @@ public partial class App
         try
         {
             Directory.CreateDirectory(DataDirectory);
+            if (Environment.GetCommandLineArgs().Contains("--verify-halo-storage-maintenance"))
+            {
+                await VerifyStorageMaintenance(checks);
+                return;
+            }
             if (Environment.GetCommandLineArgs().Contains("--verify-halo-flyout-root-drop"))
             {
                 await VerifyRootRingDrop(checks);

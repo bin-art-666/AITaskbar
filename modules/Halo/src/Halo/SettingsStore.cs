@@ -13,7 +13,7 @@ internal sealed record HaloSettings(int Version = 1, double Width = HaloDefaults
     DragPreviewMode DragPreviewMode = DragPreviewMode.GrabPoint, int DragPreviewDistance = DragPreviewPlacement.DefaultDistance,
     bool ShowInteractionBorders = false, int? CompactX = null, int? CompactY = null, string FolderColor = HaloDefaults.FolderColor,
     FolderMenuAction FolderMenuPrimary = FolderMenuAction.Default, FolderMenuLayout? FolderMenu = null, FileMenuLayout? FileMenu = null,
-    string LightBackplateColor = "", string DarkBackplateColor = "")
+    string LightBackplateColor = "", string DarkBackplateColor = "", HaloBackupPlan? Backup = null)
 {
     internal FolderMenuLayout EffectiveFolderMenu => FolderMenu?.WithMove() ?? FolderMenuLayout.FromLegacy(FolderMenuPrimary);
     internal FileMenuLayout EffectiveFileMenu => FileMenu?.WithMove() ?? FileMenuLayout.Default;
@@ -34,6 +34,7 @@ internal sealed record HaloSettings(int Version = 1, double Width = HaloDefaults
         Appearance.Validate();
         EffectiveFolderMenu.Validate();
         EffectiveFileMenu.Validate();
+        Backup?.Validate();
     }
     internal UiAppearance Appearance => new(ButtonColor: ButtonColor, BackplateTransparency: Transparency, BackplateBlur: Blur, BackplateRadius: Radius, TaskbarIconSize: RingSize, RingThickness: RingThickness, RingColor: RingColor, RingHoverFlow: RingHoverFlow, RingFlowSpeed: RingFlowSpeed, RingLightColor: RingLightColor, RingFlowLength: RingFlowLength, ShowInteractionBorders: ShowInteractionBorders, FolderColor: FolderColor,
         LightBackplateColor: LightBackplateColor, DarkBackplateColor: DarkBackplateColor);
@@ -53,7 +54,7 @@ internal sealed class SettingsStore
         if (!existingProfile) return;
         try { Data = Read(path); }
         catch (NotSupportedException) { ReadOnly = true; Warning = "设置版本较新，已停止写入。"; }
-        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
         {
             try { Data = Read(path + ".bak"); preserveBackup = true; Warning = "已从备份恢复设置。"; }
             catch { ReadOnly = true; Warning = "设置损坏，已保留原文件并停止写入。"; }

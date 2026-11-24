@@ -487,6 +487,25 @@ internal sealed partial class StationWindow : PanelWindow
         if (restoreGridFocus && !ShowingSettings && folderBrowser == null) FocusGridSelection(files);
         if (scroll != null && offset > 0) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => { if (!destroyed) scroll.ChangeView(null, Math.Min(offset, scroll.ScrollableHeight), null, true); });
     }
+
+    internal async Task RefreshAfterExternalFiles(bool availabilityChanged)
+    {
+        if (destroyed || !IsOpen) return;
+        if (availabilityChanged) {
+            UpdateOfflineView();
+            settingsPage?.RefreshStorageAvailability();
+            if (App.Station.LibraryOffline) {
+                CloseFolderBrowser();
+                HideSearch();
+                thumbnails.Cancel();
+                return;
+            }
+            App.Current.ResumeQueuedDrops();
+            Rebuild();
+        }
+        if (folderBrowser is { } browser && !ModalActive) await browser.RefreshAfterLibraryMove(preserveNotice: true);
+        if (Searching) _ = RefreshSearch();
+    }
     internal static (GridViewItem Card, Preview Preview) CreateItemCard(StationItem item, int size, bool showReferenceBadge = true, string? folderColor = null)
     {
         var glyph = PanelTheme.Glyph(item.Kind switch { StationKind.Folder => "\uE8B7", StationKind.Link => "\uE71B", StationKind.Text => "\uE8A5", _ => "\uE8A5" }, size * .72);

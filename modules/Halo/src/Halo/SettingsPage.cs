@@ -107,6 +107,10 @@ internal sealed partial class SettingsPage : Grid
                 && sort != App.Station.Sort(value.NewestFirst))
                 await App.Station.SetSort(sort, value.NewestFirst);
             var current = App.Settings.Data;
+            if (value.Backup != current.Backup && value.Backup is { } backup) {
+                if (backup.Enabled) App.Station.ValidateBackupDirectory(backup.Directory);
+                value = value with { Backup = backup with { ActivatedAt = backup.Enabled ? DateTimeOffset.Now : null } };
+            }
             App.Settings.SaveSoon(value with {
                 Width = current.Width, Height = current.Height, Detached = current.Detached,
                 CompactX = current.CompactX, CompactY = current.CompactY,
@@ -284,7 +288,8 @@ internal sealed partial class SettingsPage : Grid
         var menu = DraftFolderMenu;
         var fileMenu = DraftFileMenu;
         return current with { FileMenu = fileMenu == current.EffectiveFileMenu ? current.FileMenu : fileMenu, FolderMenuPrimary = menu.PrimaryActions, FolderMenu = menu == current.EffectiveFolderMenu ? current.FolderMenu : menu, ShowInteractionBorders = showInteractionBorders.IsChecked == true, DragPreviewMode = SelectedDragMode, DragPreviewDistance = (int)dragDistance.Value, ButtonColor = buttonColor.Text.ToUpperInvariant(), FolderColor = folderColor.Text.ToUpperInvariant(), IconSize = SliderValue("文件图标大小"), HorizontalSpacing = SliderValue("水平间距"), VerticalSpacing = SliderValue("垂直间距"), NormalNotificationSeconds = SliderValue("普通提示显示时长"), ErrorNotificationSeconds = SliderValue("失败提示显示时长"), Transparency = SliderValue("背板透明程度"), Blur = SliderValue("背板模糊程度"), Radius = SliderValue("圆角"), RingSize = SliderValue("圆环大小"), RingThickness = SliderValue("圆环粗细"), RingColor = ringColor.Text.ToUpperInvariant(), RingHoverFlow = hoverFlow.IsChecked == true, RingFlowSpeed = (int)flowSpeed.Value, RingLightColor = lightColor.Text.ToUpperInvariant(), RingFlowLength = (int)flowLength.Value, Pinned = pinned.IsChecked == true, DetachedHideOnBlur = autoHide.IsChecked == true,
-            LightBackplateColor = lightBackplateColor.Text.ToUpperInvariant(), DarkBackplateColor = darkBackplateColor.Text.ToUpperInvariant() };
+            LightBackplateColor = lightBackplateColor.Text.ToUpperInvariant(), DarkBackplateColor = darkBackplateColor.Text.ToUpperInvariant(),
+            Backup = BackupDraft(current.Backup) };
     }
 
     // 验收测试通过名称/标签查找控件；这些辅助方法让测试不依赖具体布局结构。
@@ -303,6 +308,7 @@ internal sealed partial class SettingsPage : Grid
         LoadFolderMenu(original.EffectiveFolderMenu);
         LoadFileMenu(original.EffectiveFileMenu);
         RefreshStoragePath();
+        LoadBackupSettings(original.Backup);
         RefreshTrashSettings();
         saveError.Visibility = Visibility.Collapsed;
         int[] values = [original.IconSize, original.HorizontalSpacing, original.VerticalSpacing, original.Transparency, original.Blur, original.Radius, original.RingSize, original.RingThickness, original.NormalNotificationSeconds, original.ErrorNotificationSeconds];

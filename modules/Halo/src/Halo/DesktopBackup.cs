@@ -4,7 +4,18 @@ using System.Text.Json;
 namespace Halo;
 internal sealed partial class StationStore
 {
-    internal async Task ExportDesktop(string destination) {
+    internal void ValidateBackupDirectory(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Path.IsPathFullyQualified(directory))
+            throw new IOException("请先选择备份目录。");
+        directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        CheckLibraryParents(directory);
+        if (SamePath(directory, DesktopDirectory) || Below(directory, DesktopDirectory))
+            throw new IOException("请选择 Halo 文件库之外的备份目录。");
+        if (!Directory.Exists(directory)) throw new IOException("备份目录暂不可用。");
+    }
+
+    internal async Task ExportDesktop(string destination, bool verifyNewArchive = false) {
         await desktopGate.WaitAsync(); string temporary = destination + "." + Guid.NewGuid().ToString("N") + ".partial";
         try {
             RequireAvailableLibrary();
@@ -33,8 +44,35 @@ internal sealed partial class StationStore
                 }
                 file.Flush(true);
             });
-            File.Move(temporary, destination, true);
+            if (verifyNewArchive)
+                await Task.Run(() => VerifyBackupArchive(temporary));
+            File.Move(temporary, destination, overwrite: !verifyNewArchive);
         } finally { if (File.Exists(temporary)) File.Delete(temporary); desktopGate.Release(); }
+    }
+
+    internal static void VerifyBackupArchive(string path)
+    {
+        using var zip = ZipFile.OpenRead(path);
+        var manifestEntry = zip.GetEntry("halo-desktop.json") ?? throw new IOException("备份缺少桌面记录。");
+        if (manifestEntry.Length > MaximumDocumentBytes || zip.Entries.Count > 100000 || zip.Entries.Sum(entry => entry.Length) > 20L * 1024 * 1024 * 1024)
+            throw new IOException("备份超过恢复限制（20 GB／十万文件）。");
+        using var manifest = manifestEntry.Open();
+        var document = JsonSerializer.Deserialize<StationDocument>(manifest) ?? throw new IOException("备份记录无效。");
+        if (document.Version != 4 || document.Items == null) throw new IOException("备份记录无效。");
+        var names = zip.Entries.Select(entry => entry.FullName).ToHashSet(StringComparer.Ordinal);
+        foreach (var item in document.Items.Concat(document.Trash ?? []).Where(IsOwnedFile)) {
+            if (!names.Contains(item.Value + (item.Kind == StationKind.Folder ? "/" : "")))
+                throw new IOException("备份缺少文件或文件夹。");
+        }
+        var buffer = new byte[81920];
+        foreach (var entry in zip.Entries.Where(entry => entry.FullName.StartsWith("files/", StringComparison.Ordinal)
+            && !entry.FullName.EndsWith('/'))) {
+            using var stream = entry.Open();
+            long length = 0;
+            int count;
+            while ((count = stream.Read(buffer)) != 0) length += count;
+            if (length != entry.Length) throw new IOException("备份中的文件数据不完整。");
+        }
     }
     internal async Task RestoreDesktop(string source) {
         if (ReadOnly) throw new IOException(LoadWarning);

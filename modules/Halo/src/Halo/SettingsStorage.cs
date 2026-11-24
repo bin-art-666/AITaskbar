@@ -41,6 +41,7 @@ internal sealed partial class SettingsPage
             cancelMigration.IsEnabled = false;
             migrationCancellation?.Cancel();
         };
+        BuildBackupSettings(body);
     }
 
     void RefreshStoragePath()

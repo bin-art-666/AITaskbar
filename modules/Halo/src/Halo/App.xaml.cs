@@ -48,6 +48,7 @@ public partial class App
         }
         if (verifyFlyout) { _ = VerifyStationFlyout(arguments.Contains("--verify-halo-flyout-files")); return; }
         if (Verification) { _ = VerifyStation(); return; }
+        StartStorageMaintenance(dispatcher);
         Handle(arguments.Contains("--background") ? "Background" : action);
         if (Directory.Exists(Path.Combine(DataDirectory, "incoming-drops"))) _ = DrainDrops();
     }
@@ -130,6 +131,7 @@ public partial class App
     internal async Task StopAsync()
     {
         if (quitting || Station is null) return; quitting = true;
+        await StopStorageMaintenance();
         if (Panel is { } panel) await panel.PendingSettingsSave;
         await Station.Flush(); Panel?.Destroy();
         try { await Settings.Flush(); } catch (Exception error) { Log(error); }
