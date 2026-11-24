@@ -447,7 +447,7 @@ internal sealed partial class StationWindow : PanelWindow
                 nativeDrag = BeginNativeLibraryDrag(e.Data, App.Station.LibraryRoot, items, item.Id);
                 UpdateSelectionDetails();
                 e.AllowedOperations = DataPackageOperation.Copy;
-                var image = ApplyOutgoingDragPreview(e.DragUI, preview);
+                var image = ApplyOutgoingDragPreview(e.DragUI);
                 var fill = StationTransfer.FillMany(e.Data, items, App.Station.AttachmentDirectory, exportNoteFiles: true, preparedFiles: preparation);
                 var deferral = image.IsCompleted && fill.IsCompleted ? null : e.GetDeferral();
                 try {

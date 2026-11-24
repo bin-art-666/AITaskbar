@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -13,6 +14,7 @@ namespace Halo;
 
 internal sealed partial class StationWindow
 {
+    const int CaptureAborted = unchecked((int)0x80004004);
     readonly Canvas dragPreviewLayer = new() { IsHitTestVisible = false, Visibility = Visibility.Collapsed };
     readonly TranslateTransform dragPreviewPosition = new();
     readonly Dictionary<GridViewItem, double> dragSourceOpacity = [];
@@ -119,6 +121,7 @@ internal sealed partial class StationWindow
             return new(await bitmap.GetPixelsAsync(), bitmap.PixelWidth, bitmap.PixelHeight,
                 new(Math.Min(anchor.X * scale, bitmap.PixelWidth - 1), Math.Min(anchor.Y * scale, bitmap.PixelHeight - 1)));
         }
+        catch (COMException error) when (error.HResult == CaptureAborted) { return null; } // The visual changed before capture completed.
         catch (Exception error) { App.Log(error); return null; }
     }
 
@@ -132,7 +135,24 @@ internal sealed partial class StationWindow
         catch (Exception error) { App.Log(error); return null; }
     }
 
-    async Task ApplyOutgoingDragPreview(DragUI ui, Preview source)
+    internal static SoftwareBitmap? ApplyDragBitmap(Task<DragPreviewPixels?>? capture, Action<SoftwareBitmap, Point> apply)
+    {
+        var bitmap = CreateDragBitmap(capture);
+        if (bitmap is null) return null;
+        try
+        {
+            apply(bitmap, capture!.Result!.Anchor);
+            return bitmap;
+        }
+        catch (Exception error)
+        {
+            bitmap.Dispose();
+            if (error.HResult != CaptureAborted) App.Log(error);
+            return null;
+        }
+    }
+
+    async Task ApplyOutgoingDragPreview(DragUI ui)
     {
         if (!outgoingHandoff) return;
         try {
@@ -140,16 +160,8 @@ internal sealed partial class StationWindow
             // Keep the themed visual attached until WinUI has captured it, including fast edge crossings.
             if (capture is { IsCompleted: false })
                 await Task.WhenAny(capture, Task.Delay(100));
-            outgoingPreview = CreateDragBitmap(capture);
-            if (outgoingPreview != null)
-                ui.SetContentFromSoftwareBitmap(outgoingPreview, capture!.Result!.Anchor);
-            else if (source.Image.Source is BitmapImage { PixelWidth: > 0 } thumbnail) {
-                var scale = root.XamlRoot?.RasterizationScale ?? 1;
-                var offset = dragPreviewPlacement.Offset(thumbnail.PixelWidth, thumbnail.PixelHeight, dragPreviewGrab, scale);
-                ui.SetContentFromBitmapImage(thumbnail, new(-offset.X, -offset.Y));
-            }
+            outgoingPreview = ApplyDragBitmap(capture, (bitmap, anchor) => ui.SetContentFromSoftwareBitmap(bitmap, anchor));
         }
-        catch (Exception error) { App.Log(error); }
         finally { HideDragPreview(); }
     }
 

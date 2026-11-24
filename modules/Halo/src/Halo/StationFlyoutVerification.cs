@@ -46,6 +46,7 @@ public partial class App
             }
             var entrance = InputCoordinate(work.Left + 6 + (int)Math.Round(anchor.ActualWidth * anchor.XamlRoot.RasterizationScale / 2), work.Bottom - 29);
             await Panel.VerifyFlyoutWindow(frame, entrance, Check);
+            await Panel.VerifyFlyoutFocusDismissal(taskbar, background, Check);
             if (includeFiles) await Panel.VerifyFlyoutTransfers(work, DataDirectory, Check);
             await VerifyDefaultProfile(Check);
             Panel.VerifyMixedDpiGeometry(Check);
@@ -229,8 +230,59 @@ internal sealed partial class StationWindow
         finally { cover.Close(); }
     }
 
+    internal async Task VerifyFlyoutFocusDismissal(Window owner, Window other, Action<string, bool> check)
+    {
+        var settings = App.Settings.Data;
+        App.Settings.Save(settings with { Pinned = false, DetachedHideOnBlur = true });
+        try
+        {
+            owner.Activate();
+            Open();
+            await Task.Delay(300);
+            check("ExpandedFlyoutObservesForegroundChanges", Detached && IsOpen && foregroundHook != 0);
+            async Task SwitchForeground()
+            {
+                owner.Activate();
+                await Task.Delay(100);
+                other.Activate();
+                await Task.Delay(250);
+            }
+            using (KeepOpen())
+            {
+                await SwitchForeground();
+                check("ForegroundChangeKeepsModalInteractionOpen", IsOpen);
+            }
+            using (KeepOpenForDrag())
+            {
+                await SwitchForeground();
+                check("ForegroundChangeKeepsActiveDragOpen", IsOpen);
+            }
+            await SwitchForeground();
+            check("ForegroundChangeWithoutMouseDismissesExpandedFlyout",
+                Native.GetForegroundWindow() == WinRT.Interop.WindowNative.GetWindowHandle(other) && !IsOpen);
+            owner.Activate();
+            Open();
+            await Task.Delay(300);
+            TogglePin();
+            await SwitchForeground();
+            check("ForegroundChangeKeepsPinnedFlyoutOpen", IsOpen);
+            Hide();
+            await Task.Delay(250);
+        }
+        finally { App.Settings.Save(settings); }
+    }
+
     internal async Task VerifyFlyoutTransfers(Native.Rect work, string directory, Action<string, bool> check)
     {
+        var pixel = Windows.Security.Cryptography.CryptographicBuffer.CreateFromByteArray([0, 0, 0, 255]);
+        var capture = Task.FromResult<DragPreviewPixels?>(new(pixel, 1, 1, default));
+        bool triedPreview = false;
+        using var rejectedPreview = ApplyDragBitmap(capture, (_, _) =>
+        {
+            triedPreview = true;
+            throw new System.Runtime.InteropServices.COMException("Simulated drag image rejection", CaptureAborted);
+        });
+        check("RejectedDragImageUsesSystemPreview", triedPreview && rejectedPreview is null);
         Open();
         await Task.Delay(400);
         var bounds = CurrentBounds();
@@ -286,6 +338,24 @@ internal sealed partial class StationWindow
             if (!received.SequenceEqual(new[] { imported!.Value }) || !File.Exists(fixture))
                 throw new InvalidOperationException($"File drag-out failed. Presses={presses}, moves={moves}, selected={Selected().Length}, native={verifiedShellExport}, target enters={enters}, delivered={received.Length}, status={status.Text}");
             check("SystemFileDragOutExportsOwnedCopy", true);
+            await Task.Delay(250);
+            delivered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var outsideDropTarget = InputPoint(target.X, target.Y + 130);
+            check("CancelDropPointIsOutsideReceiverAndHalo", At(outsideDropTarget.X, outsideDropTarget.Y) != receiverHandle
+                && At(outsideDropTarget.X, outsideDropTarget.Y) != flyoutLayer?.Handle);
+            await Task.Run(() => InputFixture.Drag(from, outsideDropTarget, sendNativeMovement: true));
+            await Task.Delay(250);
+            check("CancelledSystemDragDoesNotDeliverOrLeavePreview", !delivered.Task.IsCompleted && !DragActive
+                && verifiedShellExport == nameof(Windows.ApplicationModel.DataTransfer.DataPackageOperation.None)
+                && dragPreviewLayer.Visibility == Visibility.Collapsed && File.Exists(imported.Value));
+            var folderCard = files.Items.Cast<GridViewItem>().Single(item => ((StationItem)item.Tag).Kind == StationKind.Folder);
+            var folder = (StationItem)folderCard.Tag;
+            var point = folderCard.TransformToVisual(root).TransformPoint(new(folderCard.ActualWidth / 2, folderCard.ActualHeight / 2));
+            var folderFrom = InputPoint(bounds.X + (int)Math.Round(point.X * WindowLayoutScale), bounds.Y + (int)Math.Round(point.Y * WindowLayoutScale));
+            await Task.Run(() => InputFixture.Drag(folderFrom, InputPoint(target.X, target.Y), sendNativeMovement: true));
+            var folderPaths = await delivered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            check("SystemFolderDragOutExportsOwnedCopy", folderPaths.SequenceEqual(new[] { folder.Value })
+                && File.Exists(Path.Combine(folder.Value, "样例-000.txt")));
         }
         finally { receiverWindow.BeginInvoke(receiverWindow.Close); }
         source.Close();

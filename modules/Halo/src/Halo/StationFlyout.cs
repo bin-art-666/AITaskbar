@@ -19,6 +19,9 @@ internal sealed partial class StationWindow
     AIEnter.FlyoutFileDrop? shellFileDrop;
     FrameworkElement? flyoutAnchor;
     nint taskbarOwner;
+    nint foregroundHook;
+    WinEventCallback? foregroundChanged;
+    bool shellDragOver;
     RectInt32 flyoutBounds;
     (ElementTheme Theme, Windows.UI.Color Color)? taskbarPalette;
     RectInt32? movingFlyoutFrom;
@@ -54,6 +57,7 @@ internal sealed partial class StationWindow
                 if (window == 0) continue;
                 flyoutLayer.Attach(window, FlyoutTopmost);
                 WatchHaloFlyout(window);
+                WatchFlyoutForeground(window);
                 RegisterShellFileDrop(window);
                 return;
             }
@@ -61,6 +65,10 @@ internal sealed partial class StationWindow
         void Detach()
         {
             generation++;
+            if (foregroundHook != 0) UnhookWinEvent(foregroundHook);
+            foregroundHook = 0;
+            foregroundChanged = null;
+            shellDragOver = false;
             shellFileDrop?.Dispose();
             shellFileDrop = null;
             flyoutLayer.Detach();
@@ -75,12 +83,37 @@ internal sealed partial class StationWindow
         if (IsOpen && !FlyoutTopmost && !ModalActive && !DragActive) flyoutLayer?.Raise();
     });
 
+    void WatchFlyoutForeground(nint popup)
+    {
+        const uint foregroundEvent = 3; // EVENT_SYSTEM_FOREGROUND, delivered on the UI thread.
+        foregroundChanged = (hook, _, foreground, _, _, _, _) =>
+        {
+            if (hook != foregroundHook || !CanDismiss() || foreground == 0 || OwnsForeground(foreground)) return;
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                if (hook == foregroundHook && CanDismiss() && Native.GetForegroundWindow() == foreground)
+                    Hide();
+            });
+        };
+        foregroundHook = SetWinEventHook(foregroundEvent, foregroundEvent, 0, foregroundChanged, 0, 0, 0);
+
+        bool CanDismiss() => IsOpen && detached && DismissOnOutside && !ModalActive && !DragActive
+            && !shellDragOver && !TaskbarFlyout!.IsClosing;
+        bool OwnsForeground(nint window)
+        {
+            // The taskbar receives focus during a ring click before its toggle handler runs.
+            for (var owner = window; owner != 0; owner = FlyoutWindowLayer.GetLayerWindow(owner, FlyoutWindowLayer.OwnerWindow))
+                if (owner == popup || owner == taskbarOwner) return true;
+            return false;
+        }
+    }
+
     void RegisterShellFileDrop(nint popup)
     {
         var target = new AIEnter.FlyoutFileDrop(
             () => IsOpen && !TaskbarFlyout!.IsClosing && !destroyed && !ShowingSettings && !ModalActive && !DragActive
                 && !App.Station.ReadOnly && (folderBrowser is null || folderBrowser.CanReceiveShellFiles),
-            dragging => { if (dragging) dragLeave.Stop(); else ScheduleDragDismiss(); },
+            dragging => { shellDragOver = dragging; if (dragging) dragLeave.Stop(); else ScheduleDragDismiss(); },
             paths =>
             {
                 var browser = folderBrowser;
@@ -247,4 +280,9 @@ internal sealed partial class StationWindow
     static extern nint FlyoutWindowAtPoint(Native.Point point);
     [DllImport("user32.dll")]
     static extern uint GetWindowThreadProcessId(nint window, out uint process);
+    delegate void WinEventCallback(nint hook, uint eventType, nint window, int objectId, int childId, uint thread, uint time);
+    [DllImport("user32.dll")]
+    static extern nint SetWinEventHook(uint min, uint max, nint module, WinEventCallback callback, uint process, uint thread, uint flags);
+    [DllImport("user32.dll")]
+    static extern bool UnhookWinEvent(nint hook);
 }

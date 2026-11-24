@@ -286,10 +286,12 @@ internal sealed partial class FolderBrowser
     async Task ApplySystemPreview(DragUI ui)
     {
         var capture = previewCapture;
-        if (capture is { IsCompleted: false }) await Task.WhenAny(capture, Task.Delay(100));
-        systemPreview = StationWindow.CreateDragBitmap(capture);
-        if (systemPreview != null) ui.SetContentFromSoftwareBitmap(systemPreview, capture!.Result!.Anchor);
-        ClearDragVisual();
+        try
+        {
+            if (capture is { IsCompleted: false }) await Task.WhenAny(capture, Task.Delay(100));
+            systemPreview = StationWindow.ApplyDragBitmap(capture, (bitmap, anchor) => ui.SetContentFromSoftwareBitmap(bitmap, anchor));
+        }
+        finally { ClearDragVisual(); }
     }
 
     async Task SavePosition(Guid[] moving, Guid anchor, int column, int row)

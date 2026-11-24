@@ -217,10 +217,7 @@ internal sealed partial class StationWindow
                 var island = grip.XamlRoot?.ContentIsland;
                 if (island is null) throw new InvalidOperationException("无法找到 Halo 拖拽源的输入宿主。");
                 using var manager = DragDropManager.GetForIsland(island);
-                var capture = dragPreviewCapture;
-                outgoingPreview = CreateDragBitmap(capture);
-                if (outgoingPreview != null)
-                    operation.SetDragUIContentFromSoftwareBitmap(outgoingPreview, capture!.Result!.Anchor);
+                outgoingPreview = ApplyDragBitmap(dragPreviewCapture, (bitmap, anchor) => operation.SetDragUIContentFromSoftwareBitmap(bitmap, anchor));
                 HideDragPreview();
                 if (App.Verification) RecordExport("starting WinUI drag");
                 var result = await operation.StartAsync(manager, nativePoint);
