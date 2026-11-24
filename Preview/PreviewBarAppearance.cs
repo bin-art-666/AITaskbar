@@ -24,7 +24,7 @@ internal sealed class PreviewBarAppearance : IDisposable
     private readonly Image cursorLight = new() { Visibility = Visibility.Collapsed };
     private readonly UISettings system = new();
     private readonly AccessibilitySettings accessibility = new();
-    private readonly Action<bool> updateIconTone;
+    private readonly Action<bool, LumaBar.BarAppearance?> updateIconTone;
     private Halo.GlassBackdrop? backdrop;
     private string? backdropKind;
     private LumaBar.BarAppearance? last;
@@ -36,7 +36,8 @@ internal sealed class PreviewBarAppearance : IDisposable
     private bool disposed;
     public bool? IsLight => lastLight;
 
-    public PreviewBarAppearance(Window window, Border surface, FrameworkElement content, AppearanceHost host, Action<bool> updateIconTone)
+    public PreviewBarAppearance(Window window, Border surface, FrameworkElement content, AppearanceHost host,
+        Action<bool, LumaBar.BarAppearance?> updateIconTone)
     {
         this.window = window;
         dispatcher = window.DispatcherQueue;
@@ -77,7 +78,7 @@ internal sealed class PreviewBarAppearance : IDisposable
         lastScale = scale;
         surface.RequestedTheme = contrast || appearance is null
             ? ElementTheme.Default : light ? ElementTheme.Light : ElementTheme.Dark;
-        updateIconTone(light);
+        updateIconTone(light, appearance);
 
         var normal = light ? Color.FromArgb(255, 243, 246, 250) : Color.FromArgb(255, 30, 34, 42);
         string kind = appearance?.Material ?? "normal";

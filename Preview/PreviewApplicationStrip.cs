@@ -866,9 +866,15 @@ internal sealed partial class PreviewApplicationStrip
     private MenuFlyout NewMenu()
     {
         var menu = new MenuFlyout { Placement = FlyoutPlacementMode.Top };
-        menu.Opening += (_, _) => { DismissThumbnails(); openFlyout = menu; };
+        menu.Opening += (_, _) =>
+        {
+            DismissThumbnails();
+            openFlyout = menu;
+            menuBackplates.Begin(menu);
+        };
         menu.Closed += (_, _) =>
         {
+            menuBackplates.End(menu);
             if (!ReferenceEquals(openFlyout, menu)) return;
             openFlyout = null;
             if (pinRefreshPending) Surface.DispatcherQueue.TryEnqueue(Refresh);
@@ -924,7 +930,6 @@ internal sealed partial class PreviewApplicationStrip
     private void UpdatePopupTheme(ElementTheme taskbarTheme)
     {
         thumbnails?.SetTheme(ResolvePopupPalette(taskbarTheme));
-        menuBackplates.Refresh();
     }
 
     private void ScheduleHover(int milliseconds)
@@ -1080,12 +1085,12 @@ internal sealed partial class PreviewApplicationStrip
             var current = windowMotion.HasRectangularRequest ? groups : AppGroups.Build(pins.Items, RunningWindows.List());
             var group = FindApp(current, view.Group.Key) ?? view.Group;
             int recentPosition = Populate(group, current, readRecent: true);
-            if (menu.Items.Count > 0) menuBackplates.Watch(menu.Items[0]);
+            if (menu.Items.Count > 0) menuBackplates.Watch(menu, menu.Items[0], main: true);
             if (group.Windows.Count == 0 || RecentBrowserFor(group.Executable) is not { } browser || !ShowsRecentSessions(browser)) return;
             var tabs = await BrowserRecentSessions.ReadAsync(browser);
             if (tabs.Length == 0 || request != opening || !ReferenceEquals(openFlyout, menu) ||
                 !ShowsRecentSessions(browser) || !group.Windows.Any(RunningWindows.IsCurrent)) return;
-            menu.Items.Insert(recentPosition, RecentSessionMenu(browser, tabs));
+            menu.Items.Insert(recentPosition, RecentSessionMenu(menu, browser, tabs));
         };
         view.Button.ContextFlyout = menu;
     }
@@ -1103,12 +1108,12 @@ internal sealed partial class PreviewApplicationStrip
     private bool ShowsRecentSessions(RecentBrowser browser) =>
         browser == RecentBrowser.Chrome ? iconLayout.ShowChromeRecentlyClosed : iconLayout.ShowEdgeRecentlyClosed;
 
-    private MenuFlyoutSubItem RecentSessionMenu(RecentBrowser browser, IReadOnlyList<BrowserRecentEntry> tabs)
+    private MenuFlyoutSubItem RecentSessionMenu(MenuFlyout menu, RecentBrowser browser, IReadOnlyList<BrowserRecentEntry> tabs)
     {
         var recent = RecentMenu("最近关闭");
         foreach (var tab in tabs)
             recent.Items.Add(AppMenuItem(tab.Title, AppMenuIcon.RecentFile, () => _ = RestoreBrowserTabAsync(browser, tab.SessionId)));
-        menuBackplates.Watch(recent.Items[0]);
+        menuBackplates.Watch(menu, recent.Items[0]);
         return recent;
     }
 
@@ -1131,7 +1136,7 @@ internal sealed partial class PreviewApplicationStrip
                 Launch(group, new Uri(path).AbsoluteUri);
             }));
         }
-        menuBackplates.Watch(recent.Items[0]);
+        menuBackplates.Watch(menu, recent.Items[0]);
         menu.Items.Add(recent);
     }
 

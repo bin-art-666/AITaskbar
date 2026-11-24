@@ -165,7 +165,7 @@ internal sealed class PreviewTaskbar : Window
         };
         var panelColors = new Windows.UI.ViewManagement.UISettings();
         var panelAccessibility = new Windows.UI.ViewManagement.AccessibilitySettings();
-        var visual = new PreviewBarAppearance(this, surface, barContent, appearance, light =>
+        var visual = new PreviewBarAppearance(this, surface, barContent, appearance, (light, barAppearance) =>
         {
             icons.RefreshSystem(light);
             showDesktop.ApplyTone(light, panelColors, panelAccessibility.HighContrast);
@@ -173,8 +173,8 @@ internal sealed class PreviewTaskbar : Window
             tray.ApplyTone(light, app.BarAppearance);
             appCenter?.ApplyPalette();
             var palette = TaskbarPanelFlyout.ResolvePalette(new QuickControlAppearance(Backdrop: QuickBackdrop.FollowTaskbar),
-                light, app.BarAppearance, panelColors, panelAccessibility.HighContrast);
-            tasks.SetThumbnailTaskbarPalette(palette.Theme, palette.Solid, app.BarAppearance);
+                light, barAppearance, panelColors, panelAccessibility.HighContrast);
+            tasks.SetThumbnailTaskbarPalette(palette.Theme, palette.Solid, barAppearance);
             aiService.SetTaskbarPalette(palette.Theme, palette.Solid);
             app.HaloModule.SetTaskbarPalette(palette.Theme, palette.Solid);
         });
