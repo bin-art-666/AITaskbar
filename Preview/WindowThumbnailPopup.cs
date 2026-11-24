@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Windows.UI.ViewManagement;
 using Windows.Foundation;
 using Windows.Graphics;
 using Windows.UI;
@@ -16,6 +17,11 @@ internal sealed partial class WindowThumbnailPopup : Window
     private const int Padding = WindowThumbnailLayout.Padding, Gap = WindowThumbnailLayout.Gap;
     private const uint Destination = 1, ThumbnailOpacity = 4, VisibilityFlag = 8;
     private readonly Canvas panel = new();
+    private const float BackplateRadius = 14, BackplateBlur = 8.5f;
+    private readonly Border backplate = new() { CornerRadius = new CornerRadius(BackplateRadius) };
+    private readonly SolidColorBrush tintBrush = new();
+    private readonly AIEnter.DesktopGlassBackdrop glass = new(transparentWindow: true);
+    private (ElementTheme Theme, Color Tint)? palette;
     private Action<RunningWindow>? activate, close;
     private readonly nint handle;
     private readonly List<Source> windows = [];
@@ -42,8 +48,18 @@ internal sealed partial class WindowThumbnailPopup : Window
         Native.RemoveWindowFrame(handle);
         panel.PointerEntered += (_, _) => { enter(); ResumeHover(); };
         panel.PointerExited += (_, _) => leave();
-        Content = panel;
-        Closed += (_, _) => ClearThumbnails();
+        backplate.Background = tintBrush;
+        backplate.Child = panel;
+        Content = backplate;
+        glass.GlassUnavailable += RefreshBackplate;
+        animationSettings.AdvancedEffectsEnabledChanged += OnAdvancedEffectsChanged;
+        SystemBackdrop = glass;
+        Closed += (_, _) =>
+        {
+            animationSettings.AdvancedEffectsEnabledChanged -= OnAdvancedEffectsChanged;
+            glass.GlassUnavailable -= RefreshBackplate;
+            ClearThumbnails();
+        };
     }
 
     public void Open(nint owner, FrameworkElement button, IEnumerable<RunningWindow> sources, int width,
@@ -69,9 +85,27 @@ internal sealed partial class WindowThumbnailPopup : Window
 
     internal void SetTheme(ElementTheme theme, Color background)
     {
-        panel.RequestedTheme = theme;
-        if (panel.Background is not SolidColorBrush brush || brush.Color != background)
-            panel.Background = new SolidColorBrush(background);
+        palette = (theme, background);
+        backplate.RequestedTheme = theme;
+        RefreshBackplate();
+    }
+
+    private void OnAdvancedEffectsChanged(UISettings sender, object args) => DispatcherQueue.TryEnqueue(RefreshBackplate);
+
+    private void RefreshBackplate()
+    {
+        if (palette is not { } current) return;
+        bool highContrast = animationAccessibility.HighContrast;
+        bool useGlass = !highContrast && animationSettings.AdvancedEffectsEnabled && glass.CanUseGlass;
+        tintBrush.Color = highContrast ? animationSettings.GetColorValue(UIColorType.Background)
+            : TaskbarPanelFlyout.Alpha(current.Tint, useGlass ? (byte)208 : (byte)255);
+        glass.SetBlur(useGlass ? BackplateBlur : 0);
+    }
+
+    private void SetPopupOpacity(double opacity)
+    {
+        backplate.Opacity = opacity;
+        glass.SetMotion((float)opacity, 0);
     }
 
     internal void Resize(int width)
@@ -209,6 +243,15 @@ internal sealed partial class WindowThumbnailPopup : Window
         var button = new Button { Width = cardWidth, Height = cardHeight, Padding = new Thickness(0),
             BorderThickness = new Thickness(0), Content = content, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Stretch };
+        if (!animationAccessibility.HighContrast)
+        {
+            var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            button.Background = transparent;
+            button.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(Color.FromArgb(24, 128, 128, 128));
+            button.Resources["ButtonBackgroundPressed"] = new SolidColorBrush(Color.FromArgb(40, 128, 128, 128));
+            button.Resources["ButtonBorderBrushPointerOver"] = transparent;
+            button.Resources["ButtonBorderBrushPressed"] = transparent;
+        }
         AutomationProperties.SetName(button, "切换到 " + source.Title);
         ToolTipService.SetToolTip(button, source.Title);
         button.Click += (_, _) => activate?.Invoke(source);

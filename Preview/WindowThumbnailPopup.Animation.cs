@@ -65,7 +65,7 @@ internal sealed partial class WindowThumbnailPopup
 
     private void PrepareReveal()
     {
-        hoverOpacity = panel.Opacity = 0;
+        SetPopupOpacity(hoverOpacity = 0);
         hoverOffset = OffsetTowardAnchor;
     }
 
@@ -81,7 +81,7 @@ internal sealed partial class WindowThumbnailPopup
         int duration = current.DurationMs;
         double elapsed = Animate ? Stopwatch.GetElapsedTime(current.Started).TotalMilliseconds : duration;
         double progress = Progress(elapsed, duration);
-        hoverOpacity = panel.Opacity = Mix(current.Opacity, current.Hide ? 0 : 1, progress);
+        SetPopupOpacity(hoverOpacity = Mix(current.Opacity, current.Hide ? 0 : 1, progress));
         hoverOffset = Mix(current.Offset, current.Hide ? OffsetTowardAnchor : 0, progress);
         PositionPopup();
         foreach (var card in cards) DrawCard(card, card.Drawn, card.Alpha);
@@ -268,7 +268,7 @@ internal sealed partial class WindowThumbnailPopup
             (int)Math.Round(Mix(current.From.Y, current.To.Y, slide)),
             (int)Math.Round(Mix(current.From.Width, current.To.Width, slide)),
             (int)Math.Round(Mix(current.From.Height, current.To.Height, slide))));
-        if (current.Last) panel.Opacity = hoverOpacity * (1 - slide);
+        if (current.Last) SetPopupOpacity(hoverOpacity * (1 - slide));
         foreach (var motion in current.Motions)
         {
             double progress = motion.Exiting ? exit : slide;
@@ -301,6 +301,8 @@ internal sealed partial class WindowThumbnailPopup
     private void SetBounds(RectInt32 next)
     {
         bounds = next;
+        var size = new System.Numerics.Vector2((float)(next.Width / scale), (float)(next.Height / scale));
+        glass.SetShape(size, size, BackplateRadius);
         PositionPopup();
     }
 
@@ -352,7 +354,7 @@ internal sealed partial class WindowThumbnailPopup
         cards.Clear();
         closingImages.Clear();
         panel.Children.Clear();
-        hoverOpacity = panel.Opacity = 1;
+        SetPopupOpacity(hoverOpacity = 1);
         hoverOffset = 0;
     }
 }

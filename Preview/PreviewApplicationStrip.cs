@@ -897,6 +897,15 @@ internal sealed partial class PreviewApplicationStrip
     internal static SolidColorBrush MenuBackground(ElementTheme theme) => new(theme == ElementTheme.Dark
         ? Color.FromArgb(255, 37, 44, 57) : Color.FromArgb(255, 245, 248, 252));
 
+    private (ElementTheme Theme, Color Tint)? thumbnailTaskbarPalette;
+
+    internal void SetThumbnailTaskbarPalette(ElementTheme theme, Color tint)
+    {
+        if (thumbnailTaskbarPalette == (theme, tint)) return;
+        thumbnailTaskbarPalette = (theme, tint);
+        if (iconLayout.MenuColorMode == AppMenuColorMode.FollowTaskbar) UpdateThumbnailTheme(theme);
+    }
+
     private void UpdateThumbnailTheme(ElementTheme taskbarTheme)
     {
         if (thumbnails is null) return;
@@ -909,6 +918,11 @@ internal sealed partial class PreviewApplicationStrip
         if (theme != ElementTheme.Default)
         {
             thumbnails.SetTheme(theme, MenuBackground(theme).Color);
+            return;
+        }
+        if (thumbnailTaskbarPalette is { } palette)
+        {
+            thumbnails.SetTheme(palette.Theme, palette.Tint);
             return;
         }
         thumbnails.SetTheme(taskbarTheme, taskbarTheme == ElementTheme.Dark
