@@ -106,7 +106,7 @@ public partial class App : Application
         compareWait = ThreadPool.RegisterWaitForSingleObject(compare, (_, _) => dispatcher.TryEnqueue(() => StartTaskbar(comparison: true)), null, Timeout.Infinite, false);
         startupWait = ThreadPool.RegisterWaitForSingleObject(startup, (_, _) => dispatcher.TryEnqueue(() => StartTaskbar()), null, Timeout.Infinite, false);
 
-        if (arguments.Contains("--verify-station"))
+        if (arguments.Contains("--verify-station") || arguments.Contains("--verify-halo-flyout"))
         {
             HaloModule.Start(arguments, haloDirectory);
             return;

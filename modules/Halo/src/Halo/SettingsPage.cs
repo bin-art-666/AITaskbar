@@ -9,7 +9,8 @@ internal sealed partial class SettingsPage : Grid
 {
     readonly StationWindow owner;
     readonly Window settingsHost;
-    readonly NavigationView nav = AITaskbar.SettingsNavigation.Sidebar(128);
+    readonly AITaskbar.SettingsSubpageNavigation nav;
+    readonly Dictionary<string, ScrollViewer> pageByTag = new();
     readonly Button save = new() { Content = "保存" };
     readonly Button cancel = new() { Content = "取消" };
     readonly TextBlock saveError = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
@@ -23,6 +24,9 @@ internal sealed partial class SettingsPage : Grid
     readonly TextBox lightColor = new() { Header = "亮色任务栏圆环颜色", PlaceholderText = "#RRGGBB", MaxLength = 7 };
     readonly TextBox buttonColor = new() { Header = "按钮与提示颜色", PlaceholderText = "#RRGGBB 或 #AARRGGBB", MaxLength = 9 };
     readonly TextBox folderColor = new() { Header = "文件夹颜色", PlaceholderText = "#RRGGBB", MaxLength = 7 };
+    readonly TextBox lightBackplateColor = new() { Header = "亮色背板", PlaceholderText = "跟随任务栏", MaxLength = 7 };
+    readonly TextBox darkBackplateColor = new() { Header = "暗色背板", PlaceholderText = "跟随任务栏", MaxLength = 7 };
+    readonly TextBlock backplateColorError = new() { Text = "请输入 #RRGGBB，或留空跟随任务栏。", Visibility = Visibility.Collapsed };
     readonly TextBlock folderColorError = new() { Text = "请输入 #RRGGBB 颜色值", Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
     readonly TextBlock buttonColorError = new() { Text = "请输入 #RRGGBB 或 #AARRGGBB 颜色值", Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
     readonly TextBlock colorNoticeLabel = new() { Text = "底部提示预览", Padding = new Thickness(10, 6, 10, 6) };
@@ -32,7 +36,7 @@ internal sealed partial class SettingsPage : Grid
     readonly Slider flowSpeed = new() { Minimum = 50, Maximum = 200, StepFrequency = 10 };
     readonly TextBlock colorError = new() { Text = "请输入 #RRGGBB 颜色值", Visibility = Visibility.Collapsed };
     readonly CheckBox pinned = new() { Content = "置顶面板" };
-    readonly CheckBox autoHide = new() { Content = "独立窗口失焦自动收起" };
+    readonly CheckBox autoHide = new() { Content = "展开后失焦自动收起" };
     readonly ComboBox sortMode = new();
     ScrollViewer storageSettingsPage = null!;
     internal Task PendingSave { get; private set; } = Task.CompletedTask;
@@ -42,7 +46,6 @@ internal sealed partial class SettingsPage : Grid
         this.settingsHost = settingsHost ?? owner;
         if (settingsHost is not null)
         {
-            nav.OpenPaneLength = 108;
             var saveShortcut = new Microsoft.UI.Xaml.Input.KeyboardAccelerator
                 { Key = Windows.System.VirtualKey.S, Modifiers = Windows.System.VirtualKeyModifiers.Control, ScopeOwner = this };
             var cancelShortcut = new Microsoft.UI.Xaml.Input.KeyboardAccelerator
@@ -62,7 +65,6 @@ internal sealed partial class SettingsPage : Grid
             ("window", "窗口与行为", BuildWindow),
             ("actions", "操作", body => { BuildItemMenuSettings(body); BuildTrashSettings(body); BuildShortcutSettings(body); }),
         };
-        var pageByTag = new Dictionary<string, ScrollViewer>();
         foreach (var (tag, title, build) in pages)
         {
             var body = new StackPanel();
@@ -70,9 +72,9 @@ internal sealed partial class SettingsPage : Grid
             var page = AITaskbar.SettingsNavigation.Subpage(title, body);
             pageByTag.Add(tag, page);
             if (tag == "window") storageSettingsPage = page;
-            nav.MenuItems.Add(new NavigationViewItem { Content = title, Tag = tag });
         }
-        var compact = AITaskbar.SettingsNavigation.ConnectSubpages(nav, item => pageByTag[(string)item.Tag]);
+        nav = new(pages.Select(page => (page.Title, (FrameworkElement)pageByTag[page.Tag])),
+            widths, AITaskbar.SettingsSection.Halo, "Halo 二级菜单", 128);
 
         save.Click += (_, _) => StartSave();
         cancel.Click += (_, _) => Reset();
@@ -83,8 +85,7 @@ internal sealed partial class SettingsPage : Grid
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         SetRow(footer, 1);
-        Children.Add(widths is null ? nav : new AITaskbar.SettingsSplitView(nav, widths, AITaskbar.SettingsSection.Halo,
-            (length, condensed) => { nav.OpenPaneLength = length; nav.IsPaneVisible = !condensed; }, compact));
+        Children.Add(nav);
         Children.Add(footer);
     }
 
@@ -142,6 +143,12 @@ internal sealed partial class SettingsPage : Grid
         Add(body, "垂直间距", 4, 32, " DIP");
         BuildDragPreviewSettings(body);
         body.Children.Add(Section("窗口背板"));
+        if (owner.UsesTaskbarFlyout)
+        {
+            AddColor(body, lightBackplateColor, "", allowEmpty: true);
+            AddColor(body, darkBackplateColor, "", allowEmpty: true);
+            body.Children.Add(backplateColorError);
+        }
         Add(body, "背板透明程度", 0, 80, "%");
         Add(body, "背板模糊程度", 0, 100, "%");
         Add(body, "圆角", 12, 40);
@@ -215,7 +222,7 @@ internal sealed partial class SettingsPage : Grid
         slider.ValueChanged += (_, _) => { value.Text = $"{slider.Value:0}{unit}"; Preview(); };
         value.Text = $"{slider.Value:0}{unit}";
     }
-    void AddColor(StackPanel body, TextBox input, string defaultColor, bool allowAlpha = false, TextBlock? ownError = null)
+    void AddColor(StackPanel body, TextBox input, string defaultColor, bool allowAlpha = false, TextBlock? ownError = null, bool allowEmpty = false)
     {
         var picker = new ColorPicker { IsAlphaEnabled = allowAlpha, IsAlphaSliderVisible = allowAlpha, IsColorSliderVisible = true, IsColorChannelTextInputVisible = false, IsHexInputVisible = false };
         bool Valid(string color) => allowAlpha ? ValidButtonColor(color) : UiAppearance.ValidRingColor(color);
@@ -230,7 +237,8 @@ internal sealed partial class SettingsPage : Grid
         colors.Children.Add(choose); colors.Children.Add(reset); body.Children.Add(input); body.Children.Add(colors);
         input.TextChanged += (_, _) => {
             if (!syncing) Sync();
-            if (ownError != null) ownError.Visibility = Valid(input.Text) ? Visibility.Collapsed : Visibility.Visible;
+            if (allowEmpty) backplateColorError.Visibility = ValidBackplateColors() ? Visibility.Collapsed : Visibility.Visible;
+            else if (ownError != null) ownError.Visibility = Valid(input.Text) ? Visibility.Collapsed : Visibility.Visible;
             else if (allowAlpha) buttonColorError.Visibility = Valid(input.Text) ? Visibility.Collapsed : Visibility.Visible;
             else colorError.Visibility = ValidRingColor() ? Visibility.Collapsed : Visibility.Visible;
             Preview();
@@ -248,7 +256,8 @@ internal sealed partial class SettingsPage : Grid
         label.Text = $"{name}  {slider.Value:0}{unit}";
     }
     bool ValidRingColor() => UiAppearance.ValidRingColor(ringColor.Text) && UiAppearance.ValidRingColor(lightColor.Text);
-    bool ValidAppearanceColors() => ValidRingColor() && ValidButtonColor(buttonColor.Text) && UiAppearance.ValidRingColor(folderColor.Text);
+    bool ValidBackplateColors() => UiAppearance.ValidBackplateColor(lightBackplateColor.Text) && UiAppearance.ValidBackplateColor(darkBackplateColor.Text);
+    bool ValidAppearanceColors() => ValidRingColor() && ValidButtonColor(buttonColor.Text) && UiAppearance.ValidRingColor(folderColor.Text) && ValidBackplateColors();
     static bool ValidButtonColor(string value) => value.Length != 0 && UiAppearance.ValidColor(value);
     internal void RefreshNoticePreview() => PanelTheme.ApplyNoticeColors(colorNotice, colorNoticeLabel);
     void Preview()
@@ -274,7 +283,8 @@ internal sealed partial class SettingsPage : Grid
         var current = App.Settings.Data;
         var menu = DraftFolderMenu;
         var fileMenu = DraftFileMenu;
-        return current with { FileMenu = fileMenu == current.EffectiveFileMenu ? current.FileMenu : fileMenu, FolderMenuPrimary = menu.PrimaryActions, FolderMenu = menu == current.EffectiveFolderMenu ? current.FolderMenu : menu, ShowInteractionBorders = showInteractionBorders.IsChecked == true, DragPreviewMode = SelectedDragMode, DragPreviewDistance = (int)dragDistance.Value, ButtonColor = buttonColor.Text.ToUpperInvariant(), FolderColor = folderColor.Text.ToUpperInvariant(), IconSize = SliderValue("文件图标大小"), HorizontalSpacing = SliderValue("水平间距"), VerticalSpacing = SliderValue("垂直间距"), NormalNotificationSeconds = SliderValue("普通提示显示时长"), ErrorNotificationSeconds = SliderValue("失败提示显示时长"), Transparency = SliderValue("背板透明程度"), Blur = SliderValue("背板模糊程度"), Radius = SliderValue("圆角"), RingSize = SliderValue("圆环大小"), RingThickness = SliderValue("圆环粗细"), RingColor = ringColor.Text.ToUpperInvariant(), RingHoverFlow = hoverFlow.IsChecked == true, RingFlowSpeed = (int)flowSpeed.Value, RingLightColor = lightColor.Text.ToUpperInvariant(), RingFlowLength = (int)flowLength.Value, Pinned = pinned.IsChecked == true, DetachedHideOnBlur = autoHide.IsChecked == true };
+        return current with { FileMenu = fileMenu == current.EffectiveFileMenu ? current.FileMenu : fileMenu, FolderMenuPrimary = menu.PrimaryActions, FolderMenu = menu == current.EffectiveFolderMenu ? current.FolderMenu : menu, ShowInteractionBorders = showInteractionBorders.IsChecked == true, DragPreviewMode = SelectedDragMode, DragPreviewDistance = (int)dragDistance.Value, ButtonColor = buttonColor.Text.ToUpperInvariant(), FolderColor = folderColor.Text.ToUpperInvariant(), IconSize = SliderValue("文件图标大小"), HorizontalSpacing = SliderValue("水平间距"), VerticalSpacing = SliderValue("垂直间距"), NormalNotificationSeconds = SliderValue("普通提示显示时长"), ErrorNotificationSeconds = SliderValue("失败提示显示时长"), Transparency = SliderValue("背板透明程度"), Blur = SliderValue("背板模糊程度"), Radius = SliderValue("圆角"), RingSize = SliderValue("圆环大小"), RingThickness = SliderValue("圆环粗细"), RingColor = ringColor.Text.ToUpperInvariant(), RingHoverFlow = hoverFlow.IsChecked == true, RingFlowSpeed = (int)flowSpeed.Value, RingLightColor = lightColor.Text.ToUpperInvariant(), RingFlowLength = (int)flowLength.Value, Pinned = pinned.IsChecked == true, DetachedHideOnBlur = autoHide.IsChecked == true,
+            LightBackplateColor = lightBackplateColor.Text.ToUpperInvariant(), DarkBackplateColor = darkBackplateColor.Text.ToUpperInvariant() };
     }
 
     // 验收测试通过名称/标签查找控件；这些辅助方法让测试不依赖具体布局结构。
@@ -302,6 +312,8 @@ internal sealed partial class SettingsPage : Grid
         ringColor.Text = original.RingColor; lightColor.Text = original.RingLightColor;
         buttonColor.Text = original.ButtonColor.Length == 0 ? UiDefaults.ButtonColor : original.ButtonColor;
         folderColor.Text = original.FolderColor;
+        lightBackplateColor.Text = original.LightBackplateColor;
+        darkBackplateColor.Text = original.DarkBackplateColor;
         showInteractionBorders.IsChecked = original.ShowInteractionBorders;
         flowLength.Value = original.RingFlowLength; hoverFlow.IsChecked = original.RingHoverFlow; flowSpeed.Value = original.RingFlowSpeed;
         flowSpeed.IsEnabled = flowLength.IsEnabled = original.RingHoverFlow;

@@ -86,26 +86,6 @@ internal static class SettingsNavigation
             HorizontalScrollMode = ScrollMode.Disabled };
     }
 
-    internal static ComboBox ConnectSubpages(NavigationView nav, Func<NavigationViewItem, object> getPage)
-    {
-        var compact = new ComboBox();
-        foreach (NavigationViewItem item in nav.MenuItems) compact.Items.Add(item.Content);
-        nav.SelectionChanged += (_, args) =>
-        {
-            if (args.SelectedItem is not NavigationViewItem item) return;
-            nav.Content = getPage(item);
-            compact.SelectedIndex = nav.MenuItems.IndexOf(item);
-        };
-        compact.SelectionChanged += (_, _) =>
-        {
-            if (compact.SelectedIndex >= 0) nav.SelectedItem = nav.MenuItems[compact.SelectedIndex];
-        };
-        nav.SelectedItem = nav.MenuItems[0];
-        nav.Content = getPage((NavigationViewItem)nav.SelectedItem);
-        compact.SelectedIndex = 0;
-        return compact;
-    }
-
     internal static Grid Footer(TextBlock status, Button cancel, Button save)
     {
         var footer = new Grid { ColumnSpacing = 12, Padding = new Thickness(16, 10, 16, 12) };

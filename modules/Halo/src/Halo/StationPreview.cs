@@ -25,7 +25,7 @@ internal sealed partial class StationWindow
     internal async Task PreviewItem(StationItem item, Func<Task>? open = null, GridView? grid = null, StationItem? folderRoot = null)
     {
         if (!item.Owned && item.Kind is StationKind.File or StationKind.Folder) {
-            if (await new ContentDialog { XamlRoot = root.XamlRoot, Title = "预览原文件引用？", Content = "这项内容尚未复制到 Halo，本次将读取原文件。", PrimaryButtonText = "预览原文件", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close }.ShowAsync() != ContentDialogResult.Primary) return;
+            if (await ShowPanelDialog(new ContentDialog { XamlRoot = root.XamlRoot, Title = "预览原文件引用？", Content = "这项内容尚未复制到 Halo，本次将读取原文件。", PrimaryButtonText = "预览原文件", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close }) != ContentDialogResult.Primary) return;
         }
         if (item.Kind == StationKind.Folder) {
             await PreviewFolder(item, folderRoot ?? item, grid ?? files, open ?? (() => OpenItem(item)));

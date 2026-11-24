@@ -13,7 +13,8 @@ namespace AITaskbar;
 internal sealed class AppCenterSettingsPage : Grid
 {
     private readonly App app;
-    private readonly NavigationView nav = SettingsNavigation.Sidebar(132);
+    private readonly SettingsSubpageNavigation nav;
+    private readonly FrameworkElement interfacePage;
     private readonly AppCenterIcon sampleIcon = new(48);
     private readonly ToggleSwitch showInTaskbar = new()
     {
@@ -40,16 +41,15 @@ internal sealed class AppCenterSettingsPage : Grid
     {
         this.app = app;
         draft = app.SavedAppCenterAppearance;
-        nav.MenuItems.Add(new NavigationViewItem { Content = "图标设计", Tag = BuildIconPage() });
-        nav.MenuItems.Add(new NavigationViewItem { Content = "界面设计", Tag = BuildPanelPage() });
-        var compact = SettingsNavigation.ConnectSubpages(nav, item => item.Tag);
-        var layout = new SettingsSplitView(nav, widths, SettingsSection.AppCenter,
-            (size, condensed) => { nav.OpenPaneLength = size; nav.IsPaneVisible = !condensed; }, compact);
+        var iconPage = BuildIconPage();
+        interfacePage = BuildPanelPage();
+        nav = new(new[] { ("图标设计", (FrameworkElement)iconPage), ("界面设计", interfacePage) },
+            widths, SettingsSection.AppCenter, "应用中心 二级菜单");
         RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         RowDefinitions.Add(new() { Height = GridLength.Auto });
         var footer = SettingsNavigation.Footer(status, cancel, save);
         SetRow(footer, 1);
-        Children.Add(layout);
+        Children.Add(nav);
         Children.Add(footer);
         save.Click += (_, _) =>
         {
@@ -68,7 +68,7 @@ internal sealed class AppCenterSettingsPage : Grid
         Sync();
     }
 
-    internal void SelectInterface() => nav.SelectedItem = nav.MenuItems[1];
+    internal void SelectInterface() => nav.Select(interfacePage);
 
     internal void Reset()
     {

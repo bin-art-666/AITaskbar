@@ -24,14 +24,14 @@ internal static partial class PanelTheme
     internal static void Register(PanelWindow panel)
     {
         panels.RemoveAll(p => !p.TryGetTarget(out _)); panels.Add(new(panel));
-        if (panel.Content is FrameworkElement content) content.Loaded += (_, _) => Refresh(panel);
+        if (panel.PanelContent is { } content) content.Loaded += (_, _) => Refresh(panel);
         Refresh(panel);
     }
     internal static void Unregister(PanelWindow panel) => panels.RemoveAll(p => !p.TryGetTarget(out var current) || ReferenceEquals(current, panel));
     internal static void Refresh(PanelWindow panel)
     {
         if (panel.SystemBackdrop is GlassBackdrop glass) glass.Update(Material());
-        if (panel.Content is DependencyObject root) Controls(root, new HashSet<DependencyObject>());
+        if (panel.PanelContent is { } root) Controls(root, new HashSet<DependencyObject>());
     }
     static void Controls(DependencyObject node, HashSet<DependencyObject> visited)
     {

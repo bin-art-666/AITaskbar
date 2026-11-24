@@ -12,7 +12,8 @@ internal sealed record HaloSettings(int Version = 1, double Width = HaloDefaults
     string ButtonColor = UiDefaults.ButtonColor,
     DragPreviewMode DragPreviewMode = DragPreviewMode.GrabPoint, int DragPreviewDistance = DragPreviewPlacement.DefaultDistance,
     bool ShowInteractionBorders = false, int? CompactX = null, int? CompactY = null, string FolderColor = HaloDefaults.FolderColor,
-    FolderMenuAction FolderMenuPrimary = FolderMenuAction.Default, FolderMenuLayout? FolderMenu = null, FileMenuLayout? FileMenu = null)
+    FolderMenuAction FolderMenuPrimary = FolderMenuAction.Default, FolderMenuLayout? FolderMenu = null, FileMenuLayout? FileMenu = null,
+    string LightBackplateColor = "", string DarkBackplateColor = "")
 {
     internal FolderMenuLayout EffectiveFolderMenu => FolderMenu?.WithMove() ?? FolderMenuLayout.FromLegacy(FolderMenuPrimary);
     internal FileMenuLayout EffectiveFileMenu => FileMenu?.WithMove() ?? FileMenuLayout.Default;
@@ -34,7 +35,8 @@ internal sealed record HaloSettings(int Version = 1, double Width = HaloDefaults
         EffectiveFolderMenu.Validate();
         EffectiveFileMenu.Validate();
     }
-    internal UiAppearance Appearance => new(ButtonColor: ButtonColor, BackplateTransparency: Transparency, BackplateBlur: Blur, BackplateRadius: Radius, TaskbarIconSize: RingSize, RingThickness: RingThickness, RingColor: RingColor, RingHoverFlow: RingHoverFlow, RingFlowSpeed: RingFlowSpeed, RingLightColor: RingLightColor, RingFlowLength: RingFlowLength, ShowInteractionBorders: ShowInteractionBorders, FolderColor: FolderColor);
+    internal UiAppearance Appearance => new(ButtonColor: ButtonColor, BackplateTransparency: Transparency, BackplateBlur: Blur, BackplateRadius: Radius, TaskbarIconSize: RingSize, RingThickness: RingThickness, RingColor: RingColor, RingHoverFlow: RingHoverFlow, RingFlowSpeed: RingFlowSpeed, RingLightColor: RingLightColor, RingFlowLength: RingFlowLength, ShowInteractionBorders: ShowInteractionBorders, FolderColor: FolderColor,
+        LightBackplateColor: LightBackplateColor, DarkBackplateColor: DarkBackplateColor);
 }
 internal sealed class SettingsStore
 {
@@ -43,10 +45,12 @@ internal sealed class SettingsStore
     internal HaloSettings Data { get; private set; } = new();
     internal bool ReadOnly { get; }
     internal string? Warning { get; }
+    readonly bool existingProfile;
     internal SettingsStore(string path)
     {
         this.path = path;
-        if (!File.Exists(path) && !File.Exists(path + ".bak")) return;
+        existingProfile = File.Exists(path) || File.Exists(path + ".bak");
+        if (!existingProfile) return;
         try { Data = Read(path); }
         catch (NotSupportedException) { ReadOnly = true; Warning = "设置版本较新，已停止写入。"; }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
@@ -54,6 +58,10 @@ internal sealed class SettingsStore
             try { Data = Read(path + ".bak"); preserveBackup = true; Warning = "已从备份恢复设置。"; }
             catch { ReadOnly = true; Warning = "设置损坏，已保留原文件并停止写入。"; }
         }
+    }
+    internal void UseIntegratedWindowDefaults()
+    {
+        if (!existingProfile && revision == 0) Data = Data with { DetachedHideOnBlur = false };
     }
     static HaloSettings Read(string path)
     {

@@ -101,6 +101,7 @@ internal sealed class BackplateSurface : ContentControl, IDisposable
     readonly Border tint = new();
     readonly ContentPresenter content = new();
     readonly BackplateBlur blur;
+    Windows.UI.Color? tintOverride;
 
     internal bool HasTintSurface => tint.Background is SolidColorBrush;
     internal int BlurStrength => blur.Strength;
@@ -121,10 +122,11 @@ internal sealed class BackplateSurface : ContentControl, IDisposable
 
     internal void SetSurfaceContent(UIElement child) => content.Content = child;
 
-    internal void UpdateAppearance(UiAppearance appearance, bool dark)
+    internal void UpdateAppearance(UiAppearance appearance, bool dark, Windows.UI.Color? color = null)
     {
+        tintOverride = color;
         tint.CornerRadius = CornerRadius;
-        tint.Background = new SolidColorBrush(PanelTheme.BackplateColor(appearance, dark));
+        tint.Background = new SolidColorBrush(color ?? PanelTheme.BackplateColor(appearance, dark));
         blur.Update(appearance.BackplateBlur, CornerRadius);
     }
 
@@ -132,7 +134,7 @@ internal sealed class BackplateSurface : ContentControl, IDisposable
     internal void RefreshTint()
     {
         if (ActualTheme == ElementTheme.Default) return; // Not laid out yet; UpdateAppearance will run on open.
-        tint.Background = new SolidColorBrush(PanelTheme.BackplateColor(App.Appearance, ActualTheme == ElementTheme.Dark));
+        tint.Background = new SolidColorBrush(tintOverride ?? PanelTheme.BackplateColor(App.Appearance, ActualTheme == ElementTheme.Dark));
     }
 
     public void Dispose() => blur.Dispose();

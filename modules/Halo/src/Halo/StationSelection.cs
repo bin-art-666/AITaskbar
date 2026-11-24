@@ -3,6 +3,8 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Input;
+using Microsoft.UI.Input.DragDrop;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.System;
 using Windows.Foundation;
@@ -18,6 +20,10 @@ internal sealed partial class StationWindow
     PreparedDrag? preparedDrag;
     IDisposable? pointerDragLease;
     bool outgoingHandoff;
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? flyoutDragBoundary;
+    Native.Point flyoutCardOrigin;
+    PointerPoint? flyoutPointer;
+    string? verifiedShellExport;
     GridViewItem[] SelectionOrder() => files.Items.Cast<GridViewItem>().OrderBy(StationGridPanel.Cell).ToArray();
     internal void SelectCard(GridViewItem card, bool control, bool shift) => SelectGridCard(files, card, control, shift, ref selectionAnchor);
     internal static void SelectGridCard(GridView files, GridViewItem card, bool control, bool shift, ref Guid? anchorId) {
@@ -42,6 +48,13 @@ internal sealed partial class StationWindow
     void InitializeCardSelection()
     {
         InitializeDragPreview();
+        if (TaskbarFlyout != null)
+        {
+            flyoutDragBoundary = DispatcherQueue.CreateTimer();
+            flyoutDragBoundary.Interval = TimeSpan.FromMilliseconds(20);
+            flyoutDragBoundary.Tick += (_, _) => TrackFlyoutCard();
+            Closed += (_, _) => flyoutDragBoundary.Stop();
+        }
         root.PreviewKeyDown += (_, e) => {
             if (pointerDragLease == null || e.Key != VirtualKey.Escape) return;
             e.Handled = true;
@@ -51,6 +64,7 @@ internal sealed partial class StationWindow
         files.PointerExited += ClearReleasedPress;
         files.PointerEntered += ClearReleasedPress;
         void ClearReleasedPress(object sender, PointerRoutedEventArgs e) {
+            if (flyoutDragBoundary?.IsRunning == true) return;
             if (cardPress?.Pointer != e.Pointer.PointerId || e.GetCurrentPoint(files).Properties.IsLeftButtonPressed) return;
             preparedDrag = null;
             EndCardPress();
@@ -83,7 +97,9 @@ internal sealed partial class StationWindow
             if (release == ReleaseSelection.None) SelectCard(card, control, shift);
             preparedDrag = null;
             if (mouse) {
-                if (!grip.CapturePointer(e.Pointer)) grip.CanDrag = true;
+                if (flyoutDragBoundary != null) flyoutPointer = e.GetCurrentPoint(grip);
+                if (!grip.CapturePointer(e.Pointer) && flyoutDragBoundary == null) grip.CanDrag = true;
+                if (flyoutDragBoundary != null && GetCursorPos(out flyoutCardOrigin)) flyoutDragBoundary.Start();
                 var selection = SelectedCards().Select(i => (Preview)((ContentControl)i.Content).Tag).ToArray();
                 if (selection.Length > 0 && selection.All(p => p.Item.Owned && p.Item.Kind is StationKind.File or StationKind.Folder)) {
                     var preparation = Task.WhenAll(selection.Select(p => p.DragFile is { } file
@@ -113,49 +129,130 @@ internal sealed partial class StationWindow
             if (grip.CanDrag || cardPress is not { } press || press.Card != card || press.Pointer != e.Pointer.PointerId) return;
             var point = e.GetCurrentPoint(root);
             if (!point.Properties.IsLeftButtonPressed) return;
+            if (flyoutDragBoundary != null) flyoutPointer = e.GetCurrentPoint(grip);
             var position = point.Position;
             if (pointerDragLease == null) {
                 double dx = position.X - press.Origin.X, dy = position.Y - press.Origin.Y;
                 if (Math.Abs(dx) < 4 && Math.Abs(dy) < 4) return;
-                if (!files.SelectedItems.Contains(card)) SelectCard(card, false, false);
-                movingIds = Selected().Select(i => i.Id).ToHashSet();
-                dragAnchor = ((StationItem)card.Tag).Id;
-                pointerDragLease = KeepOpenForDrag();
-                ShowDragPreview((Preview)grip.Tag, position, movingIds.Count, press.Grab);
-                copyFeedback.Watch(e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control));
+                StartPointerOrdering(press, position, e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control));
             }
             if (position.X >= 0 && position.X < root.ActualWidth && position.Y >= 0 && position.Y < root.ActualHeight) {
                 MoveDragPreview(position);
                 UpdateDropTarget(e.GetCurrentPoint(files).Position, e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control));
                 return;
             }
-            var nativePoint = e.GetCurrentPoint(grip);
-            outgoingHandoff = true;
-            using var handoffLease = KeepOpenForDrag();
-            FinishPointerDrag(clearPreparation: false);
-            grip.CanDrag = true;
-            try { await grip.StartDragAsync(nativePoint); }
-            catch (Exception error) { Notify(error.Message, true); }
-            finally {
-                if (ActiveNativeLibraryDrag is { Source.RootId: null } nativeDrag && nativeDrag.Anchor == ((StationItem)card.Tag).Id)
-                    EndNativeLibraryDrag(nativeDrag);
-                outgoingPreview?.Dispose();
-                outgoingPreview = null;
-                HideDragPreview();
-                outgoingHandoff = false;
-                grip.CanDrag = false;
-                preparedDrag = null;
-                QueuePendingCardRebuild();
-                UpdateSelectionDetails();
-            }
+            await HandOffCard(card, grip, e.GetCurrentPoint(grip));
         }), true);
         grip.PointerCanceled += Cancel;
         grip.PointerCaptureLost += Cancel;
         void Cancel(object sender, PointerRoutedEventArgs e) {
+            if (flyoutDragBoundary?.IsRunning == true) return;
             if (cardPress is not { } press || press.Card != card || press.Pointer != e.Pointer.PointerId) return;
             if (pointerDragLease != null) CancelPointerDrag();
             else EndCardPress();
         }
+    }
+
+    void StartPointerOrdering(CardPress press, Point position, bool copy)
+    {
+        if (!files.SelectedItems.Contains(press.Card)) SelectCard(press.Card, false, false);
+        movingIds = Selected().Select(i => i.Id).ToHashSet();
+        dragAnchor = ((StationItem)press.Card.Tag).Id;
+        pointerDragLease = KeepOpenForDrag();
+        ShowDragPreview((Preview)((ContentControl)press.Card.Content).Tag, position, movingIds.Count, press.Grab);
+        copyFeedback.Watch(copy);
+    }
+
+    void TrackFlyoutCard()
+    {
+        if (cardPress is not { } press || outgoingHandoff || !GetCursorPos(out var cursor)) return;
+        var bounds = CurrentBounds();
+        double scale = WindowLayoutScale;
+        var position = new Point((cursor.X - bounds.X) / scale, (cursor.Y - bounds.Y) / scale);
+        var gridOrigin = files.TransformToVisual(root).TransformPoint(default);
+        Point gridPoint = new(position.X - gridOrigin.X, position.Y - gridOrigin.Y);
+        bool copy = (Native.GetAsyncKeyState(0x11) & 0x8000) != 0;
+        if ((Native.GetAsyncKeyState(1) & 0x8000) == 0)
+        {
+            if (pointerDragLease != null) _ = CommitPointerDrag(gridPoint, copy);
+            else
+            {
+                var cardOrigin = press.Card.TransformToVisual(root).TransformPoint(default);
+                var inCard = IsWithinCard(new(position.X - cardOrigin.X, position.Y - cardOrigin.Y), press.Card);
+                CompleteCardPress(press, inCard ? press.Card : null);
+            }
+            return;
+        }
+        if (pointerDragLease is null)
+        {
+            if (Math.Max(Math.Abs(cursor.X - flyoutCardOrigin.X), Math.Abs(cursor.Y - flyoutCardOrigin.Y)) < 4 * scale) return;
+            StartPointerOrdering(press, position, copy);
+        }
+        if (position.X >= 0 && position.Y >= 0 && position.X < root.ActualWidth && position.Y < root.ActualHeight)
+        {
+            MoveDragPreview(position);
+            UpdateDropTarget(gridPoint, copy);
+        }
+        else if (flyoutPointer is { } pointer)
+            _ = HandOffCard(press.Card, (ContentControl)press.Card.Content, pointer);
+    }
+
+    async Task HandOffCard(GridViewItem card, ContentControl grip, PointerPoint? nativePoint)
+    {
+        if (outgoingHandoff) return;
+        var items = Selected();
+        var preparation = preparedDrag is { } pending && pending.Items.SequenceEqual(items) ? pending.Files : null;
+        outgoingHandoff = true;
+        flyoutDragBoundary?.Stop();
+        using var handoffLease = KeepOpenForDrag();
+        FinishPointerDrag(clearPreparation: false);
+        try
+        {
+            if (TaskbarFlyout != null && nativePoint is not null)
+            {
+                using var operation = new DragOperation { AllowedOperations = DataPackageOperation.Copy };
+                await StationTransfer.FillMany(operation.Data, items, App.Station.AttachmentDirectory,
+                    exportNoteFiles: true, preparedFiles: preparation);
+                if ((Native.GetAsyncKeyState(1) & 0x8000) == 0) return;
+                var island = grip.XamlRoot?.ContentIsland;
+                if (island is null) throw new InvalidOperationException("无法找到 Halo 拖拽源的输入宿主。");
+                using var manager = DragDropManager.GetForIsland(island);
+                var capture = dragPreviewCapture;
+                outgoingPreview = CreateDragBitmap(capture);
+                if (outgoingPreview != null)
+                    operation.SetDragUIContentFromSoftwareBitmap(outgoingPreview, capture!.Result!.Anchor);
+                HideDragPreview();
+                if (App.Verification) RecordExport("starting WinUI drag");
+                var result = await operation.StartAsync(manager, nativePoint);
+                if (App.Verification) RecordExport(result.ToString());
+                Notify(result == DataPackageOperation.Copy ? "已交给目标窗口，记录保留" : "已取消拖动，记录保留");
+            }
+            else if (nativePoint is not null)
+            {
+                grip.CanDrag = true;
+                await grip.StartDragAsync(nativePoint);
+            }
+        }
+        catch (Exception error) { if (App.Verification) RecordExport(error.ToString()); Notify(error.Message, true); }
+        finally
+        {
+            if (ActiveNativeLibraryDrag is { Source.RootId: null } nativeDrag && nativeDrag.Anchor == ((StationItem)card.Tag).Id)
+                EndNativeLibraryDrag(nativeDrag);
+            outgoingPreview?.Dispose();
+            outgoingPreview = null;
+            HideDragPreview();
+            outgoingHandoff = false;
+            grip.CanDrag = false;
+            preparedDrag = null;
+            QueuePendingCardRebuild();
+            UpdateSelectionDetails();
+        }
+    }
+
+    void RecordExport(string value)
+    {
+        verifiedShellExport = value;
+        File.AppendAllText(Path.Combine(App.DataDirectory, "halo-flyout-progress.log"), $"shell export: {value}\n");
     }
     static bool IsWithinCard(Point point, GridViewItem card) =>
         point.X >= 0 && point.X < card.ActualWidth && point.Y >= 0 && point.Y < card.ActualHeight;
@@ -217,6 +314,8 @@ internal sealed partial class StationWindow
     }
     void EndCardPress()
     {
+        flyoutDragBoundary?.Stop();
+        flyoutPointer = null;
         cardPress = null;
         QueuePendingCardRebuild();
     }

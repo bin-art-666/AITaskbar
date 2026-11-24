@@ -23,5 +23,12 @@ public partial class App
         var saved = new SettingsStore(legacy).Data;
         check("CapturedDefaultsNeverOverwriteSavedPreferences", saved is { Width: 420, IconSize: 64, Transparency: 20, Blur: 0, RingSize: 22, RingThickness: 11, RingColor: "#112233", RingFlowLength: 25, DetachedHideOnBlur: false });
         check("MissingLegacyFieldsUseCurrentProfile", saved.Height == HaloDefaults.Height && saved.ExpandedX == null && saved.RingLightColor == HaloDefaults.RingLightColor);
+        var integrated = new SettingsStore(Path.Combine(root, "fresh-integrated.json"));
+        integrated.UseIntegratedWindowDefaults();
+        check("FreshIntegratedProfileKeepsExpandedPanelOpenOnBlur", !integrated.Data.DetachedHideOnBlur);
+        await File.WriteAllTextAsync(legacy, "{\"Version\":1,\"Width\":420,\"DetachedHideOnBlur\":true}");
+        var oldIntegrated = new SettingsStore(legacy);
+        oldIntegrated.UseIntegratedWindowDefaults();
+        check("ExistingIntegratedProfilePreservesBlurPreference", oldIntegrated.Data is { Width: 420, DetachedHideOnBlur: true, LightBackplateColor: "", DarkBackplateColor: "" });
     }
 }

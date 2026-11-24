@@ -37,49 +37,9 @@ internal sealed partial class SettingsPage
 
     static FrameworkElement CreateSubpageNavigation(string[] names, Dictionary<string, StackPanel> pages,
         AITaskbar.SettingsPaneWidths widths)
-    {
-        var grid = new Grid();
-        var navigationColumn = new ColumnDefinition { Width = new GridLength(132) };
-        grid.ColumnDefinitions.Add(navigationColumn);
-        grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        var sidebar = new ListView { SelectionMode = ListViewSelectionMode.Single, Padding = new Thickness(4, 4, 4, 0) };
-        var compact = new ComboBox();
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(sidebar, "AIEnter 二级菜单");
-        ScrollViewer.SetHorizontalScrollMode(sidebar, ScrollMode.Disabled);
-        ScrollViewer.SetHorizontalScrollBarVisibility(sidebar, ScrollBarVisibility.Disabled);
-        var content = new Border();
-        Grid.SetColumn(content, 1);
-        grid.Children.Add(sidebar);
-        grid.Children.Add(content);
-        var subpages = names.Select(name => AITaskbar.SettingsNavigation.Subpage(name, pages[name])).ToArray();
-        foreach (var name in names)
-        {
-            var item = new ListViewItem
-            {
-                Content = new TextBlock { Text = name, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center },
-                Padding = new Thickness(12, 6, 8, 6), MinHeight = 40, HorizontalContentAlignment = HorizontalAlignment.Stretch
-            };
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, name);
-            sidebar.Items.Add(item);
-            compact.Items.Add(name);
-        }
-        sidebar.SelectionChanged += (_, _) =>
-        {
-            if (sidebar.SelectedIndex < 0) return;
-            content.Child = subpages[sidebar.SelectedIndex];
-            compact.SelectedIndex = sidebar.SelectedIndex;
-        };
-        compact.SelectionChanged += (_, _) =>
-        {
-            if (compact.SelectedIndex >= 0) sidebar.SelectedIndex = compact.SelectedIndex;
-        };
-        sidebar.SelectedIndex = 0;
-        return new AITaskbar.SettingsSplitView(grid, widths, AITaskbar.SettingsSection.AIEnter, (length, condensed) =>
-        {
-            navigationColumn.Width = new GridLength(length);
-            sidebar.Visibility = condensed ? Visibility.Collapsed : Visibility.Visible;
-        }, compact);
-    }
+        => new AITaskbar.SettingsSubpageNavigation(
+            names.Select(name => (name, (FrameworkElement)AITaskbar.SettingsNavigation.Subpage(name, pages[name]))),
+            widths, AITaskbar.SettingsSection.AIEnter, "AIEnter 二级菜单");
 
     void ArrangeSettingsPages(UIElement[] elements, Dictionary<string, StackPanel> pages)
     {

@@ -16,8 +16,8 @@ internal enum SettingsSection { Taskbar, Halo, AIEnter, AppCenter, TaskbarSubpag
 internal sealed partial class TaskbarSettingsWindow : Window
 {
     private readonly App app;
-    private readonly NavigationView taskbarNav;
-    private readonly NavigationViewItem taskbarAppearanceItem;
+    private readonly SettingsSubpageNavigation taskbarNav;
+    private readonly FrameworkElement taskbarAppearancePage;
     private readonly Button previewToggle = new();
     private readonly Slider heightSlider = new() { Minimum = PreviewHeight.Minimum, Maximum = PreviewHeight.Maximum,
         StepFrequency = 1, Width = 132 };
@@ -68,31 +68,16 @@ internal sealed partial class TaskbarSettingsWindow : Window
         var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
 
         var widths = new SettingsPaneWidths(profileDirectory, SetStatus);
-        taskbarNav = SettingsNavigation.Sidebar(144);
         var appearanceBody = new StackPanel();
         BuildPreview(appearanceBody);
-        var appearanceItem = AddSubpage("任务栏外观设置", SettingsNavigation.Subpage("任务栏外观设置", appearanceBody));
-        taskbarAppearanceItem = appearanceItem;
-        AddSubpage("图标设置", BuildIconSettings());
-        var compactSubpages = SettingsNavigation.ConnectSubpages(taskbarNav, item => item.Tag);
-        var taskbarPages = new SettingsSplitView(taskbarNav, widths, SettingsSection.TaskbarSubpages,
-            (length, condensed) =>
-            {
-                taskbarNav.OpenPaneLength = length;
-                taskbarNav.IsPaneVisible = !condensed;
-                taskbarNav.IsPaneOpen = !condensed;
-            }, compactSubpages);
-        NavigationViewItem AddSubpage(string title, FrameworkElement page)
-        {
-            var item = new NavigationViewItem { Content = title, Tag = page };
-            taskbarNav.MenuItems.Add(item);
-            return item;
-        }
+        taskbarAppearancePage = SettingsNavigation.Subpage("任务栏外观设置", appearanceBody);
+        taskbarNav = new(new[] { ("任务栏外观设置", taskbarAppearancePage), ("图标设置", BuildIconSettings()) },
+            widths, SettingsSection.TaskbarSubpages, "任务栏设置 二级菜单", 144);
         void UpdateGlassActions() => glassActions.Visibility =
             ReferenceEquals(nav.SelectedItem, navigation.GetValueOrDefault(SettingsSection.Taskbar)) &&
-            ReferenceEquals(taskbarNav.SelectedItem, appearanceItem)
+            ReferenceEquals(taskbarNav.SelectedPage, taskbarAppearancePage)
                 ? Visibility.Visible : Visibility.Collapsed;
-        taskbarNav.SelectionChanged += (_, _) => UpdateGlassActions();
+        taskbarNav.SelectionChanged += UpdateGlassActions;
         var navigationLayout = new SettingsSplitView(nav, widths, SettingsSection.Taskbar, (length, compact) =>
         {
             nav.OpenPaneLength = length;
@@ -115,11 +100,11 @@ internal sealed partial class TaskbarSettingsWindow : Window
                 SettingsSection.Halo => haloSettings ??= app.HaloModule.CreateSettingsPage(this, widths),
                 SettingsSection.AIEnter => aiSettings ??= app.AiModule.CreateSettingsPage(this, widths),
                 SettingsSection.AppCenter => appCenterSettings ??= new AppCenterSettingsPage(app, widths),
-                _ => taskbarPages
+                _ => taskbarNav
             };
         };
         Select(SettingsSection.Taskbar);
-        nav.Content = taskbarPages;
+        nav.Content = taskbarNav;
         UpdateGlassActions();
 
         var footer = new Grid { Padding = new Thickness(20, 8, 20, 12), ColumnSpacing = 12 };

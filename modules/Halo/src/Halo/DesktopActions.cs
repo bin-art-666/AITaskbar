@@ -31,7 +31,7 @@ internal sealed partial class StationWindow
         var input = new TextBox { Text = initial, AcceptsReturn = multiline, TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap, MinWidth = 260, MaxHeight = 320, MaxLength = multiline ? StationStore.MaximumText : maxLength };
         var dialog = new ContentDialog { XamlRoot = root.XamlRoot, Title = title, Content = input, PrimaryButtonText = "保存", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Primary };
         dialog.PrimaryButtonClick += (_, e) => { if (string.IsNullOrWhiteSpace(input.Text)) { e.Cancel = true; input.PlaceholderText = "内容不能为空"; } };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary ? input.Text : null;
+        return await ShowPanelDialog(dialog) == ContentDialogResult.Primary ? input.Text : null;
     }
     static bool CanRenameStationItem(StationItem item) => item.Owned || item.Kind is StationKind.Text or StationKind.Link;
     Task RenameItem(StationItem item) => ShowRenameDialog(item, files, name => App.Station.RenameOwned(item.Id, name));
@@ -81,7 +81,7 @@ internal sealed partial class StationWindow
     async Task<ContentDialogResult> ShowTrashDialog(ContentDialog dialog)
     {
         activeContentDialog = dialog;
-        try { return await dialog.ShowAsync(); }
+        try { return await ShowPanelDialog(dialog); }
         finally { activeContentDialog = null; }
     }
 
@@ -93,12 +93,12 @@ internal sealed partial class StationWindow
             Content = "原父目录已不存在。请选择恢复到中转站，或选择另一个 Halo 文件夹。",
             PrimaryButtonText = "选择文件夹…", SecondaryButtonText = "恢复到中转站", CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close };
-        var choice = await dialog.ShowAsync();
+        var choice = await ShowPanelDialog(dialog);
         if (choice == ContentDialogResult.Secondary) { await App.Station.RestoreToDesktop([item]); return true; }
         if (choice != ContentDialogResult.Primary) return false;
         var picker = new FolderPicker();
         picker.FileTypeFilter.Add("*");
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(host));
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, ReferenceEquals(host, this) ? InteractionWindow : WinRT.Interop.WindowNative.GetWindowHandle(host));
         var target = await picker.PickSingleFolderAsync();
         if (target == null) return false;
         var folder = App.Station.ManagedFolderContaining(target.Path) ?? throw new IOException("请选择 Halo 管理的文件夹。");
@@ -107,14 +107,14 @@ internal sealed partial class StationWindow
     }
     async Task BackupDesktop() {
         var picker = new FileSavePicker { SuggestedFileName = "Halo桌面-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") }; picker.FileTypeChoices.Add("Halo 桌面备份", new List<string> { ".zip" });
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, InteractionWindow);
         var file = await picker.PickSaveFileAsync(); if (file == null) return;
         NotifyProgress("正在备份文件和布局…"); await App.Station.ExportDesktop(file.Path); Notify("桌面备份已完成（旧引用仅保存路径）");
     }
     async Task RestoreDesktop() {
-        var picker = new FileOpenPicker(); picker.FileTypeFilter.Add(".zip"); WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        var picker = new FileOpenPicker(); picker.FileTypeFilter.Add(".zip"); WinRT.Interop.InitializeWithWindow.Initialize(picker, InteractionWindow);
         var file = await picker.PickSingleFileAsync(); if (file == null) return;
-        if (await new ContentDialog { XamlRoot = root.XamlRoot, Title = "恢复 Halo 桌面？", Content = "将替换当前内容和布局。会先在 Halo 数据目录的 backups 中创建完整备份；原文件不会改动。", PrimaryButtonText = "备份当前并恢复", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close }.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowPanelDialog(new ContentDialog { XamlRoot = root.XamlRoot, Title = "恢复 Halo 桌面？", Content = "将替换当前内容和布局。会先在 Halo 数据目录的 backups 中创建完整备份；原文件不会改动。", PrimaryButtonText = "备份当前并恢复", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close }) != ContentDialogResult.Primary) return;
         string backups = Path.Combine(App.DataDirectory, "backups"); Directory.CreateDirectory(backups); NotifyProgress("正在备份当前桌面并恢复…");
         await App.Station.ExportDesktop(Path.Combine(backups, "before-restore-" + DateTime.Now.ToString("yyyyMMddHHmmssfff") + ".zip"));
         await App.Station.RestoreDesktop(file.Path); Notify("桌面已恢复");

@@ -19,12 +19,15 @@ public partial class App
     readonly List<RegisteredWaitHandle> waits = [];
     Mutex? instance;
     Window? lifetime;
+    FrameworkElement? taskbarAnchor;
+    (ElementTheme Theme, Windows.UI.Color Color)? taskbarPalette;
     bool quitting;
     internal static bool Verification;
     internal void Start(string[] arguments, string dataDirectory)
     {
         DataDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataDirectory));
-        Verification = arguments.Contains("--verify-station");
+        bool verifyFlyout = arguments.Contains("--verify-halo-flyout");
+        Verification = verifyFlyout || arguments.Contains("--verify-station");
         string prefix = AITaskbar.App.EventPrefix("Halo", DataDirectory);
         instance = new Mutex(true, prefix, out bool first);
         string action = ActionFor(arguments);
@@ -43,6 +46,7 @@ public partial class App
             var signal = new EventWaitHandle(false, EventResetMode.AutoReset, prefix + "." + command); events.Add(signal);
             waits.Add(ThreadPool.RegisterWaitForSingleObject(signal, (_, _) => dispatcher.TryEnqueue(() => Handle(command)), null, Timeout.Infinite, false));
         }
+        if (verifyFlyout) { _ = VerifyStationFlyout(arguments.Contains("--verify-halo-flyout-files")); return; }
         if (Verification) { _ = VerifyStation(); return; }
         Handle(arguments.Contains("--background") ? "Background" : action);
         if (Directory.Exists(Path.Combine(DataDirectory, "incoming-drops"))) _ = DrainDrops();
@@ -66,7 +70,7 @@ public partial class App
             if (command == "Settings") { OpenSettings(); return; }
             if (command == "Leave") { Panel?.ScheduleDragDismiss(); return; }
             if (command == "Background") return;
-            Panel ??= new StationWindow();
+            Panel ??= CreatePanel();
             if (command is "Pin" or "Detach") {
                 if (Panel.ModalActive || Panel.DragActive) return;
                 if (command == "Pin") Panel.TogglePin(); else Panel.SetDetached(!Panel.Detached);
@@ -85,10 +89,39 @@ public partial class App
 
     internal SettingsPage CreateSettingsPage(Window host, AITaskbar.SettingsPaneWidths widths)
     {
-        Panel ??= new StationWindow();
+        Panel ??= CreatePanel();
         var page = new SettingsPage(Panel, host, widths) { Visibility = Visibility.Visible };
         page.Reset();
         return page;
+    }
+    StationWindow CreatePanel()
+    {
+        var panel = new StationWindow(taskbarAnchor);
+        if (taskbarPalette is { } palette) panel.SetTaskbarPalette(palette.Theme, palette.Color);
+        return panel;
+    }
+    internal void AttachTaskbar(FrameworkElement anchor)
+    {
+        if (ReferenceEquals(taskbarAnchor, anchor)) return;
+        taskbarAnchor = anchor;
+        if (Panel is { IsOpen: true }) return;
+        Panel?.Destroy();
+        Panel = null;
+        Settings.UseIntegratedWindowDefaults();
+    }
+    internal void DetachTaskbar(FrameworkElement anchor)
+    {
+        if (!ReferenceEquals(taskbarAnchor, anchor)) return;
+        taskbarAnchor = null;
+        taskbarPalette = null;
+        if (Panel?.UsesTaskbarFlyout != true) return;
+        Panel.Destroy();
+        Panel = null;
+    }
+    internal void SetTaskbarPalette(ElementTheme theme, Windows.UI.Color color)
+    {
+        taskbarPalette = (theme, color);
+        if (Panel?.UsesTaskbarFlyout == true) Panel.SetTaskbarPalette(theme, color);
     }
     internal static void Log(Exception e)
     { try { Directory.CreateDirectory(DataDirectory); File.AppendAllText(Path.Combine(DataDirectory, "error.log"), $"{DateTimeOffset.Now:o} {e}\n"); } catch { } }

@@ -23,12 +23,15 @@ internal abstract class PanelWindow : Window
     internal bool DismissedByPress(uint time, Native.Point point) => !IsOpen && hasOutsidePress
         && unchecked(time - outsidePressTime) <= 50 && point.X == outsidePressPoint.X && point.Y == outsidePressPoint.Y;
     OutsideClickWatcher? outsideClicks;
+    protected AITaskbar.TaskbarPanelFlyout? TaskbarFlyout { get; set; }
+    internal FrameworkElement? PanelContent { get; private set; }
     PanelCaption? caption;
     protected void InitializeFloatingCaption(FrameworkElement header, FrameworkElement controls, Func<bool> enabled, FrameworkElement? leading = null, bool nativeResizeRegions = true) => caption = new(this, header, controls, enabled, leading, nativeResizeRegions);
     protected void UpdateFloatingCaption() => caption?.Queue();
     protected void SuspendFloatingCaption() => caption?.Suspend();
     protected void ResumeFloatingCaption() => caption?.Resume();
     protected void RestorePanelInput() {
+        if (TaskbarFlyout != null) return;
         CancelPendingHide(); activationVersion++;
         ((UIElement)Content).IsHitTestVisible = true;
         Native.EnableWindow(WinRT.Interop.WindowNative.GetWindowHandle(this), true);
@@ -51,7 +54,7 @@ internal abstract class PanelWindow : Window
         Activated += (_, args) =>
         {
             long version = ++activationVersion;
-            if (args.WindowActivationState != WindowActivationState.Deactivated || !IsOpen || VisibilityProtected || !DismissOnOutside) return;
+            if (TaskbarFlyout != null || args.WindowActivationState != WindowActivationState.Deactivated || !IsOpen || VisibilityProtected || !DismissOnOutside) return;
             // Let XAML finish activating a dropdown/owned popup before deciding focus left the panel.
             DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
             {
@@ -66,13 +69,29 @@ internal abstract class PanelWindow : Window
 
     protected void InitializePanel(FrameworkElement content)
     {
-        Content = content;
+        PanelContent = content;
+        if (TaskbarFlyout is { } flyout)
+        {
+            flyout.DismissOnOutside = () => !VisibilityProtected && DismissOnOutside && AllowHide();
+            flyout.Closed += () => { outsideClicks?.Dispose(); outsideClicks = null; OnHidden(); };
+            Closed += (_, _) => flyout.Dispose();
+        }
+        else Content = content;
         PanelTheme.Register(this);
         AppWindow.Hide();
     }
 
     protected void ShowPanel(bool activate = true)
     {
+        if (TaskbarFlyout is { } flyout)
+        {
+            PanelTheme.Refresh(this);
+            hasOutsidePress = false;
+            flyout.Show(activate);
+            IsOpen = flyout.IsOpen;
+            NotifyPresentationChanged();
+            return;
+        }
         bool entering = !IsOpen, resume = IsClosing;
         CancelPendingHide();
         PanelTheme.Refresh(this);
@@ -88,18 +107,36 @@ internal abstract class PanelWindow : Window
         if (activate) Activate();
         if (Frameless) Native.RemoveWindowFrame(WinRT.Interop.WindowNative.GetWindowHandle(this));
         caption?.Queue();
-        outsideClicks?.Dispose();
-        outsideClicks = new OutsideClickWatcher(WinRT.Interop.WindowNative.GetWindowHandle(this), DispatcherQueue,
+        WatchOutsideClicks(panelHandle);
+        NotifyPresentationChanged();
+    }
+
+    protected void WatchOutsideClicks(nint panelHandle, Action? insideLeftPress = null)
+    {
+        StopWatchingOutsideClicks();
+        outsideClicks = new OutsideClickWatcher(panelHandle, DispatcherQueue,
             () => { if (!VisibilityProtected && DismissOnOutside) Hide(); },
             UsesPanelWheel?(point,delta,horizontal)=>!VisibilityProtected&&HandlePanelWheel(point,delta,horizontal):null,
-            ObserveOutsidePress, ConsumeOutsideClick);
-        NotifyPresentationChanged();
+            ObserveOutsidePress, ConsumeOutsideClick, insideLeftPress);
+    }
+    protected void StopWatchingOutsideClicks()
+    {
+        outsideClicks?.Dispose();
+        outsideClicks = null;
     }
 
     internal void Hide()
     {
         if (!IsOpen || closed || VisibilityProtected) return;
         if (!AllowHide()) return;
+        if (TaskbarFlyout is { } flyout)
+        {
+            IsOpen = false;
+            OnHiding();
+            flyout.Hide();
+            NotifyPresentationChanged();
+            return;
+        }
         activationVersion++;
         IsOpen = false;
         outsideClicks?.Dispose();

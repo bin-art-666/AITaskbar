@@ -22,6 +22,7 @@ internal sealed partial class StationWindow
     RectInt32 resizeBounds;
     IDisposable? resizeLease;
     Thumb? activeGrip;
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? layoutTracking;
     readonly List<Thumb> resizeGrips = [];
     void VerifyResizeGrips()
     {
@@ -30,12 +31,20 @@ internal sealed partial class StationWindow
     }
     void InitializeResizeGrips()
     {
+        if (TaskbarFlyout != null)
+        {
+            layoutTracking = DispatcherQueue.CreateTimer();
+            layoutTracking.Interval = TimeSpan.FromMilliseconds(16);
+            layoutTracking.Tick += (_, _) => TrackWindowLayout();
+            Closed += (_, _) => layoutTracking.Stop();
+        }
         root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, e) => {
             if (!resizing) return;
             // GetCursorPos can already point at the end of a fast queued drag.
             // Preserve the actual press from its event packet before DragDelta arrives.
             var p = e.GetCurrentPoint(root).Position; double scale = root.XamlRoot.RasterizationScale;
-            resizeOrigin = new() { X = AppWindow.Position.X + (int)Math.Round(p.X * scale), Y = AppWindow.Position.Y + (int)Math.Round(p.Y * scale) };
+            var bounds = CurrentBounds();
+            resizeOrigin = new() { X = bounds.X + (int)Math.Round(p.X * scale), Y = bounds.Y + (int)Math.Round(p.Y * scale) };
         }), true);
         AddGrip(1, "左边缘", HorizontalAlignment.Left, VerticalAlignment.Stretch, InputSystemCursorShape.SizeWestEast);
         AddGrip(2, "右边缘", HorizontalAlignment.Right, VerticalAlignment.Stretch, InputSystemCursorShape.SizeWestEast);
@@ -62,20 +71,28 @@ internal sealed partial class StationWindow
             Template = (ControlTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load("<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'><Grid Background='Transparent'/></ControlTemplate>") };
         AutomationProperties.SetName(thumb, "调整窗口" + label);
         AutomationProperties.SetHelpText(thumb, "拖动调整宽高，松开保存；Esc 取消本次拖动。");
+        if (TaskbarFlyout != null) Canvas.SetZIndex(host, corner ? 2 : 1);
         resizeGrips.Add(thumb); host.Children.Add(thumb); Grid.SetRowSpan(host, root.RowDefinitions.Count); root.Children.Add(host);
         thumb.DragStarted += (_, _) => {
-            if (destroyed || ModalActive || resizing || !GetCursorPos(out resizeOrigin)) { thumb.CancelDrag(); return; }
+            if (destroyed || ModalActive || DragActive || resizing || !GetCursorPos(out resizeOrigin)) { thumb.CancelDrag(); return; }
             resizing = true; resizeEdges = edges; activeGrip = thumb; resizeLease = KeepOpenForDrag();
-            resizeBounds = new(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height); saveSize.Stop();
+            resizeBounds = CurrentBounds(); saveSize.Stop();
+            thumb.Focus(FocusState.Pointer);
+            layoutTracking?.Start();
         };
-        thumb.DragDelta += (_, _) => { if (resizing && GetCursorPos(out var point)) MoveResize(point.X - resizeOrigin.X, point.Y - resizeOrigin.Y); };
-        thumb.DragCompleted += (_, e) => EndResize(e.Canceled);
+        thumb.DragDelta += (_, _) => TrackWindowLayout();
+        thumb.DragCompleted += (_, e) => { if (!e.Canceled && TaskbarFlyout != null) TrackWindowLayout(); EndResize(e.Canceled); };
+    }
+    void TrackWindowLayout()
+    {
+        if (!GetCursorPos(out var point)) return;
+        if (resizing) MoveResize(point.X - resizeOrigin.X, point.Y - resizeOrigin.Y);
+        else MoveFlyout(point);
     }
     void MoveResize(int dx, int dy)
     {
-        var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        var work = Native.MonitorInformation(Native.MonitorForWindow(handle)).Work;
-        double scale = Native.GetDpiForWindow(handle) / 96d;
+        var work = LayoutWorkArea(resizeBounds);
+        double scale = WindowLayoutScale;
         int minWidth = Math.Min((int)(280 * scale), work.Right - work.Left), minHeight = Math.Min((int)(200 * scale), work.Bottom - work.Top);
         int maxWidth = (int)(1600 * scale), maxHeight = (int)(1400 * scale);
         int left = resizeBounds.X, top = resizeBounds.Y, right = left + resizeBounds.Width, bottom = top + resizeBounds.Height;
@@ -85,15 +102,16 @@ internal sealed partial class StationWindow
         if ((resizeEdges & 4) != 0) top = Clamp(top + dy, Math.Max(work.Top, bottom - maxHeight), bottom - minHeight);
         if ((resizeEdges & 8) != 0) bottom = Clamp(bottom + dy, top + minHeight, Math.Min(work.Bottom, top + maxHeight));
         positioning = true;
-        try { AppWindow.MoveAndResize(new(left, top, right - left, bottom - top)); }
+        try { ApplyBounds(new(left, top, right - left, bottom - top)); }
         finally { positioning = false; }
     }
     void EndResize(bool cancel)
     {
         if (!resizing) return;
+        layoutTracking?.Stop();
         resizing = false; activeGrip = null;
         try {
-            if (!destroyed) { if (cancel) AppWindow.MoveAndResize(resizeBounds); SaveSize(); }
+            if (!destroyed) { if (cancel) ApplyBounds(resizeBounds); SaveSize(); }
         } finally { resizeLease?.Dispose(); resizeLease = null; }
     }
 }

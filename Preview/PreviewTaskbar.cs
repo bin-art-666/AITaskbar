@@ -53,6 +53,7 @@ internal sealed class PreviewTaskbar : Window
         var halo = Button("Halo", "Halo 中转站", () => app.HaloModule.Handle("Toggle"));
         var ai = Button("AIEnter", "AIEnter 对话", () => _ = app.AiModule.ToggleAiWindow(false));
         AIEnter.PanelToggleTargets.Register(this, ai);
+        Halo.PanelToggleTargets.Register(this, halo);
         var aiService = AIEnter.App.Ai;
         SetMenu(halo, "Halo 设置", Halo.App.OpenSettings);
         SetMenu(ai, "AIEnter 设置", app.AiModule.OpenSettings);
@@ -177,6 +178,7 @@ internal sealed class PreviewTaskbar : Window
             var palette = TaskbarPanelFlyout.ResolvePalette(new QuickControlAppearance(Backdrop: QuickBackdrop.FollowTaskbar),
                 light, app.BarAppearance, panelColors, panelAccessibility.HighContrast);
             aiService.SetTaskbarPalette(palette.Theme, palette.Solid);
+            app.HaloModule.SetTaskbarPalette(palette.Theme, palette.Solid);
         });
 
         refresh = DispatcherQueue.CreateTimer();
@@ -192,6 +194,7 @@ internal sealed class PreviewTaskbar : Window
         {
             closed = true;
             aiService.DetachTaskbar(ai);
+            app.HaloModule.DetachTaskbar(halo);
             appCenter?.Close();
             tray.Dispose();
             systemTaskbar.Dispose();
@@ -208,6 +211,7 @@ internal sealed class PreviewTaskbar : Window
             bar = new(handle, DispatcherQueue, app.TaskbarHeight, app.TaskbarCoversWindows,
                 tasks.RememberForeground, tasks.UpdateAppAttention, error => { Close(); reportFailure(error); });
             aiService.AttachTaskbar(ai);
+            app.HaloModule.AttachTaskbar(halo);
             tasks.Refresh();
             refresh.Start();
         }

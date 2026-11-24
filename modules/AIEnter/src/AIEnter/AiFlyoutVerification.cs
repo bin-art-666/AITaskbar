@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
 using Windows.Graphics;
 using Windows.UI;
+using static AITaskbar.FlyoutWindowLayer;
 
 namespace AIEnter;
 
@@ -222,7 +223,7 @@ internal sealed partial class AiWindow
             var hit = FlyoutAt(center);
             bool topmost = (GetLayerStyle(popup, ExtendedStyleIndex).ToInt64() & TopmostStyle) != 0;
             if (!IsOpen || hit != popup || ExpandedFlyoutBounds() != bounds || AppWindow.IsVisible || options.Data.Pinned || topmost)
-                throw new InvalidOperationException($"One taskbar click did not recall the same expanded flyout. Open={IsOpen}, hit={hit:X}, popup={popup:X}, native popup={layeredFlyout:X}, cover={coverHandle:X}, topmost={topmost}.");
+                throw new InvalidOperationException($"One taskbar click did not recall the same expanded flyout. Open={IsOpen}, hit={hit:X}, popup={popup:X}, native popup={flyoutLayer?.Handle:X}, cover={coverHandle:X}, topmost={topmost}.");
             if (!ReferenceEquals(core, current?.View.CoreWebView2) || await core.ExecuteScriptAsync("window.scrollY") != "180"
                 || JsonSerializer.Deserialize<string>(await core.ExecuteScriptAsync("document.getElementById('draft').value")) != "保留这条草稿")
                 throw new InvalidOperationException("Recalling the flyout changed its draft or scroll position.");
@@ -244,7 +245,7 @@ internal sealed partial class AiWindow
     {
         if (!Detached) ToggleDetached();
         await Task.Delay(220);
-        var owner = GetLayerOwner(popup, OwnerWindow);
+        var owner = GetLayerWindow(popup, OwnerWindow);
         var ownerTopmost = GetLayerStyle(owner, ExtendedStyleIndex).ToInt64() & TopmostStyle;
         var bounds = ExpandedFlyoutBounds();
         var point = new Native.Point { X = bounds.X + 35, Y = bounds.Y + bounds.Height / 2 };
@@ -273,7 +274,7 @@ internal sealed partial class AiWindow
                 var topmost = (GetLayerStyle(popup, ExtendedStyleIndex).ToInt64() & TopmostStyle) != 0;
                 if (topmost != pinned || hit != (pinned ? popup : overlapHandle))
                     throw new InvalidOperationException($"Expanded flyout layering: pinned={pinned}, topmost={topmost}, hit={hit:X}, popup={popup:X}, overlap={overlapHandle:X}.");
-                if (!IsOpen || AppWindow.IsVisible || GetLayerOwner(popup, OwnerWindow) == 0
+                if (!IsOpen || AppWindow.IsVisible || GetLayerWindow(popup, OwnerWindow) == 0
                     || !ReferenceEquals(core, current?.View.CoreWebView2)
                     || (GetLayerStyle(owner, ExtendedStyleIndex).ToInt64() & TopmostStyle) != ownerTopmost)
                     throw new InvalidOperationException("Changing the expanded pin affected the taskbar or the flyout lifecycle.");
@@ -466,9 +467,10 @@ internal sealed partial class AiWindow
             };
         }
 
-        internal static void Drag(Native.Point from, Native.Point to, bool cancel = false)
+        internal static void Drag(Native.Point from, Native.Point to, bool cancel = false, bool sendNativeMovement = false)
         {
             var previous = System.Windows.Forms.Cursor.Position;
+            var desktop = sendNativeMovement ? System.Windows.Forms.SystemInformation.VirtualScreen : default;
             SetDragCursor(from.X, from.Y);
             MouseInput(0x0002, 0, 0, 0, UIntPtr.Zero);
             try
@@ -476,7 +478,14 @@ internal sealed partial class AiWindow
                 Thread.Sleep(180);
                 for (int step = 1; step <= 10; step++)
                 {
-                    SetDragCursor(from.X + (to.X - from.X) * step / 10, from.Y + (to.Y - from.Y) * step / 10);
+                    int x = from.X + (to.X - from.X) * step / 10, y = from.Y + (to.Y - from.Y) * step / 10;
+                    if (sendNativeMovement)
+                    {
+                        MouseInput(0xC001, (uint)((x - desktop.Left + .5) * 65536 / desktop.Width),
+                            (uint)((y - desktop.Top + .5) * 65536 / desktop.Height), 0, UIntPtr.Zero);
+                        if (step == 8) Thread.Sleep(350);
+                    }
+                    else SetDragCursor(x, y);
                     Thread.Sleep(25);
                 }
                 Thread.Sleep(160);

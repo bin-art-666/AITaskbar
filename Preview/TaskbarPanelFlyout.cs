@@ -30,6 +30,7 @@ internal sealed class TaskbarPanelFlyout : IDisposable
     private bool animating, finishClose, disposed;
     private bool explicitHide;
     private float? glassHeight;
+    private bool squareGlassBottom;
     private float glassRadius = (float)Radius;
 
     internal bool IsOpen { get; private set; }
@@ -163,14 +164,15 @@ internal sealed class TaskbarPanelFlyout : IDisposable
         motion.TranslateY = (1 - amount) * Travel;
         var size = new Vector2((float)content.ActualWidth, (float)content.ActualHeight);
         var glassSize = new Vector2(size.X, Math.Min(size.Y, glassHeight ?? size.Y));
-        desktopBackdrop?.SetShape(size + new Vector2(0, Travel), glassSize, glassRadius, squareBottom: glassHeight.HasValue);
+        desktopBackdrop?.SetShape(size + new Vector2(0, Travel), glassSize, glassRadius, squareBottom: squareGlassBottom);
         desktopBackdrop?.SetMotion(amount, (float)motion.TranslateY);
     }
 
-    internal void SetGlass(float blur, float radius, float height)
+    internal void SetGlass(float blur, float radius, float height, bool squareBottom = true)
     {
         glassRadius = radius;
         glassHeight = height;
+        squareGlassBottom = squareBottom;
         SetBackdrop(blur > 0);
         desktopBackdrop?.SetBlur(blur);
         SetFrame(progress);

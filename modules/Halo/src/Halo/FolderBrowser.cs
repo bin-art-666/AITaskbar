@@ -20,6 +20,7 @@ internal sealed partial class FolderBrowser : Grid
     readonly StationItem folder;
     readonly Grid root = new() { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
     readonly GridView files = new() { SelectionMode = ListViewSelectionMode.Extended, IsMultiSelectCheckBoxEnabled = false, Padding = new(10), Background = new SolidColorBrush(Colors.Transparent) };
+    internal GridView GridForWindowLayout => files;
     readonly BreadcrumbBar breadcrumbs = new();
     readonly Button desktopDropTarget = new() { Content = "中转站", Visibility = Visibility.Collapsed, IsTabStop = false, IsHitTestVisible = false };
     readonly Button back = WindowControls.IconButton("\uE72B", "关闭文件夹");
@@ -320,14 +321,14 @@ internal sealed partial class FolderBrowser : Grid
     internal Task OpenEntry(StationItem item) => item.Kind == StationKind.Folder ? Navigate(item.Value)
         : Run(async () => {
             store.ValidateFolderPath(folder, item.Value);
-            if (!folder.Owned && await new ContentDialog { XamlRoot = root.XamlRoot, Title = "打开原文件？",
+            if (!folder.Owned && await owner.ShowPanelDialog(new ContentDialog { XamlRoot = root.XamlRoot, Title = "打开原文件？",
                 Content = "编辑此文件会影响来源。", PrimaryButtonText = "打开原文件", CloseButtonText = "取消",
-                DefaultButton = ContentDialogButton.Close }.ShowAsync() != ContentDialogResult.Primary) return;
+                DefaultButton = ContentDialogButton.Close }) != ContentDialogResult.Primary) return;
             await StationWindow.OpenStoredFile(item);
         });
 
-    bool Accepts(DataPackageView view) => folder.Owned && !store.ReadOnly && directory != null && !busy && !dragging && !localDrag
-        && view.Contains(StandardDataFormats.StorageItems);
+    internal bool CanReceiveShellFiles => folder.Owned && !store.ReadOnly && directory != null && !busy && !dragging && !localDrag;
+    bool Accepts(DataPackageView view) => CanReceiveShellFiles && view.Contains(StandardDataFormats.StorageItems);
 
     void TrackDrag(object sender, DragEventArgs e)
     {
@@ -407,6 +408,12 @@ internal sealed partial class FolderBrowser : Grid
         } finally { busy = false; }
         await Navigate(target, refresh: true);
         return copied;
+    }
+    internal async Task ReceiveShellFiles(DataPackageView view)
+    {
+        int copied = await CopyDrop(view);
+        owner.ReportImportFeedback();
+        if (!closed) Notify($"已复制 {copied} 项到当前文件夹");
     }
 
     async Task StartDrag(GridViewItem card, DragStartingEventArgs e)

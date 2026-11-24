@@ -52,15 +52,15 @@ internal sealed partial class SettingsPage
 
     internal void ShowStorageSettings()
     {
-        nav.SelectedItem = nav.MenuItems.OfType<NavigationViewItem>().Single(item => Equals(item.Tag, "window"));
+        nav.Select(storageSettingsPage);
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => {
-            if (Visibility != Visibility.Visible || !ReferenceEquals(nav.Content, storageSettingsPage)) return;
+            if (Visibility != Visibility.Visible || !ReferenceEquals(nav.SelectedPage, storageSettingsPage)) return;
             storageSettingsPage.UpdateLayout();
             storageHeading.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
         });
     }
 
-    internal bool StorageSettingsVisible => ReferenceEquals(nav.Content, storageSettingsPage) && !openStorage.IsEnabled && !changeStorage.IsEnabled;
+    internal bool StorageSettingsVisible => ReferenceEquals(nav.SelectedPage, storageSettingsPage) && !openStorage.IsEnabled && !changeStorage.IsEnabled;
 
     internal void RefreshStorageAvailability()
     {

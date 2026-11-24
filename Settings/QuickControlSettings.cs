@@ -15,7 +15,7 @@ internal sealed partial class TaskbarSettingsWindow
 
     internal void ShowQuickControlAppearance()
     {
-        taskbarNav.SelectedItem = taskbarAppearanceItem;
+        taskbarNav.Select(taskbarAppearancePage);
         DispatcherQueue.TryEnqueue(() =>
         {
             void BringIntoView() => quickAppearanceRow.StartBringIntoView(new BringIntoViewOptions

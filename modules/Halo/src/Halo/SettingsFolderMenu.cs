@@ -211,7 +211,7 @@ internal sealed partial class SettingsPage
         allButtons.Single(button => AutomationProperties.GetName(button) == name);
     internal void ShowFolderMenuSettingsForVerification(bool showFiles = false)
     {
-        nav.SelectedItem = nav.MenuItems.OfType<NavigationViewItem>().Single(item => Equals(item.Tag, "actions"));
+        nav.Select(pageByTag["actions"]);
         menuTarget.SelectedIndex = showFiles ? 0 : 1;
     }
 }

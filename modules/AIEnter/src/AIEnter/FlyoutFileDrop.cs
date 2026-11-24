@@ -14,7 +14,7 @@ interface IFlyoutOleDropTarget
 }
 
 // Windowed WinUI flyouts can miss XAML drag events. Register their own HWND for shell files.
-sealed class FlyoutFileDrop(Func<bool> canAccept, Action<bool> showHint, Func<string[], bool> receive) : IFlyoutOleDropTarget, IDisposable
+sealed class FlyoutFileDrop(Func<bool> canAccept, Action<bool> showHint, Func<string[], bool> receive, int maximumFiles = 12) : IFlyoutOleDropTarget, IDisposable
 {
     const uint Copy = 1;
     const short FileDropFormat = 15;
@@ -73,7 +73,7 @@ sealed class FlyoutFileDrop(Func<bool> canAccept, Action<bool> showHint, Func<st
             try
             {
                 uint count = DragQueryFile(storage.unionmember, uint.MaxValue, null, 0);
-                if (count is < 1 or > 12) return 0;
+                if (count < 1 || count > maximumFiles) return 0;
                 var paths = new string[count];
                 for (uint i = 0; i < count; i++)
                 {

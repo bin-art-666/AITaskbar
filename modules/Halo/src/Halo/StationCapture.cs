@@ -32,7 +32,7 @@ internal sealed partial class StationWindow
         var dialog = new ContentDialog { XamlRoot = root.XamlRoot, Title = $"检测到 {links.Length} 条网址", Content = new ScrollViewer { Content = preview, MaxHeight = 250 },
             PrimaryButtonText = "拆成独立链接", SecondaryButtonText = "保留整段文字", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Secondary };
         activeContentDialog = dialog; ContentDialogResult choice;
-        try { choice = await dialog.ShowAsync(); } finally { activeContentDialog = null; }
+        try { choice = await ShowPanelDialog(dialog); } finally { activeContentDialog = null; }
         return choice switch { ContentDialogResult.Primary => links.Select(link => new StationInput(StationKind.Link, link)).ToArray(), ContentDialogResult.Secondary => inputs, _ => null };
     }
     async Task EditNote(StationItem? item, StationTextStyle initialStyle = StationTextStyle.Plain)
@@ -57,6 +57,6 @@ internal sealed partial class StationWindow
             finally { deferral.Complete(); }
         };
         activeContentDialog = dialog;
-        try { await dialog.ShowAsync(); } finally { activeContentDialog = null; }
+        try { await ShowPanelDialog(dialog); } finally { activeContentDialog = null; }
     }
 }

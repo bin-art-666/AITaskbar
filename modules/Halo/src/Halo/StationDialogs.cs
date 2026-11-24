@@ -9,6 +9,19 @@ namespace Halo;
 
 internal sealed partial class StationWindow
 {
+    internal async Task<ContentDialogResult> ShowPanelDialog(ContentDialog dialog)
+    {
+        if (TaskbarFlyout is null || dialog.XamlRoot != root.XamlRoot)
+            return await dialog.ShowAsync();
+
+        using var lease = KeepOpen();
+        Grid.SetRowSpan(dialog, root.RowDefinitions.Count);
+        Canvas.SetZIndex(dialog, 10);
+        root.Children.Add(dialog);
+        try { return await dialog.ShowAsync(ContentDialogPlacement.InPlace); }
+        finally { root.Children.Remove(dialog); }
+    }
+
     async Task<ContentDialogResult> ShowStationDialog(ContentDialog dialog, GridView grid,
         Action? focusContent = null, Flyout? childFlyout = null, Action? refreshPreview = null)
     {
@@ -66,7 +79,7 @@ internal sealed partial class StationWindow
         activeContentDialog = dialog;
         root.LayoutUpdated += FinishLayout;
         try {
-            var showing = dialog.ShowAsync();
+            var showing = ShowPanelDialog(dialog);
             DispatcherQueue.TryEnqueue(() => FinishLayout(dialog, EventArgs.Empty));
             return await showing;
         }

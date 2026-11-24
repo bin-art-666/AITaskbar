@@ -28,7 +28,7 @@ public partial class App
         string incoming = Path.Combine(DataDirectory, "incoming-drops");
         try {
             if (!Directory.Exists(incoming)) { if (retryFailed) Panel?.Notify("没有待重试的拖入"); return; }
-            Panel ??= new StationWindow();
+            Panel ??= CreatePanel();
             using var lease = Panel.Retain();
             if (Station.LibraryOffline && Pending().Any()) {
                 Panel.Open();
@@ -41,7 +41,7 @@ public partial class App
             while (Pending().Where(path => !attempted.Contains(path)).OrderBy(path => path).ToArray() is { Length: > 0 } pending)
                 foreach (string path in pending) {
                     attempted.Add(path);
-                    Panel ??= new StationWindow(); Panel.Open();
+                    Panel ??= CreatePanel(); Panel.Open();
                     TaskbarImportResult imported;
                     try { imported = await ImportPacket(path); }
                     catch (Exception error) {

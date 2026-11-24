@@ -201,7 +201,7 @@ internal sealed partial class StationWindow
     async Task MoveAllToTrash()
     {
         var snapshot = App.Station.Items.ToArray();
-        if (await new ContentDialog { XamlRoot = root.XamlRoot, Title = $"将全部 {snapshot.Length} 项移到回收站？", Content = "Halo 内容可从回收站恢复，原文件不会删除。", PrimaryButtonText = "移到回收站", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close }.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowPanelDialog(new ContentDialog { XamlRoot = root.XamlRoot, Title = $"将全部 {snapshot.Length} 项移到回收站？", Content = "Halo 内容可从回收站恢复，原文件不会删除。", PrimaryButtonText = "移到回收站", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close }) != ContentDialogResult.Primary) return;
         await App.Station.RemoveArchived(snapshot); undo = snapshot; Notify("全部内容已移到 Halo 回收站，可恢复");
     }
 }

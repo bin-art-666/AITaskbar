@@ -50,7 +50,7 @@ internal sealed partial class StationWindow : PanelWindow
     internal bool FullBackdrop => Math.Abs(backplate.ActualHeight - root.ActualHeight) < 1 && Math.Abs(backplate.ActualWidth - root.ActualWidth) < 1;
     internal void VerifyResize() { VerifyResizeGrips(); resizeFrame.VerifyRegion(); }
     internal void VerifyWindowRegion() => resizeFrame.VerifyRegion();
-    internal StationWindow()
+    internal StationWindow(FrameworkElement? taskbarAnchor = null)
     {
         Title = "Halo · 中转站";
         files.ItemsPanel = (ItemsPanelTemplate)Application.Current.Resources["StationGridItemsPanel"];
@@ -59,7 +59,8 @@ internal sealed partial class StationWindow : PanelWindow
         detached = App.Settings.Data.Detached;
         var presenter = (Microsoft.UI.Windowing.OverlappedPresenter)AppWindow.Presenter;
         presenter.SetBorderAndTitleBar(false, false); presenter.IsResizable = presenter.IsMaximizable = presenter.IsMinimizable = false;
-        SystemBackdrop = PanelTheme.DesktopBackdrop();
+        if (taskbarAnchor is null) SystemBackdrop = PanelTheme.DesktopBackdrop();
+        else InitializeTaskbarFlyout(taskbarAnchor);
         backplate.HorizontalAlignment = HorizontalAlignment.Stretch; backplate.VerticalAlignment = VerticalAlignment.Stretch;
         root.RowDefinitions.Add(new() { Height = GridLength.Auto }); root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         Grid.SetRowSpan(backplate, 2); Grid.SetRow(files, 1); Grid.SetRow(empty, 1);
@@ -165,16 +166,20 @@ internal sealed partial class StationWindow : PanelWindow
             if (card.Content is ContentControl { Tag: Preview { Item.Kind: StationKind.Folder } folder })
                 _ = FolderIcon.Apply(folder.Image, App.Station.FolderColorOverride(folder.Item) ?? App.Appearance.FolderColor, folder.Fallback);
         folderBrowser?.RefreshAppearance(GridAppearance);
-        Native.RemoveWindowFrame(WinRT.Interop.WindowNative.GetWindowHandle(this));
-        resizeFrame.UpdateRegion();
-        if (AppWindow.IsShownInSwitchers != detached) AppWindow.IsShownInSwitchers = detached;
-        var presenter = (Microsoft.UI.Windowing.OverlappedPresenter)AppWindow.Presenter;
-        bool topmost = !detached || App.Settings.Data.Pinned; if (presenter.IsAlwaysOnTop != topmost) presenter.IsAlwaysOnTop = topmost;
+        if (TaskbarFlyout != null) ApplyTaskbarFlyoutAppearance();
+        else
+        {
+            Native.RemoveWindowFrame(WinRT.Interop.WindowNative.GetWindowHandle(this));
+            resizeFrame.UpdateRegion();
+            if (AppWindow.IsShownInSwitchers != detached) AppWindow.IsShownInSwitchers = detached;
+            var presenter = (Microsoft.UI.Windowing.OverlappedPresenter)AppWindow.Presenter;
+            if (presenter.IsAlwaysOnTop != FlyoutTopmost) presenter.IsAlwaysOnTop = FlyoutTopmost;
+        }
         pin.IsChecked = App.Settings.Data.Pinned;
         ToolTipService.SetToolTip(pin, App.Settings.Data.Pinned ? "取消置顶" : "置顶");
         AutomationProperties.SetName(pin, App.Settings.Data.Pinned ? "取消置顶" : "置顶");
         WindowControls.SetIcon(expand, ShowingSettings ? "\uE72B" : detached ? "\uE73F" : "\uE740");
-        string expandName = ShowingSettings ? "返回中转站" : detached ? "缩起为任务栏面板" : "展开为独立窗口";
+        string expandName = ShowingSettings ? "返回中转站" : detached ? "缩起为任务栏面板" : TaskbarFlyout != null ? "展开中转站" : "展开为独立窗口";
         ToolTipService.SetToolTip(expand, expandName); AutomationProperties.SetName(expand, expandName);
         string closeName = ShowingSettings ? "关闭设置窗口" : "收起中转站";
         ToolTipService.SetToolTip(close, closeName); AutomationProperties.SetName(close, closeName);
@@ -193,7 +198,8 @@ internal sealed partial class StationWindow : PanelWindow
     void UpdateWindowClip()
     {
         PanelTheme.ClipDesktopBackdrop(root);
-        resizeFrame.UpdateRegion();
+        if (TaskbarFlyout != null) ApplyTaskbarFlyoutAppearance();
+        else resizeFrame.UpdateRegion();
     }
     bool frameRefreshQueued;
     void QueueFrameRefresh() {
@@ -208,7 +214,12 @@ internal sealed partial class StationWindow : PanelWindow
     {
         GetCursorPos(out var point);
         if (ModalActive || DragActive) return;
-        if (IsOpen) { Hide(); return; }
+        if (IsOpen)
+        {
+            var bounds = CurrentBounds();
+            if (FlyoutTopmost || flyoutLayer?.RecallIfCovered(bounds.X, bounds.Y, bounds.Width, bounds.Height) != true) Hide();
+            return;
+        }
         // The same taskbar press may have just dismissed the panel via the outside watcher.
         if (DismissedByPress(GetMessageTime(), point)) return;
         Open();
@@ -225,15 +236,19 @@ internal sealed partial class StationWindow : PanelWindow
     }
     void Position()
     {
+        if (flyoutAnchor?.XamlRoot is { } anchorRoot)
+            taskbarOwner = Microsoft.UI.Win32Interop.GetWindowFromWindowId(anchorRoot.ContentIslandEnvironment.AppWindowId);
         var settings = App.Settings.Data;
         var x = detached ? settings.ExpandedX : settings.CompactX;
         var y = detached ? settings.ExpandedY : settings.CompactY;
         var monitors = Native.Monitors();
-        var savedMonitor = x is int left && y is int top ? Native.MonitorForPosition(left, top) : IntPtr.Zero;
+        var savedMonitor = TaskbarFlyout != null && !detached ? Native.MonitorForWindow(taskbarOwner)
+            : x is int left && y is int top ? Native.MonitorForPosition(left, top) : IntPtr.Zero;
         var monitor = monitors.FirstOrDefault(m => m.Handle == savedMonitor) ?? monitors.First(m => m.Primary);
+        if (TaskbarFlyout != null && !detached) settings = settings with { CompactX = null, CompactY = null };
         var bounds = RestoreBounds(settings, detached, monitor.Info.Work, monitor.Dpi / 96d);
         positioning = true;
-        try { AppWindow.MoveAndResize(bounds); appliedBounds = CurrentBounds(); }
+        try { ApplyBounds(bounds); appliedBounds = CurrentBounds(); }
         finally { positioning = false; }
     }
     internal static RectInt32 RestoreBounds(HaloSettings settings, bool detached, Native.Rect work, double scale)
@@ -250,12 +265,21 @@ internal sealed partial class StationWindow : PanelWindow
         return new(Math.Clamp(x ?? defaultLeft, work.Left + gap, work.Left + availableWidth - gap - width),
             Math.Clamp(y ?? defaultTop, work.Top + gap, work.Top + availableHeight - gap - height), width, height);
     }
-    RectInt32 CurrentBounds() => new(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
+    RectInt32 CurrentBounds() => TaskbarFlyout != null ? flyoutBounds : new(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
     HaloSettings CaptureSize(RectInt32 bounds) {
-        double scale = Native.GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96d;
+        double scale = WindowLayoutScale;
+        if (TaskbarFlyout != null)
+        {
+            var monitorHandle = detached ? Native.MonitorForPosition(bounds.X, bounds.Y) : Native.MonitorForWindow(taskbarOwner);
+            scale = (Native.Monitors().FirstOrDefault(monitor => monitor.Handle == monitorHandle)?.Dpi ?? 96) / 96d;
+        }
+        return SaveBounds(App.Settings.Data, bounds, detached, scale);
+    }
+    internal static HaloSettings SaveBounds(HaloSettings settings, RectInt32 bounds, bool detached, double scale)
+    {
         double width = Math.Clamp(bounds.Width / scale, 280, 1600), height = Math.Clamp(bounds.Height / scale, 200, 1400);
-        return detached ? App.Settings.Data with { ExpandedWidth = width, ExpandedHeight = height, ExpandedX = bounds.X, ExpandedY = bounds.Y }
-            : App.Settings.Data with { Width = width, Height = height, CompactX = bounds.X, CompactY = bounds.Y };
+        return detached ? settings with { ExpandedWidth = width, ExpandedHeight = height, ExpandedX = bounds.X, ExpandedY = bounds.Y }
+            : settings with { Width = width, Height = height, CompactX = bounds.X, CompactY = bounds.Y };
     }
     void SaveSize()
     {
@@ -269,11 +293,29 @@ internal sealed partial class StationWindow : PanelWindow
     internal void SetDetached(bool value)
     {
         if (destroyed || changingMode || ShowingSettings || DragActive || resizing || value == detached) return;
-        CloseFolderBrowser();
+        if (TaskbarFlyout is null) CloseFolderBrowser();
+        var restoreScroll = TaskbarFlyout != null ? PreserveVisibleItem(folderBrowser?.GridForWindowLayout ?? files) : null;
         ChangeWindowMode(() => {
             SaveSize(); App.Settings.SaveSoon(App.Settings.Data with { Detached = value }); detached = value;
             Position();
         });
+        if (restoreScroll != null) DispatcherQueue.TryEnqueue(restoreScroll);
+    }
+    static Microsoft.UI.Dispatching.DispatcherQueueHandler? PreserveVisibleItem(GridView grid)
+    {
+        if (Child<ScrollViewer>(grid) is not { } scroll) return null;
+        double offset = scroll.VerticalOffset;
+        var anchor = grid.Items.OfType<GridViewItem>().Where(card => card.IsLoaded && card.ActualHeight > 0)
+            .Select(card => (Card: card, Y: card.TransformToVisual(scroll).TransformPoint(new()).Y))
+            .Where(item => item.Y > -item.Card.ActualHeight && item.Y < scroll.ActualHeight)
+            .OrderBy(item => item.Y).FirstOrDefault();
+        return () =>
+        {
+            grid.UpdateLayout();
+            double target = anchor.Card is { IsLoaded: true }
+                ? scroll.VerticalOffset + anchor.Card.TransformToVisual(scroll).TransformPoint(new()).Y - anchor.Y : offset;
+            scroll.ChangeView(null, Math.Clamp(target, 0, scroll.ScrollableHeight), null, true);
+        };
     }
     void ChangeWindowMode(Action update, bool show = false)
     {
@@ -281,7 +323,7 @@ internal sealed partial class StationWindow : PanelWindow
         try {
             openedForDrop = false; dragLeave.Stop();
             update();
-            ApplyAppearance(); ApplyGridPositions(); if (show || IsOpen) ShowPanel();
+            ApplyAppearance(); ApplyGridPositions(); if (show || IsOpen && TaskbarFlyout is null) ShowPanel();
         } catch (Exception e) { Notify(e.Message, true); }
         finally {
             DispatcherQueue.TryEnqueue(() => {
@@ -493,7 +535,8 @@ internal sealed partial class StationWindow : PanelWindow
         focusBeforeFolder = FocusManager.GetFocusedElement(root.XamlRoot) as Control;
         SuspendFloatingCaption();
         folderBrowser = browser;
-        Grid.SetRowSpan(browser, root.RowDefinitions.Count);
+        if (TaskbarFlyout != null) Grid.SetRow(browser, 1);
+        else Grid.SetRowSpan(browser, root.RowDefinitions.Count);
         root.Children.Add(browser);
         if (location == null) await browser.Open();
         else {
@@ -521,7 +564,7 @@ internal sealed partial class StationWindow : PanelWindow
     async Task OpenItem(StationItem item)
     {
         if (!item.Owned && item.Kind is StationKind.File or StationKind.Folder) {
-            var choice = await new ContentDialog { XamlRoot = root.XamlRoot, Title = "这是原文件引用", Content = "编辑原文件会影响来源。建议先复制到 Halo。", PrimaryButtonText = "复制后打开", SecondaryButtonText = "打开原文件", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Primary }.ShowAsync();
+            var choice = await ShowPanelDialog(new ContentDialog { XamlRoot = root.XamlRoot, Title = "这是原文件引用", Content = "编辑原文件会影响来源。建议先复制到 Halo。", PrimaryButtonText = "复制后打开", SecondaryButtonText = "打开原文件", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Primary });
             if (choice == ContentDialogResult.None) return; if (choice == ContentDialogResult.Primary) item = await App.Station.OwnReference(item.Id);
         }
         if (item.Kind == StationKind.Link) { if (!await Launcher.LaunchUriAsync(new Uri(item.Value))) throw new IOException("无法打开链接。"); }
