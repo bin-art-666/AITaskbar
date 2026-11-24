@@ -17,6 +17,7 @@ internal sealed class PreviewTaskbar : Window
     private readonly DispatcherQueueTimer refresh;
     private readonly PreviewApplicationStrip tasks;
     private readonly TaskbarSystemTray tray;
+    private readonly ShowDesktopButton showDesktop;
     private readonly Border surface = new() { CornerRadius = new CornerRadius(0) };
     private readonly Grid strip = new() { Padding = new Thickness(10, 0, 10, 0) };
     private readonly ScaleTransform stripScale = new();
@@ -108,7 +109,7 @@ internal sealed class PreviewTaskbar : Window
         strip.RenderTransform = stripScale;
         var stripHost = new Canvas();
         stripHost.Children.Add(strip);
-        var showDesktop = new ShowDesktopButton(handle, tasks.ForegroundAtPress, tasks.DismissThumbnails, Report, reportFailure);
+        showDesktop = new ShowDesktopButton(handle, tasks.ForegroundAtPress, tasks.DismissThumbnails, Report, reportFailure);
         var barContent = new Grid();
         barContent.Children.Add(stripHost);
         barContent.Children.Add(showDesktop);
@@ -269,7 +270,7 @@ internal sealed class PreviewTaskbar : Window
         double width = surface.ActualWidth, height = surface.ActualHeight;
         if (width <= 0 || height <= 0) return;
         double scale = Math.Min(1, height / naturalStripHeight);
-        strip.Padding = new Thickness(10, 0, (ShowDesktopButton.EdgeWidth + 2) / scale, 0);
+        showDesktop.Width = strip.Padding.Right * scale;
         strip.Width = width / scale;
         strip.Height = Math.Max(height, naturalStripHeight);
         stripScale.ScaleX = stripScale.ScaleY = scale;

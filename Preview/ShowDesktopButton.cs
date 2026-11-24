@@ -10,7 +10,6 @@ namespace AITaskbar;
 
 internal sealed class ShowDesktopButton : Button
 {
-    internal const double EdgeWidth = 12;
     private readonly Grid highlight = new() { Opacity = 0, IsHitTestVisible = false };
     private readonly Border glow = new();
     private readonly Border line = new() { Width = 2, HorizontalAlignment = HorizontalAlignment.Right };
@@ -20,7 +19,6 @@ internal sealed class ShowDesktopButton : Button
 
     internal ShowDesktopButton(nint taskbar, Func<nint> foregroundAtPress, Action dismissThumbnails, Action<string> report, Action<Exception> log)
     {
-        Width = EdgeWidth;
         MinWidth = MinHeight = 0;
         HorizontalAlignment = HorizontalAlignment.Right;
         VerticalAlignment = VerticalAlignment.Stretch;
