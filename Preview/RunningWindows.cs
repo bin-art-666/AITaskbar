@@ -23,7 +23,7 @@ internal static class RunningWindows
     internal static readonly string SystemSettingsExecutable = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.Windows), "ImmersiveControlPanel", "SystemSettings.exe");
 
-    public static RunningWindow[] List()
+    public static RunningWindow[] List(bool preserveZOrder = false)
     {
         var windows = new List<RunningWindow>();
         var processes = new Dictionary<uint, (string? Executable, string? AppId)>();
@@ -56,7 +56,8 @@ internal static class RunningWindows
             return true;
         }, 0);
         // Keep button positions stable when foreground windows change z-order.
-        return windows.OrderBy(window => window.ProcessId).ThenBy(window => window.Handle.ToInt64()).ToArray();
+        return preserveZOrder ? windows.ToArray()
+            : windows.OrderBy(window => window.ProcessId).ThenBy(window => window.Handle.ToInt64()).ToArray();
     }
 
     public static bool Activate(RunningWindow window)
@@ -88,8 +89,8 @@ internal static class RunningWindows
     internal static bool Minimize(RunningWindow window) =>
         IsCurrent(window) && ShowWindowAsync(window.Handle, 6); // SW_MINIMIZE
 
-    internal static bool RequestRestore(RunningWindow window) =>
-        IsCurrent(window) && (!IsMinimized(window) || ShowWindowAsync(window.Handle, 9)); // SW_RESTORE
+    internal static bool RequestRestore(RunningWindow window, bool activate = true) =>
+        IsCurrent(window) && (!IsMinimized(window) || ShowWindowAsync(window.Handle, activate ? 9 : 4)); // SW_RESTORE / SW_SHOWNOACTIVATE
 
     internal static bool RequestClose(RunningWindow window) =>
         !OwnsHandle(window) || PostMessage(window.Handle, 0x0010, 0, 0); // WM_CLOSE

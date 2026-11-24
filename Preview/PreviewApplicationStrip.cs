@@ -199,7 +199,7 @@ internal sealed partial class PreviewApplicationStrip
         foreground = RunningWindows.RootOwnerOrSelf(current);
     }
 
-    private nint ForegroundAtPress()
+    internal nint ForegroundAtPress()
     {
         nint current = RunningWindows.RawForeground();
         var activation = mouseActivation;

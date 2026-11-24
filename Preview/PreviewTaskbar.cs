@@ -111,6 +111,10 @@ internal sealed class PreviewTaskbar : Window
         strip.RenderTransform = stripScale;
         var stripHost = new Canvas();
         stripHost.Children.Add(strip);
+        var showDesktop = new ShowDesktopButton(tasks.ForegroundAtPress, tasks.DismissThumbnails, Report, reportFailure);
+        var barContent = new Grid();
+        barContent.Children.Add(stripHost);
+        barContent.Children.Add(showDesktop);
         surface.SizeChanged += (_, _) => UpdateStripLayout();
         var taskbarMenu = NewBarMenu();
         AddMenuAction(taskbarMenu, "固定应用", () => _ = PickPinAsync(), Symbol.Pin);
@@ -156,16 +160,17 @@ internal sealed class PreviewTaskbar : Window
             for (var element = args.OriginalSource as DependencyObject; element is not null && element != surface;
                 element = VisualTreeHelper.GetParent(element))
             {
-                if (element is ButtonBase) return;
+                if (element is ButtonBase && element != showDesktop) return;
             }
             args.Handled = true;
             taskbarMenu.ShowAt(surface, point);
         };
         var panelColors = new Windows.UI.ViewManagement.UISettings();
         var panelAccessibility = new Windows.UI.ViewManagement.AccessibilitySettings();
-        var visual = new PreviewBarAppearance(this, surface, stripHost, appearance, light =>
+        var visual = new PreviewBarAppearance(this, surface, barContent, appearance, light =>
         {
             icons.RefreshSystem(light);
+            showDesktop.ApplyTone(light, panelColors, panelAccessibility.HighContrast);
             tasks.SetFeedbackLight(light);
             tray.ApplyTone(light, app.BarAppearance);
             appCenter?.ApplyPalette();
@@ -263,6 +268,7 @@ internal sealed class PreviewTaskbar : Window
         double width = surface.ActualWidth, height = surface.ActualHeight;
         if (width <= 0 || height <= 0) return;
         double scale = Math.Min(1, height / naturalStripHeight);
+        strip.Padding = new Thickness(10, 0, (ShowDesktopButton.EdgeWidth + 2) / scale, 0);
         strip.Width = width / scale;
         strip.Height = Math.Max(height, naturalStripHeight);
         stripScale.ScaleX = stripScale.ScaleY = scale;
