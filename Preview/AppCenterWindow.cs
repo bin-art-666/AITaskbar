@@ -39,12 +39,13 @@ internal sealed class AppCenterWindow : Window
     private readonly TextBlock empty = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock status = new() { HorizontalAlignment = HorizontalAlignment.Center, TextWrapping = TextWrapping.Wrap };
     private readonly List<Button> pageButtons = [];
+    private readonly SolidColorBrush foreground = new();
     private AIEnter.DesktopGlassBackdrop? backdrop;
     private AppCenterEntry[] installed = [], alphabetical = [], visible = [];
     private AppCenterPanelStyle style;
     private string? draggedKey;
     private int page, columns = 1, rows = 1, wheel;
-    private bool loading = true, closed;
+    private bool loading = true, closed, glassUnavailable;
     private double CellWidth => style.Spacious ? 134 : 116;
     private double CellHeight => style.Spacious ? 112 : 96;
     private int PageSize => Math.Max(1, columns * rows);
@@ -129,6 +130,7 @@ internal sealed class AppCenterWindow : Window
         };
         root.SizeChanged += (_, _) => SizeBackdrop();
         root.ActualThemeChanged += (_, _) => ApplyPalette();
+        system.ColorValuesChanged += SystemColorsChanged;
         taskbar.Changed += TaskbarChanged;
         pins.Changed += OnPinsChanged;
         Closed += (_, _) =>
@@ -136,6 +138,7 @@ internal sealed class AppCenterWindow : Window
             closed = true;
             taskbar.Changed -= TaskbarChanged;
             pins.Changed -= OnPinsChanged;
+            system.ColorValuesChanged -= SystemColorsChanged;
             SystemBackdrop = null;
         };
         Reposition();
@@ -214,25 +217,27 @@ internal sealed class AppCenterWindow : Window
     internal void ApplyPalette()
     {
         if (closed) return;
-        var appearance = app.BarAppearance;
-        var palette = TaskbarPanelFlyout.ResolvePalette(new(Backdrop: style.Backdrop),
-            appearance is null ? root.ActualTheme != ElementTheme.Dark : appearance.Tone == LumaBar.Tone.Light,
-            appearance, system, accessibility.HighContrast);
+        var palette = AppCenterBackplate.Resolve(style.Backdrop, app.BarAppearance, system, accessibility.HighContrast);
         root.RequestedTheme = palette.Theme;
-        // A full page needs more contrast than the compact date flyout over light windows.
-        var background = palette.Glass && palette.Background.A < 192
-            ? TaskbarPanelFlyout.Alpha(palette.Solid, 192) : palette.Background;
-        root.Background = new SolidColorBrush(background);
-        status.Foreground = empty.Foreground = new SolidColorBrush(palette.Text);
-        if (palette.Glass)
+        foreground.Color = palette.Text;
+        status.Foreground = empty.Foreground = foreground;
+        root.Background = new SolidColorBrush(glassUnavailable ? palette.Solid : palette.Tint);
+        if (!glassUnavailable && palette.Tint.A < 255)
         {
             if (backdrop is null)
             {
-                backdrop = new();
+                backdrop = new(transparentWindow: true);
+                backdrop.GlassUnavailable += OnGlassUnavailable;
+                backdrop.WindowSettingsChanged += QueuePaletteRefresh;
                 backdrop.SetMotion(1, 0);
                 backdrop.SetBlur(palette.Blur);
                 SizeBackdrop();
-                SystemBackdrop = backdrop;
+                try { SystemBackdrop = backdrop; }
+                catch (ExternalException)
+                {
+                    root.Background = new SolidColorBrush(palette.Solid);
+                    OnGlassUnavailable();
+                }
             }
             else backdrop.SetBlur(palette.Blur);
         }
@@ -242,6 +247,15 @@ internal sealed class AppCenterWindow : Window
             backdrop = null;
         }
     }
+
+    private void OnGlassUnavailable()
+    {
+        glassUnavailable = true;
+        QueuePaletteRefresh();
+    }
+
+    private void SystemColorsChanged(UISettings sender, object args) => QueuePaletteRefresh();
+    private void QueuePaletteRefresh() => root.DispatcherQueue.TryEnqueue(ApplyPalette);
 
     private void SizeBackdrop()
     {
@@ -323,7 +337,8 @@ internal sealed class AppCenterWindow : Window
         TaskbarAppArtwork.Apply(plate, icon, size, app.IconLayout,
             entry.Executable is { } executable && app.IconPreferences.UsesOriginal(executable), accessibility.HighContrast);
         var label = new TextBlock { Text = entry.Name, TextTrimming = TextTrimming.CharacterEllipsis,
-            TextAlignment = TextAlignment.Center, MaxWidth = CellWidth - 12, HorizontalAlignment = HorizontalAlignment.Center };
+            TextAlignment = TextAlignment.Center, MaxWidth = CellWidth - 12, HorizontalAlignment = HorizontalAlignment.Center,
+            Foreground = foreground };
         var body = new StackPanel { Spacing = 6 };
         body.Children.Add(plate);
         body.Children.Add(label);
