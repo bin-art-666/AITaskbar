@@ -29,7 +29,8 @@ public partial class App
                 return;
             }
             bool transfersOnly = Environment.GetCommandLineArgs().Contains("--verify-halo-flyout-files-only");
-            Settings.Save(Settings.Data with { Pinned = transfersOnly, Detached = transfersOnly, DetachedHideOnBlur = false });
+            bool resizePersistence = Environment.GetCommandLineArgs().Contains("--verify-halo-flyout-resize-persistence");
+            Settings.Save(Settings.Data with { Pinned = transfersOnly || resizePersistence, Detached = transfersOnly, DetachedHideOnBlur = false });
             var folder = Directory.CreateDirectory(Path.Combine(DataDirectory, "样例文件夹")).FullName;
             for (int i = 0; i < 220; i++)
                 await File.WriteAllTextAsync(Path.Combine(folder, $"样例-{i:000}.txt"), "隔离验证");
@@ -41,7 +42,8 @@ public partial class App
             var anchor = new Button { Content = "Halo", Width = 70, HorizontalAlignment = HorizontalAlignment.Left };
             var bar = new Grid { Background = paint };
             bar.Children.Add(anchor);
-            taskbar = AIEnter.App.FixtureWindow(bar, new(work.Left + 6, work.Bottom - 54, 220, 50));
+            int taskbarX = resizePersistence ? work.Right - 226 : work.Left + 6;
+            taskbar = AIEnter.App.FixtureWindow(bar, new(taskbarX, work.Bottom - 54, 220, 50));
             PanelToggleTargets.Register(taskbar, anchor);
             AttachTaskbar(anchor);
             Panel = CreatePanel();
@@ -61,7 +63,12 @@ public partial class App
                 await Settings.Flush();
                 return;
             }
-            var entrance = InputCoordinate(work.Left + 6 + (int)Math.Round(anchor.ActualWidth * anchor.XamlRoot.RasterizationScale / 2), work.Bottom - 29);
+            var entrance = InputCoordinate(taskbarX + (int)Math.Round(anchor.ActualWidth * anchor.XamlRoot.RasterizationScale / 2), work.Bottom - 29);
+            if (resizePersistence)
+            {
+                await Panel.VerifyFlyoutResizePersistence(entrance, Check);
+                return;
+            }
             await Panel.VerifyFlyoutWindow(frame, entrance, Check);
             await Panel.VerifyFlyoutFocusDismissal(taskbar, background, Check);
             if (includeFiles) await Panel.VerifyFlyoutTransfers(work, DataDirectory, Check);
@@ -106,6 +113,64 @@ internal sealed partial class StationWindow
 {
     static AIEnter.Native.Point InputPoint(int x, int y) => new() { X = x, Y = y };
     static nint At(int x, int y) => Native.GetAncestor(FlyoutWindowAtPoint(new() { X = x, Y = y }), 2);
+
+    internal async Task VerifyFlyoutResizePersistence(AIEnter.Native.Point entrance, Action<string, bool> check)
+    {
+        await Task.Delay(400);
+        var work = new Native.Rect { Left = 0, Top = 0, Right = 1440, Bottom = 900 };
+        var fitted = RestoreBounds(App.Settings.Data with { Width = 1432, Height = 896 }, false, work, 1, docked: true);
+        check("CompactKeepsSavedSizeNearWorkAreaLimits", fitted.Width == 1432 && fitted.Height == 896
+            && fitted.X >= 0 && fitted.Y >= 0 && fitted.X + fitted.Width <= work.Right && fitted.Y + fitted.Height <= work.Bottom);
+        var settings = App.Settings.Data with { Width = 590, Height = 650.5, CompactX = 0, CompactY = 519 };
+        var sameDisplay = RestoreBounds(settings, false, new() { Right = 2880, Bottom = 1820 }, 2, docked: true);
+        check("CompactOpeningKeepsUserAdjustedScreenEdges", Native.Same(sameDisplay, new(0, 519, 1180, 1301)));
+        var otherDisplay = RestoreBounds(settings, false, new() { Left = 2880, Right = 5760, Bottom = 1820 }, 2, docked: true);
+        check("CompactOpeningUsesNewTaskbarMonitor", Native.Same(otherDisplay, new(2904, 495, 1180, 1301)));
+
+        foreach (bool expanded in new[] { false, true })
+        {
+            string mode = expanded ? "Expanded" : "Compact";
+            SetDetached(expanded);
+            await Task.Delay(350);
+            var before = CurrentBounds();
+            double scale = WindowLayoutScale;
+            int corner = (int)Math.Round(14 * scale), travel = (int)Math.Round(44 * scale);
+            // A left-bottom drag changes where the compact panel sits relative to the ring.
+            var from = InputPoint(expanded ? before.X + before.Width - corner : before.X + corner, before.Y + before.Height - corner);
+            var to = InputPoint(from.X + (expanded ? -travel : travel), from.Y - travel);
+            check(mode + "ResizeCornerReceivesInput", At(from.X, from.Y) == InteractionWindow);
+            await Task.Run(() => InputFixture.Drag(from, to, sendNativeMovement: true, finalHoldMs: 500));
+            await Task.Delay(160);
+            var changed = CurrentBounds();
+            File.AppendAllText(Path.Combine(App.DataDirectory, "halo-flyout-progress.log"),
+                $"{mode} resize: {before.Width}x{before.Height} → {changed.Width}x{changed.Height}; expected delta={travel}, active={resizing}\n");
+            check(mode + "MouseReleaseKeepsResize", !resizing
+                && Math.Abs(changed.Width - (before.Width - travel)) <= 4
+                && Math.Abs(changed.Height - (before.Height - travel)) <= 4);
+            bool measuredBeforeClose = GetResizePopupRect(InteractionWindow, out var visibleBeforeClose);
+            await Task.Run(() => InputFixture.ClickAt(entrance));
+            await Task.Delay(300);
+            check(mode + "TaskbarRingClosesAfterResize", !IsOpen);
+            await App.Settings.Flush();
+            var saved = new SettingsStore(Path.Combine(App.DataDirectory, "settings.json")).Data;
+            check(mode + "ResizedDimensionsWereWrittenToDisk", Math.Abs((expanded ? saved.ExpandedWidth : saved.Width) * scale - changed.Width) <= 1
+                && Math.Abs((expanded ? saved.ExpandedHeight : saved.Height) * scale - changed.Height) <= 1);
+            await Task.Run(() => InputFixture.ClickAt(entrance));
+            await Task.Delay(300);
+            var reopened = CurrentBounds();
+            check(mode + "TaskbarRingReopenRestoresFullBounds", IsOpen && Native.Same(reopened, changed));
+            bool measuredAfterOpen = GetResizePopupRect(InteractionWindow, out var visibleAfterOpen);
+            File.AppendAllText(Path.Combine(App.DataDirectory, "halo-flyout-progress.log"), $"{mode} native bounds before close: "
+                + $"{visibleBeforeClose.Left},{visibleBeforeClose.Top},{visibleBeforeClose.Right},{visibleBeforeClose.Bottom}; after reopen: "
+                + $"{visibleAfterOpen.Left},{visibleAfterOpen.Top},{visibleAfterOpen.Right},{visibleAfterOpen.Bottom}\n");
+            check(mode + "ReopenedPopupKeepsNativeBounds", measuredBeforeClose && measuredAfterOpen
+                && visibleBeforeClose.Left == visibleAfterOpen.Left && visibleBeforeClose.Top == visibleAfterOpen.Top
+                && visibleBeforeClose.Right == visibleAfterOpen.Right && visibleBeforeClose.Bottom == visibleAfterOpen.Bottom);
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowRect")]
+    static extern bool GetResizePopupRect(nint window, out Native.Rect bounds);
 
     internal void VerifyMixedDpiGeometry(Action<string, bool> check)
     {

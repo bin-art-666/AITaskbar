@@ -245,25 +245,35 @@ internal sealed partial class StationWindow : PanelWindow
         var savedMonitor = TaskbarFlyout != null && !detached ? Native.MonitorForWindow(taskbarOwner)
             : x is int left && y is int top ? Native.MonitorForPosition(left, top) : IntPtr.Zero;
         var monitor = monitors.FirstOrDefault(m => m.Handle == savedMonitor) ?? monitors.First(m => m.Primary);
-        if (TaskbarFlyout != null && !detached) settings = settings with { CompactX = null, CompactY = null };
-        var bounds = RestoreBounds(settings, detached, monitor.Info.Work, monitor.Dpi / 96d);
+        var bounds = RestoreBounds(settings, detached, monitor.Info.Work, monitor.Dpi / 96d,
+            docked: TaskbarFlyout != null && !detached);
         positioning = true;
         try { ApplyBounds(bounds); appliedBounds = CurrentBounds(); }
         finally { positioning = false; }
     }
-    internal static RectInt32 RestoreBounds(HaloSettings settings, bool detached, Native.Rect work, double scale)
+    internal static RectInt32 RestoreBounds(HaloSettings settings, bool detached, Native.Rect work, double scale, bool docked = false)
     {
         var x = detached ? settings.ExpandedX : settings.CompactX;
         var y = detached ? settings.ExpandedY : settings.CompactY;
+        // In compact mode the taskbar still chooses the display. A resize may
+        // adjust the left or bottom boundary, so keep both on that display.
+        if (docked && (x is not int left || y is not int top || left < work.Left || left >= work.Right
+            || top < work.Top || top >= work.Bottom))
+        {
+            x = null;
+            y = null;
+        }
         int availableWidth = Math.Max(1, work.Right - work.Left), availableHeight = Math.Max(1, work.Bottom - work.Top);
         int gap = x.HasValue && y.HasValue ? 0
             : Math.Min((int)Math.Round(12 * scale), (Math.Min(availableWidth, availableHeight) - 1) / 2);
-        int width = Math.Clamp((int)Math.Round((detached ? settings.ExpandedWidth : settings.Width) * scale), 1, availableWidth - 2 * gap);
-        int height = Math.Clamp((int)Math.Round((detached ? settings.ExpandedHeight : settings.Height) * scale), 1, availableHeight - 2 * gap);
-        int defaultLeft = detached ? work.Left + (availableWidth - width) / 2 : work.Left + gap;
-        int defaultTop = detached ? work.Top + (availableHeight - height) / 2 : work.Bottom - gap - height;
-        return new(Math.Clamp(x ?? defaultLeft, work.Left + gap, work.Left + availableWidth - gap - width),
-            Math.Clamp(y ?? defaultTop, work.Top + gap, work.Top + availableHeight - gap - height), width, height);
+        int width = Math.Clamp((int)Math.Round((detached ? settings.ExpandedWidth : settings.Width) * scale), 1, availableWidth - (docked ? 0 : 2 * gap));
+        int height = Math.Clamp((int)Math.Round((detached ? settings.ExpandedHeight : settings.Height) * scale), 1, availableHeight - (docked ? 0 : 2 * gap));
+        int horizontalGap = Math.Min(gap, (availableWidth - width) / 2);
+        int verticalGap = Math.Min(gap, (availableHeight - height) / 2);
+        int defaultLeft = detached ? work.Left + (availableWidth - width) / 2 : work.Left + horizontalGap;
+        int defaultTop = detached ? work.Top + (availableHeight - height) / 2 : work.Bottom - verticalGap - height;
+        return new(Math.Clamp(x ?? defaultLeft, work.Left + horizontalGap, work.Left + availableWidth - horizontalGap - width),
+            Math.Clamp(y ?? defaultTop, work.Top + verticalGap, work.Top + availableHeight - verticalGap - height), width, height);
     }
     RectInt32 CurrentBounds() => TaskbarFlyout != null ? flyoutBounds : new(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
     HaloSettings CaptureSize(RectInt32 bounds) {

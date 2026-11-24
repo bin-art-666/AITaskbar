@@ -16,7 +16,7 @@ internal sealed partial class StationWindow
     {
         internal GripHost(InputSystemCursorShape shape) => ProtectedCursor = InputSystemCursor.Create(shape);
     }
-    bool resizing;
+    bool resizing, trackingMouseResize;
     int resizeEdges;
     Native.Point resizeOrigin;
     RectInt32 resizeBounds;
@@ -42,7 +42,9 @@ internal sealed partial class StationWindow
             if (!resizing) return;
             // GetCursorPos can already point at the end of a fast queued drag.
             // Preserve the actual press from its event packet before DragDelta arrives.
-            var p = e.GetCurrentPoint(root).Position; double scale = root.XamlRoot.RasterizationScale;
+            var press = e.GetCurrentPoint(root);
+            trackingMouseResize = TaskbarFlyout != null && press.PointerDeviceType == PointerDeviceType.Mouse;
+            var p = press.Position; double scale = root.XamlRoot.RasterizationScale;
             var bounds = CurrentBounds();
             resizeOrigin = new() { X = bounds.X + (int)Math.Round(p.X * scale), Y = bounds.Y + (int)Math.Round(p.Y * scale) };
         }), true);
@@ -56,7 +58,7 @@ internal sealed partial class StationWindow
         AddGrip(10, "右下角", HorizontalAlignment.Right, VerticalAlignment.Bottom, InputSystemCursorShape.SizeNorthwestSoutheast);
         root.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, e) => {
             if (!resizing || e.Key != VirtualKey.Escape) return;
-            e.Handled = true; activeGrip?.CancelDrag(); EndResize(true);
+            e.Handled = true; CancelResize();
         }), true);
         Closed += (_, _) => EndResize(true);
     }
@@ -76,18 +78,38 @@ internal sealed partial class StationWindow
         thumb.DragStarted += (_, _) => {
             if (destroyed || ModalActive || DragActive || resizing || !GetCursorPos(out resizeOrigin)) { thumb.CancelDrag(); return; }
             resizing = true; resizeEdges = edges; activeGrip = thumb; resizeLease = KeepOpenForDrag();
+            trackingMouseResize = TaskbarFlyout != null && (Native.GetAsyncKeyState(1) & 0x8000) != 0;
             resizeBounds = CurrentBounds(); saveSize.Stop();
             thumb.Focus(FocusState.Pointer);
             layoutTracking?.Start();
         };
         thumb.DragDelta += (_, _) => TrackWindowLayout();
-        thumb.DragCompleted += (_, e) => { if (!e.Canceled && TaskbarFlyout != null) TrackWindowLayout(); EndResize(e.Canceled); };
+        thumb.DragCompleted += (_, e) =>
+        {
+            if (activeGrip != thumb) return;
+            // A popup can lose XAML capture while it moves under the mouse. The
+            // screen-coordinate tracker still owns this gesture until release.
+            if (trackingMouseResize)
+            {
+                if (!e.Canceled && (Native.GetAsyncKeyState(1) & 0x8000) == 0) TrackWindowLayout();
+                return;
+            }
+            if (!e.Canceled && TaskbarFlyout != null) TrackWindowLayout();
+            EndResize(e.Canceled);
+        };
     }
     void TrackWindowLayout()
     {
         if (!GetCursorPos(out var point)) return;
-        if (resizing) MoveResize(point.X - resizeOrigin.X, point.Y - resizeOrigin.Y);
-        else MoveFlyout(point);
+        if (!resizing) { MoveFlyout(point); return; }
+        if (trackingMouseResize)
+        {
+            if ((Native.GetAsyncKeyState((int)VirtualKey.Escape) & 0x8000) != 0) { CancelResize(); return; }
+            // After release the cursor may already be somewhere else. Store the
+            // last bounds rendered during the actual gesture.
+            if ((Native.GetAsyncKeyState(1) & 0x8000) == 0) { EndResize(false); return; }
+        }
+        MoveResize(point.X - resizeOrigin.X, point.Y - resizeOrigin.Y);
     }
     void MoveResize(int dx, int dy)
     {
@@ -101,15 +123,23 @@ internal sealed partial class StationWindow
         if ((resizeEdges & 2) != 0) right = Clamp(right + dx, left + minWidth, Math.Min(work.Right, left + maxWidth));
         if ((resizeEdges & 4) != 0) top = Clamp(top + dy, Math.Max(work.Top, bottom - maxHeight), bottom - minHeight);
         if ((resizeEdges & 8) != 0) bottom = Clamp(bottom + dy, top + minHeight, Math.Min(work.Bottom, top + maxHeight));
+        var bounds = new RectInt32(left, top, right - left, bottom - top);
+        if (Native.Same(bounds, CurrentBounds())) return;
         positioning = true;
-        try { ApplyBounds(new(left, top, right - left, bottom - top)); }
+        try { ApplyBounds(bounds); }
         finally { positioning = false; }
+    }
+    void CancelResize()
+    {
+        var grip = activeGrip;
+        EndResize(true);
+        grip?.CancelDrag();
     }
     void EndResize(bool cancel)
     {
         if (!resizing) return;
         layoutTracking?.Stop();
-        resizing = false; activeGrip = null;
+        resizing = trackingMouseResize = false; activeGrip = null;
         try {
             if (!destroyed) { if (cancel) ApplyBounds(resizeBounds); SaveSize(); }
         } finally { resizeLease?.Dispose(); resizeLease = null; }
