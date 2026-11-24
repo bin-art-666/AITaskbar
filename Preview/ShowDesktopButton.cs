@@ -15,9 +15,10 @@ internal sealed class ShowDesktopButton : Button
     private readonly Border glow = new();
     private readonly Border line = new() { Width = 2, HorizontalAlignment = HorizontalAlignment.Right };
     private readonly ShowDesktopWindows desktop = new();
-    private bool switching;
+    private readonly UISettings system = new();
+    private CancellationTokenSource? transition;
 
-    internal ShowDesktopButton(Func<nint> foregroundAtPress, Action dismissThumbnails, Action<string> report, Action<Exception> log)
+    internal ShowDesktopButton(nint taskbar, Func<nint> foregroundAtPress, Action dismissThumbnails, Action<string> report, Action<Exception> log)
     {
         Width = EdgeWidth;
         MinWidth = MinHeight = 0;
@@ -48,21 +49,25 @@ internal sealed class ShowDesktopButton : Button
         PointerCaptureLost += (_, args) => highlight.Opacity =
             args.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Mouse &&
             new Windows.Foundation.Rect(0, 0, ActualWidth, ActualHeight).Contains(args.GetCurrentPoint(this).Position) ? 1 : 0;
+        Unloaded += (_, _) => transition?.Cancel();
         Click += async (_, _) =>
         {
-            if (switching) return;
-            switching = true;
+            if (transition is not null) return;
+            using var cancellation = new CancellationTokenSource();
+            transition = cancellation;
             try
             {
+                var foreground = foregroundAtPress();
                 dismissThumbnails();
-                await desktop.ToggleAsync(foregroundAtPress());
+                await desktop.ToggleAsync(this, taskbar, foreground, system.AnimationsEnabled, cancellation.Token);
             }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
             catch (Exception error)
             {
                 log(error);
                 report("暂时无法显示桌面。");
             }
-            finally { switching = false; }
+            finally { transition = null; }
         };
     }
 

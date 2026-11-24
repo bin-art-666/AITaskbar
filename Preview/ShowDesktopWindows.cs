@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.UI.Xaml;
 
 namespace AITaskbar;
 
@@ -10,25 +11,55 @@ internal sealed class ShowDesktopWindows
     private const uint NextWindow = 2;
     private RunningWindow[] minimized = [];
     private RunningWindow? foreground;
+    private WindowMotionNative.Snapshot? snapshot;
 
-    internal async Task ToggleAsync(nint foregroundAtPress)
+    internal async Task ToggleAsync(FrameworkElement owner, nint taskbar, nint foregroundAtPress, bool animate, CancellationToken token)
     {
         var restore = minimized.Where(window => RunningWindows.IsCurrent(window) && RunningWindows.IsMinimized(window)).ToArray();
         if (restore.Length == 0)
         {
             var windows = RunningWindows.List(preserveZOrder: true).Where(window => !RunningWindows.IsMinimized(window)).ToArray();
             foreground = Array.Find(windows, window => RunningWindows.MatchesForeground(window, foregroundAtPress));
+            snapshot = null;
             if (windows.Length == 0) return;
-            var background = windows.Skip(1).Reverse().Where(MinimizeWindow).ToArray();
-            // Keep the front visible until the background has had a chance to minimize.
-            await WaitForWindowStateAsync(background, minimizedState: true, timeoutMs: 160);
-            var front = windows[0];
-            minimized = MinimizeWindow(front)
-                ? [front, .. background.Reverse()] : background.Reverse().ToArray();
-            await WaitForWindowStateAsync(minimized, minimizedState: true);
+            var captured = animate ? TryCapture(windows) : null;
+            using var closing = CreateOverlay(owner, taskbar, captured, opening: false);
+            if (closing is not null) await PresentAsync(token);
+            token.ThrowIfCancellationRequested();
+            if (await MinimizeAsync(windows) && closing is not null && minimized.SequenceEqual(windows))
+            {
+                snapshot = captured;
+                await AnimateGroupAsync(closing, opening: false, token);
+            }
             return;
         }
 
+        var saved = animate && restore.SequenceEqual(minimized) ? snapshot : null;
+        snapshot = null;
+        using var opening = CreateOverlay(owner, taskbar, saved, opening: true);
+        bool animated = opening is not null && await AnimateGroupAsync(opening, opening: true, token);
+        token.ThrowIfCancellationRequested();
+        await RestoreAsync(restore);
+        if (animated)
+        {
+            await PresentAsync(token);
+            await opening!.FadeOutAsync(token);
+        }
+    }
+
+    private async Task<bool> MinimizeAsync(RunningWindow[] windows)
+    {
+        var background = windows.Skip(1).Reverse().Where(MinimizeWindow).ToArray();
+        // Keep the front visible until the background has had a chance to minimize.
+        await WaitForWindowStateAsync(background, minimizedState: true, timeoutMs: 160);
+        var front = windows[0];
+        minimized = MinimizeWindow(front)
+            ? [front, .. background.Reverse()] : background.Reverse().ToArray();
+        return await WaitForWindowStateAsync(minimized, minimizedState: true);
+    }
+
+    private async Task RestoreAsync(RunningWindow[] restore)
+    {
         // Foreground permission belongs to the taskbar click. Use it before background apps restore.
         var activate = restore.Contains(foreground) ? foreground : foreground is null ? restore[0] : null;
         if (activate is not null && RestoreWindow(activate, after: 0) &&
@@ -46,6 +77,51 @@ internal sealed class ShowDesktopWindows
         await ConfirmStackOrderAsync(restore);
         minimized = restore.Where(window => RunningWindows.OwnsHandle(window) && RunningWindows.IsMinimized(window)).ToArray();
         if (minimized.Length == 0) foreground = null;
+    }
+
+    private static WindowMotionNative.Snapshot? TryCapture(RunningWindow[] windows)
+    {
+        try { return WindowMotionNative.CaptureVisibleGroup(windows); }
+        catch (System.ComponentModel.Win32Exception) { return null; }
+    }
+
+    private static WindowMotionOverlay? CreateOverlay(FrameworkElement owner, nint taskbar,
+        WindowMotionNative.Snapshot? source, bool opening)
+    {
+        if (source is null) return null;
+        WindowMotionOverlay? overlay = null;
+        try
+        {
+            overlay = new(owner, source, source.Bounds, source.Bounds, WindowAnimationStyle.WindowsStyle, taskbar);
+            overlay.ShowGroupFrame(opening);
+            return overlay;
+        }
+        catch (Exception error) when (error is COMException or System.ComponentModel.Win32Exception or ArgumentException or InvalidOperationException)
+        {
+            overlay?.Dispose();
+            Debug.WriteLine(error);
+            return null;
+        }
+    }
+
+    private static async Task PresentAsync(CancellationToken token)
+    {
+        WindowMotionNative.DwmFlush();
+        await Task.Delay(32, token);
+    }
+
+    private static async Task<bool> AnimateGroupAsync(WindowMotionOverlay overlay, bool opening, CancellationToken token)
+    {
+        try
+        {
+            await overlay.AnimateGroupAsync(opening, token);
+            return true;
+        }
+        catch (Exception error) when (error is COMException or InvalidOperationException)
+        {
+            Debug.WriteLine(error);
+            return false;
+        }
     }
 
     private static async Task<bool> WaitForWindowStateAsync(RunningWindow[] windows, bool minimizedState, int timeoutMs = 400)

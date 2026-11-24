@@ -117,6 +117,54 @@ internal sealed class WindowMotionOverlay : NativeWindow, IDisposable
             }
         }
         visual.Opacity = (float)opacity;
+        ShowFrame();
+    }
+
+    internal void ShowGroupFrame(bool opening)
+    {
+        using (var drawing = CanvasComposition.CreateDrawingSession(frame))
+        {
+            drawing.Clear(Microsoft.UI.Colors.Transparent);
+            DrawFlat(drawing, window);
+        }
+        visual.CenterPoint = new Vector3((float)(window.X + window.Width / 2), (float)(window.Y + window.Height / 2), 0);
+        visual.Scale = GroupScale(opening ? 0.84f : 1);
+        visual.Opacity = opening ? 0 : 1;
+        ShowFrame();
+    }
+
+    internal async Task AnimateGroupAsync(bool opening, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        var compositor = visual.Compositor;
+        var duration = TimeSpan.FromMilliseconds(210);
+        using var easing = compositor.CreateCubicBezierEasingFunction(new Vector2(.24f, .64f), new Vector2(.35f, 1));
+        using var scale = compositor.CreateVector3KeyFrameAnimation();
+        scale.Duration = duration;
+        scale.InsertKeyFrame(0, GroupScale(opening ? .84f : 1));
+        scale.InsertKeyFrame(1, GroupScale(opening ? 1 : .84f), easing);
+        using var opacity = compositor.CreateScalarKeyFrameAnimation();
+        opacity.Duration = duration;
+        opacity.InsertKeyFrame(0, opening ? 0 : 1);
+        opacity.InsertKeyFrame(1, opening ? 1 : 0, easing);
+        using var batch = compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        batch.Completed += (_, _) => completed.TrySetResult();
+        visual.StartAnimation(nameof(visual.Scale), scale);
+        visual.StartAnimation(nameof(visual.Opacity), opacity);
+        batch.End();
+        try { await completed.Task.WaitAsync(TimeSpan.FromMilliseconds(350), token); }
+        catch (TimeoutException) { }
+        visual.StopAnimation(nameof(visual.Scale));
+        visual.StopAnimation(nameof(visual.Opacity));
+        visual.Scale = GroupScale(opening ? 1 : .84f);
+        visual.Opacity = opening ? 1 : 0;
+    }
+
+    private static Vector3 GroupScale(float scale) => new(scale, scale, 1);
+
+    private void ShowFrame()
+    {
         if (visible) return;
 
         const uint NoActivateShow = 0x0010 | 0x0040;

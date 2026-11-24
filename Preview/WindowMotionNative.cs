@@ -26,6 +26,47 @@ internal static class WindowMotionNative
         return new Rect(frame.Left, frame.Top, frame.Right - frame.Left, frame.Bottom - frame.Top);
     }
 
+    internal static Snapshot? CaptureVisibleGroup(RunningWindow[] windows)
+    {
+        const int maxPixels = 10_000_000;
+        var desktop = System.Windows.Forms.SystemInformation.VirtualScreen;
+        var screen = new Rect(desktop.X, desktop.Y, desktop.Width, desktop.Height);
+        var regions = new List<Rect>();
+        foreach (var window in windows)
+        {
+            if (GetWindowDisplayAffinity(window.Handle, out var affinity) && affinity != 0 ||
+                WindowBounds(window) is not { } region) return null;
+            region.Intersect(screen);
+            if (!region.IsEmpty && region.Width > 0 && region.Height > 0) regions.Add(region);
+        }
+        if (regions.Count == 0) return null;
+        int left = (int)regions.Min(region => region.Left), top = (int)regions.Min(region => region.Top);
+        int width = (int)regions.Max(region => region.Right) - left;
+        int height = (int)regions.Max(region => region.Bottom) - top;
+        if ((long)width * height > maxPixels) return null;
+        using var bitmap = new DibSurface(width, height);
+        nint screenDc = GetDC(0);
+        if (screenDc == 0) return null;
+        try
+        {
+            if (!BitBlt(bitmap.Dc, 0, 0, width, height, screenDc, left, top, 0x00CC0020)) return null;
+        }
+        finally { ReleaseDC(0, screenDc); }
+        var pixels = new byte[width * height * 4];
+        int stride = width * 4;
+        foreach (var region in regions)
+        {
+            int x = ((int)region.Left - left) * 4, count = (int)region.Width * 4;
+            for (int row = (int)region.Top - top; row < (int)region.Bottom - top; row++)
+            {
+                int offset = row * stride + x;
+                Marshal.Copy(bitmap.Bits + offset, pixels, offset, count);
+                for (int alpha = offset + 3; alpha < offset + count; alpha += 4) pixels[alpha] = 255;
+            }
+        }
+        return new Snapshot(pixels, width, height, new Rect(left, top, width, height), new Rect(0, 0, 1, 1));
+    }
+
     internal static Snapshot? Capture(RunningWindow window)
     {
         if (!RunningWindows.IsCurrent(window) || IsHungAppWindow(window.Handle) ||
@@ -306,6 +347,10 @@ internal static class WindowMotionNative
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint hwnd, uint attribute, out int value, int size);
     [DllImport("dwmapi.dll")] internal static extern int DwmFlush();
     [DllImport("gdi32.dll", SetLastError = true)] private static extern nint CreateCompatibleDC(nint dc);
+    [DllImport("user32.dll")] private static extern nint GetDC(nint window);
+    [DllImport("user32.dll")] private static extern int ReleaseDC(nint window, nint dc);
+    [DllImport("gdi32.dll")] private static extern bool BitBlt(nint target, int x, int y, int width, int height,
+        nint source, int sourceX, int sourceY, uint operation);
     [DllImport("gdi32.dll")] private static extern bool DeleteDC(nint dc);
     [DllImport("gdi32.dll", SetLastError = true)]
     private static extern nint CreateDIBSection(nint dc, in BitmapInfo info, uint usage, out nint bits, nint section, uint offset);

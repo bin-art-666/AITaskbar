@@ -111,7 +111,7 @@ internal sealed class PreviewTaskbar : Window
         strip.RenderTransform = stripScale;
         var stripHost = new Canvas();
         stripHost.Children.Add(strip);
-        var showDesktop = new ShowDesktopButton(tasks.ForegroundAtPress, tasks.DismissThumbnails, Report, reportFailure);
+        var showDesktop = new ShowDesktopButton(handle, tasks.ForegroundAtPress, tasks.DismissThumbnails, Report, reportFailure);
         var barContent = new Grid();
         barContent.Children.Add(stripHost);
         barContent.Children.Add(showDesktop);
