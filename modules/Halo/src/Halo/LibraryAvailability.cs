@@ -15,6 +15,7 @@ internal sealed partial class StationStore
     {
         string directory = DesktopDirectory;
         try {
+            if (data.StorageVolume is { } volume && ReadVolumeId(directory) != volume) return false;
             CheckLibraryParents(directory);
             using var entries = Directory.EnumerateFileSystemEntries(directory).GetEnumerator();
             _ = entries.MoveNext();
@@ -33,6 +34,7 @@ internal sealed partial class StationStore
         if (!LibraryAccessible()) LibraryOffline = storageRecoveryPending = true;
         else {
             try { RecoverStorage(); }
+            catch (RootMigrationUnavailableException) { LibraryOffline = storageRecoveryPending = true; }
             catch (Exception error) when ((error is IOException or UnauthorizedAccessException) && !LibraryAccessible()) {
                 LibraryOffline = storageRecoveryPending = true;
             }
@@ -48,6 +50,7 @@ internal sealed partial class StationStore
             bool offline = !await Task.Run(LibraryAccessible);
             if (!offline && storageRecoveryPending && !catalogReadOnly) {
                 try { await Task.Run(RecoverStorage); }
+                catch (RootMigrationUnavailableException) { offline = true; }
                 catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException) {
                     App.Log(error);
                     if (!await Task.Run(LibraryAccessible)) offline = true;

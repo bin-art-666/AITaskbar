@@ -6,7 +6,7 @@ internal enum StationKind { File, Folder, Text, Link }
 internal enum StationTextStyle { Plain, Markdown, Code, Excerpt }
 internal sealed record StationInput(StationKind Kind, string Value, string Title = "", bool Owned = false, StationTextStyle TextStyle = StationTextStyle.Plain, string SourceUrl = "", string Language = "");
 internal sealed record StationItem(Guid Id, StationKind Kind, string Value, string Title, DateTimeOffset Created, bool Owned = false, StationTextStyle TextStyle = StationTextStyle.Plain, string SourceUrl = "", string Language = "", FolderTrashOrigin? Origin = null);
-internal sealed record StationDocument(int Version, StationItem[] Items, int Capacity = StationStore.DefaultCapacity, string ArchiveDirectory = "", bool RemoveAfterArchive = true, StationActions? Actions = null, StationSort? Sort = null, Guid[]? ManualOrder = null, StationLayout? CompactLayout = null, StationLayout? ExpandedLayout = null, StationItem[]? Trash = null, string[]? ImportReceipts = null, string? StorageDirectory = null, Guid? LastStorageOperation = null, FolderGridLayout[]? FolderLayouts = null, Dictionary<string, string>? FolderColors = null);
+internal sealed record StationDocument(int Version, StationItem[] Items, int Capacity = StationStore.DefaultCapacity, string ArchiveDirectory = "", bool RemoveAfterArchive = true, StationActions? Actions = null, StationSort? Sort = null, Guid[]? ManualOrder = null, StationLayout? CompactLayout = null, StationLayout? ExpandedLayout = null, StationItem[]? Trash = null, string[]? ImportReceipts = null, string? StorageDirectory = null, Guid? LastStorageOperation = null, FolderGridLayout[]? FolderLayouts = null, Dictionary<string, string>? FolderColors = null, string? StorageVolume = null);
 internal sealed record StationAddResult(int Added, int Duplicates);
 
 // Legacy references stay explicit; new desktop imports own independent copies.
@@ -34,7 +34,7 @@ internal sealed partial class StationStore
     {
         this.path = Path.GetFullPath(path);
         if (!File.Exists(this.path) && !File.Exists(this.path + ".bak")) {
-            if (File.Exists(FlatJournal) || File.Exists(MigrationJournal)) {
+            if (File.Exists(FlatJournal) || File.Exists(MigrationJournal) || File.Exists(RootMigrationJournal)) {
                 try { RecoverAvailableStorage(); }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
                 { catalogReadOnly = true; catalogWarning = "有未完成的存储操作，已停止写入以保护文件。"; }
@@ -87,7 +87,9 @@ internal sealed partial class StationStore
         ? "path:" + value.ToUpperInvariant() : kind + ":" + value;
     static void Validate(StationDocument document)
     {
-        if (document.StorageDirectory is { } storage && (document.Version < 5 || CanonicalLibraryPath(storage) != storage || Path.GetPathRoot(storage) == storage))
+        if (document.StorageDirectory is { } storage && (document.Version < 5 || CanonicalLibraryPath(storage) != storage
+                || IsVolumeRoot(storage) != (document.StorageVolume != null) || IsVolumeRoot(storage) && document.Version < 6)
+            || document.StorageVolume is { } volume && (document.StorageDirectory == null || !Guid.TryParseExact(volume, "D", out _)))
             throw new InvalidDataException("文件库位置无效。");
         document.Actions?.Validate();
         ValidateLayout(document.CompactLayout); ValidateLayout(document.ExpandedLayout);

@@ -7,6 +7,7 @@ internal sealed partial class StationStore
     internal async Task ExportDesktop(string destination) {
         await desktopGate.WaitAsync(); string temporary = destination + "." + Guid.NewGuid().ToString("N") + ".partial";
         try {
+            RequireAvailableLibrary();
             if (ManagedPath(destination)) throw new IOException("备份文件不能放在副本内容目录内。");
             var snapshot = data;
             await Task.Run(() => {
@@ -23,7 +24,7 @@ internal sealed partial class StationStore
                         }
                         Add(item.Value, relative); return item with { Value = relative };
                     }
-                    var manifest = snapshot with { Version = 4, StorageDirectory = null, LastStorageOperation = null, Items = snapshot.Items.Select(Pack).ToArray(), Trash = (snapshot.Trash ?? []).Select(Pack).ToArray() };
+                    var manifest = snapshot with { Version = 4, StorageDirectory = null, StorageVolume = null, LastStorageOperation = null, Items = snapshot.Items.Select(Pack).ToArray(), Trash = (snapshot.Trash ?? []).Select(Pack).ToArray() };
                     var packedPaths = snapshot.Items.Concat(snapshot.Trash ?? []).Zip(manifest.Items.Concat(manifest.Trash!));
                     manifest = manifest with { FolderColors = MoveFolderColors(snapshot.FolderColors, packedPaths
                         .Where(pair => IsOwnedFile(pair.First)).Select(pair => new FlatMove(pair.First.Value,
@@ -61,7 +62,7 @@ internal sealed partial class StationStore
                     string value = Path.GetFullPath(Path.Combine(staging, item.Value)); if (!ManagedPath(value) || !File.Exists(value) && !Directory.Exists(value)) throw new IOException("备份缺少文件。");
                     return item with { Value = value };
                 }
-                var result = manifest with { Version = data.Version, StorageDirectory = data.StorageDirectory, LastStorageOperation = data.LastStorageOperation, Items = manifest.Items.Select(Unpack).ToArray(), Trash = (manifest.Trash ?? []).Select(Unpack).ToArray() };
+                var result = manifest with { Version = data.Version, StorageDirectory = data.StorageDirectory, StorageVolume = data.StorageVolume, LastStorageOperation = data.LastStorageOperation, Items = manifest.Items.Select(Unpack).ToArray(), Trash = (manifest.Trash ?? []).Select(Unpack).ToArray() };
                 var unpackedPaths = manifest.Items.Concat(manifest.Trash ?? []).Zip(result.Items.Concat(result.Trash!));
                 result = result with { FolderColors = MoveFolderColors(manifest.FolderColors, unpackedPaths
                     .Where(pair => IsOwnedFile(pair.First)).Select(pair => new FlatMove(pair.First.Value.Replace('/', Path.DirectorySeparatorChar),

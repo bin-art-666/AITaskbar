@@ -83,10 +83,13 @@ internal sealed partial class SettingsPage
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(settingsHost));
             var parent = await picker.PickSingleFolderAsync();
             if (parent == null) return;
-            var plan = App.Station.PreviewStorageMigration(StationStore.ProposeStorageDirectory(parent.Path));
+            string destination = StationStore.IsVolumeRoot(parent.Path) ? parent.Path : StationStore.ProposeStorageDirectory(parent.Path);
+            var plan = await Task.Run(() => App.Station.PreviewStorageMigration(destination));
             var renamed = plan.Entries.Where(entry => !entry.InTrash && Path.GetFileName(entry.Source) != entry.Relative).ToArray();
             var summary = new StackPanel { Spacing = 8 };
             summary.Children.Add(new TextBlock { Text = $"新位置\n{plan.Destination}\n\n将复制并校验 {plan.Entries.Length} 项文件、文件夹及回收站内容，然后切换为平铺文件库。旧文件库会保留。", TextWrapping = TextWrapping.Wrap });
+            if (plan.Volume != null)
+                summary.Children.Add(new TextBlock { Text = $"面板文件会直接放在磁盘根目录。待复制数据为 {plan.RequiredBytes:N0} 字节。", TextWrapping = TextWrapping.Wrap });
             if (renamed.Length > 0) {
                 summary.Children.Add(new TextBlock { Text = $"{renamed.Length} 项需要自动编号" });
                 summary.Children.Add(new ScrollViewer {

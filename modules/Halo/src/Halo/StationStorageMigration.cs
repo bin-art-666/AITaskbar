@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 namespace Halo;
 
 internal sealed record LibraryMigrationEntry(Guid Id, string Source, string Relative, StationKind Kind, bool InTrash);
-internal sealed record LibraryMigrationPlan(string Destination, LibraryMigrationEntry[] Entries);
+internal sealed record LibraryMigrationPlan(string Destination, LibraryMigrationEntry[] Entries, string? Volume = null, long RequiredBytes = 0);
 
 internal sealed partial class StationStore
 {
@@ -13,12 +13,16 @@ internal sealed partial class StationStore
     internal static string ProposeStorageDirectory(string parent) =>
         Path.Combine(CanonicalLibraryPath(parent), "Halo 文件库（平铺）-" + Guid.NewGuid().ToString("N")[..8]);
 
-    internal LibraryMigrationPlan PreviewStorageMigration(string destination) => PlanStorageMigration(data, CanonicalLibraryPath(destination));
-
-    static LibraryMigrationPlan PlanStorageMigration(StationDocument document, string destination)
+    internal LibraryMigrationPlan PreviewStorageMigration(string destination)
     {
-        var used = ReservedFlatNames();
-        var unavailable = ReservedFlatNames();
+        destination = CanonicalLibraryPath(destination);
+        return IsVolumeRoot(destination) ? PlanRootMigration(destination) : PlanStorageMigration(data, destination);
+    }
+
+    static LibraryMigrationPlan PlanStorageMigration(StationDocument document, string destination, HashSet<string>? occupied = null)
+    {
+        var used = occupied ?? ReservedFlatNames();
+        var unavailable = new HashSet<string>(used, StringComparer.OrdinalIgnoreCase);
         unavailable.UnionWith(document.Items.Where(IsOwnedFile).Select(i => Path.GetFileName(i.Value)));
         var entries = new List<LibraryMigrationEntry>();
         foreach (var item in document.Items.Where(IsOwnedFile)) {
@@ -36,6 +40,10 @@ internal sealed partial class StationStore
     internal async Task MoveStorage(LibraryMigrationPlan plan, CancellationToken token)
     {
         string destination = CanonicalLibraryPath(plan.Destination);
+        if (IsVolumeRoot(destination)) {
+            await MoveStorageToRoot(plan, token);
+            return;
+        }
         await desktopGate.WaitAsync(token);
         PendingLibraryMigration? pending = null;
         try {
@@ -49,9 +57,7 @@ internal sealed partial class StationStore
             if (Below(destination, source) || Below(source, destination) || SamePath(source, destination))
                 throw new IOException("请选择现有文件库以外的位置。");
             if (EntryExists(destination)) throw new IOException("目标文件库已存在。请重新选择位置。");
-            string journals = Path.Combine(Path.GetDirectoryName(path)!, "rename-journals");
-            if (File.Exists(MigrationJournal) || File.Exists(FlatJournal) || Directory.Exists(journals) && Directory.EnumerateFiles(journals, "*.json").Any())
-                throw new IOException("有未完成的文件操作，请先重启 Halo。");
+            RequireCleanMigrationState();
             if (!PlanStorageMigration(data, destination).Entries.SequenceEqual(plan.Entries))
                 throw new IOException("文件记录已变化，请重新预览迁移。");
 
@@ -86,21 +92,11 @@ internal sealed partial class StationStore
                 Directory.Move(temporary, destination);
             }, token);
 
-            var entries = plan.Entries.ToDictionary(i => i.Id);
             await Change(document => {
                 token.ThrowIfCancellationRequested();
                 if (!PlanStorageMigration(document, destination).Entries.SequenceEqual(plan.Entries))
                     throw new IOException("复制期间文件记录已变化，请重新迁移。");
-                StationItem Remap(StationItem item) => entries.TryGetValue(item.Id, out var entry)
-                    ? item with { Value = Path.Combine(destination, entry.Relative),
-                        Title = Path.GetFileName(item.Value) == Path.GetFileName(entry.Relative) ? item.Title : "" } : item;
-                return document with {
-                    Version = 6, StorageDirectory = destination, LastStorageOperation = null,
-                    Items = document.Items.Select(Remap).ToArray(),
-                    Trash = document.Trash?.Select(Remap).ToArray(),
-                    FolderColors = MoveFolderColors(document.FolderColors, plan.Entries.Select(entry =>
-                        new FlatMove(entry.Source, Path.Combine(destination, entry.Relative), entry.Kind))),
-                };
+                return RelocateLibrary(document, plan);
             });
         }
         finally {
@@ -108,6 +104,29 @@ internal sealed partial class StationStore
             catch (Exception error) { App.Log(error); }
             finally { desktopGate.Release(); }
         }
+    }
+
+    void RequireCleanMigrationState()
+    {
+        string journals = Path.Combine(Path.GetDirectoryName(path)!, "rename-journals");
+        if (File.Exists(MigrationJournal) || File.Exists(RootMigrationJournal) || File.Exists(FlatJournal)
+            || Directory.Exists(journals) && Directory.EnumerateFiles(journals, "*.json").Any())
+            throw new IOException("有未完成的文件操作，请先重启 Halo。");
+    }
+
+    static StationDocument RelocateLibrary(StationDocument document, LibraryMigrationPlan plan)
+    {
+        var entries = plan.Entries.ToDictionary(i => i.Id);
+        StationItem Remap(StationItem item) => entries.TryGetValue(item.Id, out var entry)
+            ? item with { Value = Path.Combine(plan.Destination, entry.Relative),
+                Title = Path.GetFileName(item.Value) == Path.GetFileName(entry.Relative) ? item.Title : "" } : item;
+        return document with {
+            Version = 6, StorageDirectory = plan.Destination, StorageVolume = plan.Volume, LastStorageOperation = null,
+            Items = document.Items.Select(Remap).ToArray(),
+            Trash = document.Trash?.Select(Remap).ToArray(),
+            FolderColors = MoveFolderColors(document.FolderColors, plan.Entries.Select(entry =>
+                new FlatMove(entry.Source, Path.Combine(plan.Destination, entry.Relative), entry.Kind))),
+        };
     }
 
     static string MigrationStaging(PendingLibraryMigration transaction) =>
@@ -149,7 +168,8 @@ internal sealed partial class StationStore
     }
 
     static bool Below(string candidate, string root) =>
-        candidate.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        !SamePath(candidate, root) && candidate.StartsWith(Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
 
     static void CheckLibraryParents(string value)
     {

@@ -75,16 +75,12 @@ internal sealed class PreviewTaskbar : Window
             }
             catch (Exception error) { reportFailure(error); Report("无法打开应用中心。"); }
         }
-        AcceptDrop(halo, Halo.StationWindow.Supports, async view =>
-        {
-            app.HaloModule.Handle("Open");
-            return Halo.App.Panel is { } panel && await panel.Receive(view);
-        });
+        ConfigureHaloDrop(app.HaloModule, halo, Report);
         AcceptDrop(ai, AIEnter.DropPayload.Supported, async view =>
         {
             await AIEnter.App.Ai.OpenForDrop(AIEnter.Native.Monitors().First(monitor => monitor.Primary), true);
             return await AIEnter.App.Ai.ReceiveDrop(view);
-        });
+        }, Report);
         var icons = ModuleIcons = new PreviewModuleIcons(halo, ai, DispatcherQueue);
         icons.SetIconLayout(app.IconLayout);
         left.Children.Add(halo);
@@ -347,7 +343,15 @@ internal sealed class PreviewTaskbar : Window
         menu.Items.Add(action);
     }
 
-    private void AcceptDrop(Button button, Func<DataPackageView, bool> supports, Func<DataPackageView, Task<bool>> deliver)
+    internal static void ConfigureHaloDrop(Halo.App halo, Button button, Action<string> report) =>
+        AcceptDrop(button, Halo.StationWindow.Supports, async view =>
+        {
+            halo.Handle("Open");
+            return Halo.App.Panel is { } panel && await panel.Receive(view);
+        }, report);
+
+    private static void AcceptDrop(Button button, Func<DataPackageView, bool> supports,
+        Func<DataPackageView, Task<bool>> deliver, Action<string> report)
     {
         button.AllowDrop = true;
         button.DragOver += (_, args) =>
@@ -362,8 +366,8 @@ internal sealed class PreviewTaskbar : Window
             var deferral = args.GetDeferral();
             args.Handled = true;
             args.AcceptedOperation = DataPackageOperation.Copy;
-            try { Report(await deliver(args.DataView) ? "" : "本次拖入未完成，请重试。"); }
-            catch (Exception error) { Report(error.Message); }
+            try { report(await deliver(args.DataView) ? "" : "本次拖入未完成，请重试。"); }
+            catch (Exception error) { report(error.Message); }
             finally { deferral.Complete(); }
         };
     }

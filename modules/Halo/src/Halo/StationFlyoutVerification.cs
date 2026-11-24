@@ -18,6 +18,11 @@ public partial class App
         try
         {
             Directory.CreateDirectory(DataDirectory);
+            if (Environment.GetCommandLineArgs().Contains("--verify-halo-flyout-root-drop"))
+            {
+                await VerifyRootRingDrop(checks);
+                return;
+            }
             if (Environment.GetCommandLineArgs().Contains("--verify-halo-flyout-browser"))
             {
                 await VerifyBrowserDrops(checks);
@@ -90,6 +95,65 @@ public partial class App
         }
     }
     static AIEnter.Native.Point InputCoordinate(int x, int y) => new() { X = x, Y = y };
+
+    async Task VerifyRootRingDrop(List<string> checks)
+    {
+        string root = Station.DesktopDirectory;
+        if (!StationStore.IsVolumeRoot(root) || Station.ReadOnly || Station.Items.Count != 0 || Station.Trash.Count != 0)
+            throw new InvalidOperationException("根目录拖放验证需要一个空的隔离 Halo 配置。");
+        string name = $"Halo-root-ring-{Guid.NewGuid():N}.png";
+        string original = Path.Combine(DataDirectory, name);
+        string expected = Path.Combine(root, name);
+        byte[] image = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBdUAAAAASUVORK5CYII=");
+        await File.WriteAllBytesAsync(original, image);
+        var work = Native.Monitors().First(item => item.Primary).Info.Work;
+        var anchor = new Button { Content = "Halo", HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+        string? feedback = null;
+        AITaskbar.PreviewTaskbar.ConfigureHaloDrop(this, anchor, message => feedback = message);
+        var window = AIEnter.App.FixtureWindow(anchor, new(work.Left + 300, work.Top + 220, 86, 54));
+        var sourceReady = new TaskCompletionSource<InputFixture>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Explorer and the taskbar have separate UI threads during the OLE drag.
+        var sourceThread = new Thread(() =>
+        {
+            using var fixture = new InputFixture(work.Left + 40, work.Top + 220, original);
+            fixture.Shown += (_, _) => sourceReady.TrySetResult(fixture);
+            System.Windows.Forms.Application.Run(fixture);
+        }) { IsBackground = true };
+        sourceThread.SetApartmentState(ApartmentState.STA);
+        sourceThread.Start();
+        InputFixture? source = null;
+        try
+        {
+            PanelToggleTargets.Register(window, anchor);
+            AttachTaskbar(anchor);
+            source = await sourceReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Delay(350);
+            await Task.Run(() => InputFixture.Drag(InputCoordinate(work.Left + 90, work.Top + 246),
+                InputCoordinate(work.Left + 343, work.Top + 247), sendNativeMovement: true)).WaitAsync(TimeSpan.FromSeconds(10));
+            for (int attempt = 0; attempt < 50 && feedback is null; attempt++) await Task.Delay(100);
+            if (!source.Started || source.Effect != System.Windows.Forms.DragDropEffects.Copy || feedback != ""
+                || Station.Items.SingleOrDefault() is not { Owned: true } received || received.Value != expected
+                || !File.ReadAllBytes(expected).SequenceEqual(image))
+                throw new InvalidOperationException($"圆环未把图片保存到根目录。开始={source.Started}，操作={source.Effect}，反馈={feedback}");
+            checks.Add("SystemDropOnHaloRingCopiesPngDirectlyToVolumeRoot");
+            if (new StationStore(Path.Combine(DataDirectory, "station.json")).Items.Single().Value != expected)
+                throw new InvalidOperationException("重载后未找到圆环导入的图片。");
+            checks.Add("RingDropAtVolumeRootSurvivesReopen");
+        }
+        finally
+        {
+            try
+            {
+                await Station.RemoveArchived(Station.Items.Where(item => item.Value == expected).ToArray());
+                await Station.DeleteTrash(Station.Trash.Where(item => Path.GetFileName(item.Value) == name).ToArray());
+            }
+            finally
+            {
+                source?.BeginInvoke(new Action(source.Close));
+                window.Close();
+            }
+        }
+    }
 
     async Task VerifySettingsSubpages(Native.Rect work, Action<string, bool> check)
     {

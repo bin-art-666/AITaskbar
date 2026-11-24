@@ -9,6 +9,7 @@ internal sealed partial class StationStore
     internal string TrashDirectory => IsFlatLibrary ? Path.Combine(DesktopDirectory, FlatTrash) : DesktopDirectory;
     internal string RequireTrashDirectory()
     {
+        RequireAvailableLibrary();
         string directory = TrashDirectory;
         CheckLibraryParents(directory);
         if (!Directory.Exists(directory)) throw new IOException("回收站存储目录不可用。");
@@ -19,7 +20,7 @@ internal sealed partial class StationStore
     static void NoLink(string path) { if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("暂不复制符号链接或目录联接，请选择实际文件。"); }
     bool ManagedPath(string value) {
         string full = Path.GetFullPath(value);
-        if (!Below(full, DesktopDirectory)) return false;
+        if (!Below(full, DesktopDirectory) || IsSystemRootEntry(full, DesktopDirectory)) return false;
         CheckLibraryParents(full);
         return true;
     }

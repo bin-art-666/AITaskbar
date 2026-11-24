@@ -241,7 +241,7 @@ internal sealed partial class StationStore
         }
     }
 
-    static void WriteStorageJournal<T>(string journal, T transaction)
+    static void WriteStorageJournal<T>(string journal, T transaction, bool replace = false)
     {
         string temporary = journal + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try {
@@ -249,13 +249,14 @@ internal sealed partial class StationStore
                 JsonSerializer.Serialize(stream, transaction);
                 stream.Flush(true);
             }
-            File.Move(temporary, journal);
+            File.Move(temporary, journal, replace);
         } finally { File.Delete(temporary); }
     }
 
     void RecoverStorage()
     {
         RecoverLibraryMigration();
+        RecoverRootMigration();
         if (File.Exists(FlatJournal)) {
             var transaction = JsonSerializer.Deserialize<FlatTransaction>(File.ReadAllText(FlatJournal))
                 ?? throw new IOException("平铺文件库操作记录无效。");
@@ -265,7 +266,7 @@ internal sealed partial class StationStore
         RecoverRenames();
         if (!IsFlatLibrary) return;
         if (data.Items.Where(IsOwnedFile).Any(i => !SamePath(Path.GetDirectoryName(i.Value), DesktopDirectory)
-                || ReservedFlatNames().Contains(Path.GetFileName(i.Value)))
+                || ReservedFlatNames().Contains(Path.GetFileName(i.Value)) || IsSystemRootEntry(i.Value, DesktopDirectory))
             || Trash.Where(IsOwnedFile).Any(i => !SamePath(i.Value, FlatTrashPath(DesktopDirectory, i))))
             throw new InvalidDataException("平铺文件库的副本位置无效。");
     }
