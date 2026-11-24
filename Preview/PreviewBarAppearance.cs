@@ -26,6 +26,7 @@ internal sealed class PreviewBarAppearance : IDisposable
     private readonly AccessibilitySettings accessibility = new();
     private readonly Action<bool, LumaBar.BarAppearance?> updateIconTone;
     private Halo.GlassBackdrop? backdrop;
+    private Halo.GlassBackdrop? desktopBackdrop;
     private string? backdropKind;
     private LumaBar.BarAppearance? last;
     private bool? lastContrast, lastEffects, lastLight;
@@ -106,10 +107,16 @@ internal sealed class PreviewBarAppearance : IDisposable
         }
         else
         {
+            desktopBackdrop ??= new Halo.GlassBackdrop(new Halo.MaterialOptions(TintOpacity: 0, LuminosityOpacity: 0, NoBase: true))
+            {
+                TransparentCanvas = true, BlurScale = 1f / 3,
+                MaximumBlurStrength = LumaBar.TaskbarAppearance.MaximumBlurRadius,
+                RetainTransparentResourcesOnDisconnect = true
+            };
             // At full transparency and zero blur, let DWM composite the live windows directly.
-            bool useBlurBackdrop = kind == "blur" && (appearance!.Blur > 0 || tint.A != 0);
-            SetBackdrop(useBlurBackdrop ? "blur" : "desktop");
-            backdrop!.UpdateBlur(kind == "blur" ? appearance!.Blur : kind == "acrylic" ? 30 : 0);
+            desktopBackdrop.UpdateBlur(kind == "blur" ? appearance!.Blur : kind == "acrylic" ? 30 : 0,
+                keepBackdropAtZero: kind == "blur" && tint.A != 0);
+            SetBackdrop("desktop");
             surface.Background = new SolidColorBrush(tint);
         }
         if (contrast || appearance?.MouseGlow != true || appearance.GlowStrength == 0)
@@ -146,9 +153,7 @@ internal sealed class PreviewBarAppearance : IDisposable
         backdropKind = kind;
         backdrop = kind switch
         {
-            "desktop" or "blur" => new Halo.GlassBackdrop(new Halo.MaterialOptions(TintOpacity: 0, LuminosityOpacity: 0, NoBase: true))
-                { TransparentCanvas = true, BlurScale = 1f / 3, KeepBlurBackdropAtZero = kind == "blur",
-                    MaximumBlurStrength = LumaBar.TaskbarAppearance.MaximumBlurRadius },
+            "desktop" => desktopBackdrop,
             "acrylic" => new Halo.GlassBackdrop(Halo.GlassStyle.Acrylic),
             _ => null
         };
@@ -202,5 +207,6 @@ internal sealed class PreviewBarAppearance : IDisposable
         disposed = true;
         tintTransition?.Stop();
         host.BarAppearanceChanged -= OnAppearanceChanged;
+        desktopBackdrop?.ReleaseRetainedTransparentResources();
     }
 }

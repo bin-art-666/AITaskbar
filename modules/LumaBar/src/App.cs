@@ -205,10 +205,10 @@ namespace LumaBar
         private MaterialPlan PrepareAppearance(Tone tone)
         {
             GlassSettings glass = previewGlass ?? settings.Glass;
-            MaterialPlan plan = previewOnly ? ReadabilityPolicy.CapturePreview(glass, previewScene ?? materialScene, tone)
-                : ReadabilityPolicy.Capture(glass, materialScene, tone);
+            if (previewOnly) return ReadabilityPolicy.CapturePreview(glass, previewScene ?? materialScene, tone);
+            MaterialPlan plan = ReadabilityPolicy.Capture(glass, materialScene, tone);
             string key = plan.Key;
-            if (!previewOnly && visualKey != null && visualKey != key) { glow?.Clear(); blend.Begin(settings.TransitionMilliseconds); }
+            if (visualKey != null && visualKey != key) { glow?.Clear(); blend.Begin(settings.TransitionMilliseconds); }
             visualKey = key;
             return plan;
         }
@@ -604,9 +604,14 @@ namespace LumaBar
                     (sample.Valid || sample.Scene.HasValue) && (engine.HasPendingDecision || visualTransition.Waiting || !sceneCoordinator.Ready || (mode != "仅检测（不修改）" && wanted.HasValue && wanted.Value != current)), activity.Available);
                 if (visualTransition.Waiting) timer.Interval = Math.Min(40, settings.PollMilliseconds);
                 // Confirm the target scene before the taskbar notification callback uses it.
-                if (commit.HasValue) CommitTheme(commit.Value);
+                bool refreshPreview = false;
+                if (commit.HasValue)
+                {
+                    if (previewOnly) controller.Apply(commit.Value, () => refreshPreview = true);
+                    else CommitTheme(commit.Value);
+                }
                 window.UpdateStatus(sample.Reason, sample.Valid && !sample.ExplicitRule ? (double?)sample.Brightness : null, controller.Current.Tone, sample.IsWallpaper ? "壁纸" : "窗口");
-                ApplyMaterials();
+                ApplyMaterials(refreshPreview);
                 UpdateMaterialStatus();
                 tray.Text = "LumaBar · " + (mode == "仅检测（不修改）" ? "仅检测" : controller.Current.Tone == Tone.Light ? "浅色" : "深色");
             }

@@ -12,7 +12,7 @@ public sealed class GlassBackdrop : SystemBackdrop
     MaterialOptions material;
     internal bool TransparentCanvas { get; init; }
     internal bool ConfigureWindowFrame { get; init; } = true;
-    internal bool KeepBlurBackdropAtZero { get; init; }
+    internal bool RetainTransparentResourcesOnDisconnect { get; set; }
     internal float BlurScale { get; init; } = .18f;
     internal int MaximumBlurStrength { get; init; } = 100;
     public GlassBackdrop(GlassStyle style) : this(MaterialOptions.ForPreset(style)) { }
@@ -34,12 +34,15 @@ public sealed class GlassBackdrop : SystemBackdrop
     Windows.UI.Composition.CompositionEffectBrush? blurBrush;
     Windows.UI.Composition.CompositionBackdropBrush? desktopSource;
     int blurStrength;
+    bool keepBlurBackdropAtZero;
     internal int BlurStrength => blurStrength;
-    internal void UpdateBlur(int value)
+    internal void UpdateBlur(int value, bool keepBackdropAtZero = false)
     {
         value = Math.Clamp(value, 0, MaximumBlurStrength);
-        if (blurStrength == value) return;
+        keepBackdropAtZero &= value == 0;
+        if (blurStrength == value && keepBlurBackdropAtZero == keepBackdropAtZero) return;
         blurStrength = value;
+        keepBlurBackdropAtZero = keepBackdropAtZero;
         UpdatePalette();
     }
     TransparentWindowFrame? transparentFrame;
@@ -89,7 +92,7 @@ public sealed class GlassBackdrop : SystemBackdrop
             var color = material.FlatColor(dark);
             transparentBrush ??= transparentCompositor.CreateColorBrush();
             transparentBrush.Color = Color.FromArgb(color.Alpha, (byte)(color.Rgb >> 16), (byte)(color.Rgb >> 8), (byte)color.Rgb);
-            if (TransparentCanvas && (KeepBlurBackdropAtZero || blurStrength > 0))
+            if (TransparentCanvas && (keepBlurBackdropAtZero || blurStrength > 0))
             {
                 if (blurBrush == null)
                 {
@@ -108,7 +111,8 @@ public sealed class GlassBackdrop : SystemBackdrop
                 if (!ReferenceEquals(connectedTarget.SystemBackdrop, blurBrush))
                     connectedTarget.SystemBackdrop = blurBrush;
             }
-            else connectedTarget.SystemBackdrop = transparentBrush;
+            else if (!ReferenceEquals(connectedTarget.SystemBackdrop, transparentBrush))
+                connectedTarget.SystemBackdrop = transparentBrush;
             return;
         }
         ClearTransparent();
@@ -132,16 +136,27 @@ public sealed class GlassBackdrop : SystemBackdrop
         }
     }
 
-    void ClearTransparent()
+    void ClearTransparent(bool retainResources = false)
     {
         if (transparentBrush == null && transparentFrame == null) return;
         if (connectedTarget != null) connectedTarget.SystemBackdrop = null;
+        transparentFrame?.Dispose(); transparentFrame = null;
+        if (!retainResources) DisposeTransparentResources();
+    }
+
+    void DisposeTransparentResources()
+    {
         blurBrush?.Dispose(); blurBrush = null;
         blurFactory?.Dispose(); blurFactory = null;
         desktopSource?.Dispose(); desktopSource = null;
         transparentBrush?.Dispose(); transparentBrush = null;
         transparentCompositor?.Dispose(); transparentCompositor = null;
-        transparentFrame?.Dispose(); transparentFrame = null;
+    }
+
+    internal void ReleaseRetainedTransparentResources()
+    {
+        RetainTransparentResourcesOnDisconnect = false;
+        if (connectedTarget == null) DisposeTransparentResources();
     }
 
     protected override void OnTargetDisconnected(ICompositionSupportsSystemBackdrop target)
@@ -149,7 +164,7 @@ public sealed class GlassBackdrop : SystemBackdrop
         controller?.RemoveSystemBackdropTarget(target);
         controller?.Dispose();
         controller = null;
-        ClearTransparent();
+        ClearTransparent(RetainTransparentResourcesOnDisconnect);
         connectedTarget = null;
         configuration = null;
         base.OnTargetDisconnected(target);
