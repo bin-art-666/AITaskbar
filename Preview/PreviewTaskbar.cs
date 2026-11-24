@@ -173,7 +173,7 @@ internal sealed class PreviewTaskbar : Window
             appCenter?.ApplyPalette();
             var palette = TaskbarPanelFlyout.ResolvePalette(new QuickControlAppearance(Backdrop: QuickBackdrop.FollowTaskbar),
                 light, app.BarAppearance, panelColors, panelAccessibility.HighContrast);
-            tasks.SetThumbnailTaskbarPalette(palette.Theme, palette.Solid);
+            tasks.SetThumbnailTaskbarPalette(palette.Theme, palette.Solid, app.BarAppearance);
             aiService.SetTaskbarPalette(palette.Theme, palette.Solid);
             app.HaloModule.SetTaskbarPalette(palette.Theme, palette.Solid);
         });

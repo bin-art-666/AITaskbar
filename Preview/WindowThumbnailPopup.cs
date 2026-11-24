@@ -21,7 +21,7 @@ internal sealed partial class WindowThumbnailPopup : Window
     private readonly Border backplate = new() { CornerRadius = new CornerRadius(BackplateRadius) };
     private readonly SolidColorBrush tintBrush = new();
     private readonly AIEnter.DesktopGlassBackdrop glass = new(transparentWindow: true);
-    private (ElementTheme Theme, Color Tint)? palette;
+    private (Color Tint, Color Solid, float Blur)? palette;
     private Action<RunningWindow>? activate, close;
     private readonly nint handle;
     private readonly List<Source> windows = [];
@@ -83,9 +83,12 @@ internal sealed partial class WindowThumbnailPopup : Window
         RebuildPages();
     }
 
-    internal void SetTheme(ElementTheme theme, Color background)
+    internal void SetTheme(ElementTheme theme, Color background) =>
+        SetTheme(theme, TaskbarPanelFlyout.Alpha(background, 208), background, BackplateBlur);
+
+    internal void SetTheme(ElementTheme theme, Color tint, Color solid, float blur)
     {
-        palette = (theme, background);
+        palette = (tint, solid, blur);
         backplate.RequestedTheme = theme;
         RefreshBackplate();
     }
@@ -98,8 +101,8 @@ internal sealed partial class WindowThumbnailPopup : Window
         bool highContrast = animationAccessibility.HighContrast;
         bool useGlass = !highContrast && animationSettings.AdvancedEffectsEnabled && glass.CanUseGlass;
         tintBrush.Color = highContrast ? animationSettings.GetColorValue(UIColorType.Background)
-            : TaskbarPanelFlyout.Alpha(current.Tint, useGlass ? (byte)208 : (byte)255);
-        glass.SetBlur(useGlass ? BackplateBlur : 0);
+            : useGlass ? current.Tint : current.Solid;
+        glass.SetBlur(useGlass ? current.Blur : 0);
     }
 
     private void SetPopupOpacity(double opacity)

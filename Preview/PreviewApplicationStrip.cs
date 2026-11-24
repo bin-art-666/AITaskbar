@@ -897,12 +897,25 @@ internal sealed partial class PreviewApplicationStrip
     internal static SolidColorBrush MenuBackground(ElementTheme theme) => new(theme == ElementTheme.Dark
         ? Color.FromArgb(255, 37, 44, 57) : Color.FromArgb(255, 245, 248, 252));
 
-    private (ElementTheme Theme, Color Tint)? thumbnailTaskbarPalette;
+    private (ElementTheme Theme, Color Tint, Color Solid, float Blur)? thumbnailTaskbarPalette;
 
-    internal void SetThumbnailTaskbarPalette(ElementTheme theme, Color tint)
+    internal void SetThumbnailTaskbarPalette(ElementTheme theme, Color solid, LumaBar.BarAppearance? appearance)
     {
-        if (thumbnailTaskbarPalette == (theme, tint)) return;
-        thumbnailTaskbarPalette = (theme, tint);
+        var tint = solid;
+        float blur = 0;
+        if (appearance is { Material: "clear" or "blur" or "acrylic" })
+        {
+            tint = PreviewBarAppearance.FromAbgr(appearance.Abgr);
+            blur = appearance.Material switch
+            {
+                "blur" => appearance.Blur / 3f,
+                "acrylic" => 10f,
+                _ => 0
+            };
+        }
+        var palette = (theme, tint, solid, blur);
+        if (thumbnailTaskbarPalette == palette) return;
+        thumbnailTaskbarPalette = palette;
         if (iconLayout.MenuColorMode == AppMenuColorMode.FollowTaskbar) UpdateThumbnailTheme(theme);
     }
 
@@ -922,7 +935,7 @@ internal sealed partial class PreviewApplicationStrip
         }
         if (thumbnailTaskbarPalette is { } palette)
         {
-            thumbnails.SetTheme(palette.Theme, palette.Tint);
+            thumbnails.SetTheme(palette.Theme, palette.Tint, palette.Solid, palette.Blur);
             return;
         }
         thumbnails.SetTheme(taskbarTheme, taskbarTheme == ElementTheme.Dark
