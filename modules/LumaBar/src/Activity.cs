@@ -33,12 +33,13 @@ namespace LumaBar
         private readonly Callback callback;
         private IntPtr foregroundHook, geometryHook, minimizeHook;
         private readonly Action changed;
+        private readonly Action<IntPtr>? foregroundChanged;
         private IntPtr lastWindow;
         private Rectangle lastFrame;
         internal bool Available { get { return foregroundHook != IntPtr.Zero && geometryHook != IntPtr.Zero && minimizeHook != IntPtr.Zero; } }
-        internal ForegroundActivity(Action changed)
+        internal ForegroundActivity(Action changed, Action<IntPtr>? foregroundChanged = null)
         {
-            this.changed = changed; callback = OnEvent;
+            this.changed = changed; this.foregroundChanged = foregroundChanged; callback = OnEvent;
             foregroundHook = SetWinEventHook(3,3,IntPtr.Zero,callback,0,0,2);
             WatchGeometry(Native.GetForegroundWindow());
             minimizeHook = SetWinEventHook(0x16,0x17,IntPtr.Zero,callback,0,0,2);
@@ -51,7 +52,11 @@ namespace LumaBar
         }
         private void OnEvent(IntPtr hook, uint kind, IntPtr window, int obj, int child, uint thread, uint time)
         {
-            if (kind == 3) WatchGeometry(window);
+            if (kind == 3)
+            {
+                WatchGeometry(window);
+                foregroundChanged?.Invoke(window);
+            }
             if (kind == 0x800B && (obj != 0 || child != 0 || window != Native.GetForegroundWindow())) return;
             Rectangle frame = Native.FrameOf(window);
             if (kind == 0x800B && window == lastWindow && frame == lastFrame) return;

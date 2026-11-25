@@ -27,7 +27,7 @@ internal sealed record AppCenterIconStyle
 
 internal sealed record AppCenterPanelStyle
 {
-    internal const QuickBackdrop DefaultBackdrop = QuickBackdrop.Dark;
+    internal const QuickBackdrop DefaultBackdrop = QuickBackdrop.FollowTaskbar;
 
     public bool Spacious { get; init; }
     public QuickBackdrop Backdrop { get; init; } = DefaultBackdrop;

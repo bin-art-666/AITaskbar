@@ -269,6 +269,7 @@ namespace LumaBar
         public bool IsApplication;
         public bool IsWallpaper;
         public bool IsDesktop;
+        public bool IsTaskView;
         public MaterialScene? Scene;
         public BackdropReading Backdrop;
         public long WallpaperContext;
@@ -279,6 +280,22 @@ namespace LumaBar
     internal static class WindowSampler
     {
         private static readonly int OwnProcessId = Process.GetCurrentProcess().Id;
+        internal static bool IsTaskViewWindow(IntPtr window) => IsTaskViewWindow(window, Native.ClassOf(window));
+        private static bool IsTaskViewWindow(IntPtr window, string windowClass)
+        {
+            if (windowClass == "MultitaskingViewFrame") return true;
+            if (windowClass != "XamlExplorerHostIslandWindow" && windowClass != "XamlExplorerHostIslandWindow_WASDK") return false;
+            // Task View uses an Explorer island, including the Windows App SDK variant.
+            return IsShellWindow(window);
+        }
+
+        private static bool IsShellWindow(IntPtr window)
+        {
+            Native.GetWindowThreadProcessId(window, out uint owner);
+            Native.GetWindowThreadProcessId(Native.GetShellWindow(), out uint shell);
+            return owner != 0 && owner == shell;
+        }
+
         internal static WindowSample Read(Settings settings) { return Read(settings, false); }
         internal static WindowSample Read(Settings settings, bool includeOwnWindow)
         { return Read(settings, includeOwnWindow, IntPtr.Zero); }
@@ -295,11 +312,19 @@ namespace LumaBar
             sample.Reason = "等待可取样的活动窗口";
             if (!includeOwnWindow && (Native.GetAsyncKeyState(0x12) & 0x8000) != 0)
             { sample.Reason = "正在切换窗口：暂缓适应"; return sample; }
+            string cls = hwnd == IntPtr.Zero ? "" : Native.ClassOf(hwnd);
+            if (IsTaskViewWindow(hwnd, cls))
+            {
+                sample.IsTaskView = true;
+                sample.Reason = "任务视图：保留当前外观";
+                return sample;
+            }
+            if (cls == "ForegroundStaging" && IsShellWindow(hwnd))
+            { sample.Reason = "系统正在切换前台窗口：保留当前外观"; return sample; }
             if (hwnd == IntPtr.Zero || Native.IsIconic(hwnd) || !Native.IsWindowVisible(hwnd))
                 return applyCoveragePolicy ? ReadWallpaper(sample, hwnd, wallpaperReader, settings) : sample;
-            string cls = Native.ClassOf(hwnd);
             if ((cls == "Progman" || cls == "WorkerW") && applyCoveragePolicy) return ReadWallpaper(sample, hwnd, wallpaperReader, settings);
-            if (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd" || cls == "Progman" || cls == "WorkerW" || cls == "#32768" || cls == "MultitaskingViewFrame" || cls == "TaskSwitcherWnd")
+            if (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd" || cls == "Progman" || cls == "WorkerW" || cls == "#32768" || cls == "TaskSwitcherWnd")
             { sample.Reason = "桌面或系统菜单：保持当前明暗"; return sample; }
             uint pid;
             Native.GetWindowThreadProcessId(hwnd, out pid);

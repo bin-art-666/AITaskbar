@@ -107,7 +107,7 @@ namespace LumaBar
             timer.Tick += delegate {
                 Tick();
             };
-            activity = new ForegroundActivity(WakeSampling);
+            activity = new ForegroundActivity(WakeSampling, previewOnly ? OnForegroundChanged : null);
             if (!previewOnly)
                 glow = new TaskbarGlow(delegate { return (previewGlowEnabled ?? this.settings.MouseGlow) && mode != "仅检测（不修改）" && !paused && !sessionLocked && !suspended && !restoring && !exiting && recoveryAt < 0 && !blend.Active; }, delegate { return controller.Current.Tone == Tone.Light; }, radius: delegate { return previewGlowEnabled.HasValue ? previewGlowRadius : this.settings.MouseGlowRadius; }, strength: delegate { return previewGlowEnabled.HasValue ? previewGlowStrength : this.settings.MouseGlowStrength; });
             SystemEvents.SessionSwitch += OnSessionSwitch;
@@ -129,6 +129,16 @@ namespace LumaBar
             if (restoring || exiting) return;
             cadence.Wake(clock.ElapsedMilliseconds);
             timer.Interval = Math.Min(40,settings.PollMilliseconds);
+        }
+        private void OnForegroundChanged(IntPtr foreground)
+        {
+            if (WindowSampler.IsTaskViewWindow(foreground)) HoldForTaskView();
+        }
+        private void HoldForTaskView()
+        {
+            visualTransition.HoldForTaskView();
+            sceneCoordinator.ResetPending();
+            engine.Reset();
         }
         private void OnPreferenceChanged(object sender, UserPreferenceChangedEventArgs args)
         {
@@ -200,7 +210,8 @@ namespace LumaBar
         {
             return mode != "仅检测（不修改）" && !paused && !sessionLocked && !suspended && !restoring &&
                 !exiting && !SystemInformation.HighContrast &&
-                (previewOnly && (force || previewScene.HasValue) || sceneCoordinator.Ready && !visualTransition.Waiting);
+                (previewOnly && (previewScene.HasValue || force && !visualTransition.ReturningFromTaskView) ||
+                    sceneCoordinator.Ready && !visualTransition.Waiting);
         }
         private MaterialPlan PrepareAppearance(Tone tone)
         {
@@ -569,10 +580,19 @@ namespace LumaBar
                 WindowSample sample = WindowSampler.Read(samplingSettings);
                 long now = clock.ElapsedMilliseconds;
                 Rectangle sampledFrame = Native.FrameOf(sample.Window);
+                if (previewOnly && sample.IsTaskView) HoldForTaskView();
+                bool hasScene = sample.Scene.HasValue || sample.Valid;
+                if (visualTransition.ReturningFromTaskView)
+                {
+                    bool hasBounds = sampledFrame.Width > 0 && sampledFrame.Height > 0;
+                    // A transient foreground handle is not the desktop selected in Task View.
+                    bool isDesktop = sample.IsDesktop && (Native.ClassOf(sample.Window) is "Progman" or "WorkerW");
+                    hasScene &= hasBounds && (sample.IsApplication || isDesktop);
+                }
                 if (sample.IsApplication && !String.IsNullOrEmpty(sample.ProcessName))
                 { lastApplication = sample.ProcessName; lastApplicationAt = now; }
                 bool visualReady = !visualTransition.Waiting;
-                if (sample.Scene.HasValue || sample.Valid)
+                if (hasScene)
                     visualReady = visualTransition.Observe(SceneFor(sample), sample.Window.ToInt64(), sampledFrame, now);
                 Tone? wanted = DesiredTone(sample, current);
                 Tone? commit = null;
@@ -582,7 +602,7 @@ namespace LumaBar
                     wanted = mode == "固定浅色" ? Tone.Light : Tone.Dark;
                     if (visualReady) commit = wanted;
                 }
-                if (sample.Valid)
+                if (sample.Valid && hasScene)
                 {
                     if (!fixedMode)
                     {
@@ -591,27 +611,27 @@ namespace LumaBar
                     }
                 }
                 else { engine.Reset(); timer.Interval = settings.PollMilliseconds; }
-                if (sample.Scene.HasValue || sample.Valid)
+                if (hasScene)
                 {
                     sceneCoordinator.Observe(SceneFor(sample), sample.DecisionContext, mode == "仅检测（不修改）" ? null : wanted, commit ?? current, now, settings.SourceStableMilliseconds);
-                    if (sceneCoordinator.Ready) materialScene = sceneCoordinator.Current;
+                    if (sceneCoordinator.Ready && visualReady) materialScene = sceneCoordinator.Current;
                     string basis = sample.Valid && !sample.ExplicitRule
                         ? (sample.IsWallpaper ? "壁纸" : "窗口内容") + (sample.Brightness >= .5 ? "偏亮 " : "偏暗 ") + sample.Brightness.ToString("P0")
                         : sample.Reason;
                     window.UpdateSceneStatus(visualTransition.Waiting ? "等待窗口动画稳定" : sceneCoordinator.Ready ? MaterialNames.Scene(materialScene) : "正在确认场景", basis);
                 }
                 timer.Interval = cadence.Observe(sample,sampledFrame,current,settings,now,
-                    (sample.Valid || sample.Scene.HasValue) && (engine.HasPendingDecision || visualTransition.Waiting || !sceneCoordinator.Ready || (mode != "仅检测（不修改）" && wanted.HasValue && wanted.Value != current)), activity.Available);
-                if (visualTransition.Waiting) timer.Interval = Math.Min(40, settings.PollMilliseconds);
+                    hasScene && (engine.HasPendingDecision || visualTransition.Waiting || !sceneCoordinator.Ready || (mode != "仅检测（不修改）" && wanted.HasValue && wanted.Value != current)), activity.Available);
+                if (visualTransition.Waiting && (hasScene || !visualTransition.ReturningFromTaskView))
+                    timer.Interval = Math.Min(40, settings.PollMilliseconds);
                 // Confirm the target scene before the taskbar notification callback uses it.
-                bool refreshPreview = false;
                 if (commit.HasValue)
                 {
-                    if (previewOnly) controller.Apply(commit.Value, () => refreshPreview = true);
+                    if (previewOnly) controller.Apply(commit.Value);
                     else CommitTheme(commit.Value);
                 }
                 window.UpdateStatus(sample.Reason, sample.Valid && !sample.ExplicitRule ? (double?)sample.Brightness : null, controller.Current.Tone, sample.IsWallpaper ? "壁纸" : "窗口");
-                ApplyMaterials(refreshPreview);
+                ApplyMaterials();
                 UpdateMaterialStatus();
                 tray.Text = "LumaBar · " + (mode == "仅检测（不修改）" ? "仅检测" : controller.Current.Tone == Tone.Light ? "浅色" : "深色");
             }

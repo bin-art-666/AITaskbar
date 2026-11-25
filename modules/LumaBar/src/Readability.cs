@@ -166,17 +166,23 @@ namespace LumaBar
         internal const int SettleMilliseconds = 220;
         internal const int QuietMilliseconds = 80;
         internal bool Waiting { get; private set; }
+        internal bool ReturningFromTaskView { get; private set; }
         private bool known;
         private MaterialScene settled, pending;
         private long source, since, lastMotion, lastAt;
         private Rectangle frame;
         private int samples;
+        internal void HoldForTaskView()
+        {
+            ReturningFromTaskView = Waiting = true;
+            samples = 0;
+        }
         internal bool Observe(MaterialScene scene, long window, Rectangle bounds, long now)
         {
-            if (!known || (scene != MaterialScene.Maximized && settled != MaterialScene.Maximized))
+            if (!ReturningFromTaskView && (!known || (scene != MaterialScene.Maximized && settled != MaterialScene.Maximized)))
             { Accept(scene); return true; }
-            if (scene == settled) { Waiting = false; samples = 0; return true; }
-            if (!Waiting || pending != scene || source != window || now - lastAt > 200)
+            if (!ReturningFromTaskView && scene == settled) { Waiting = false; samples = 0; return true; }
+            if (!Waiting || samples == 0 || pending != scene || source != window || now - lastAt > 200)
             {
                 Waiting = true; pending = scene; source = window;
                 frame = bounds; since = lastMotion = now; samples = 0;
@@ -186,8 +192,8 @@ namespace LumaBar
             if (samples < 2 || now - since < SettleMilliseconds || now - lastMotion < QuietMilliseconds) return false;
             Accept(scene); return true;
         }
-        private void Accept(MaterialScene scene) { known = true; settled = scene; Waiting = false; samples = 0; }
-        internal void Reset() { known = Waiting = false; samples = 0; }
+        private void Accept(MaterialScene scene) { known = true; settled = scene; Waiting = ReturningFromTaskView = false; samples = 0; }
+        internal void Reset() { known = Waiting = ReturningFromTaskView = false; samples = 0; }
     }
 
     internal sealed class SceneCoordinator

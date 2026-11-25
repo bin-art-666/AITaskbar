@@ -297,6 +297,18 @@ namespace LumaBar
             Check(!gate.Observe(MaterialScene.Maximized, 3, full, 1100), "observation gap cannot approve a stale animation candidate");
             gate.Reset();
             Check(gate.Observe(MaterialScene.Desktop, 0, Rectangle.Empty, 1200), "resume starts with a fresh observed appearance");
+            gate.Observe(MaterialScene.Window, 2, window, 1250);
+            gate.HoldForTaskView();
+            Check(gate.Waiting && gate.ReturningFromTaskView, "task view holds the last confirmed appearance");
+            Check(!gate.Observe(MaterialScene.Maximized, 3, full, 1300), "a transient full-screen frame cannot change taskbar material");
+            Check(!gate.Observe(MaterialScene.Window, 2, window, 1400), "return to the previous window starts a fresh geometry check");
+            Check(!gate.Observe(MaterialScene.Window, 2, window, 1510), "return does not bypass settling for an unchanged scene");
+            Check(gate.Observe(MaterialScene.Window, 2, window, 1620) && !gate.ReturningFromTaskView,
+                "stable return to the previous window restores ordinary sampling");
+            gate.HoldForTaskView();
+            Check(!gate.Observe(MaterialScene.Maximized, 3, full, 1700), "a selected maximized app must settle after task view");
+            Check(!gate.Observe(MaterialScene.Maximized, 3, full, 1810), "maximized selection is still settling");
+            Check(gate.Observe(MaterialScene.Maximized, 3, full, 1920), "a genuinely maximized selection can apply its material");
             DecisionEngine engine = new DecisionEngine(new Settings());
             engine.Observe(1, 1, Tone.Dark, 0, true, true, false);
             engine.Observe(1, 1, Tone.Dark, 100, true, true, false);
