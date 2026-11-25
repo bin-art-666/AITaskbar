@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Globalization.Collation;
 using Windows.Storage.Pickers;
@@ -26,6 +27,8 @@ internal sealed class AppCenterWindow : Window
     private const int EnterMilliseconds = 180, ExitMilliseconds = 135;
     private const int PageSlideMilliseconds = 180, PagePreparationBatch = 12;
     private const double ContentTravel = 10;
+    private const double PagerButtonWidth = 22, PagerDotSize = 6;
+    private const int OtherInitial = 26, AllInitials = 27;
 
     private static readonly StringComparer NameOrder = StringComparer.Create(CultureInfo.GetCultureInfo("zh-CN"), true);
     private static readonly CharacterGroupings NameGroups = new("zh-CN");
@@ -52,9 +55,28 @@ internal sealed class AppCenterWindow : Window
     private readonly Grid root = new();
     private readonly TranslateTransform entrance = new();
     private readonly Grid pageArea = new();
+    private readonly ScrollViewer initialsScroller = new()
+    {
+        Width = 36, VerticalAlignment = VerticalAlignment.Center,
+        VerticalScrollMode = ScrollMode.Enabled, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+        HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        IsTabStop = false
+    };
+    private readonly Button[] initialButtons = new Button[AllInitials + 1];
+    private readonly SolidColorBrush selectedInitialFill = new();
+    private readonly SolidColorBrush accent = new();
+    private readonly SolidColorBrush transparent = new(Microsoft.UI.Colors.Transparent);
     private readonly StackPanel fixedApps = new() { Orientation = Orientation.Horizontal };
     private readonly StackPanel fixedSection = new() { Spacing = 18 };
     private readonly StackPanel pager = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, MinHeight = 28 };
+    private readonly Border currentDot = new()
+    {
+        Width = PagerDotSize, Height = PagerDotSize, CornerRadius = new CornerRadius(PagerDotSize / 2),
+        HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center,
+        Margin = new Thickness((PagerButtonWidth - PagerDotSize) / 2, 0, 0, 0), IsHitTestVisible = false,
+        Visibility = Visibility.Collapsed
+    };
+    private readonly Vector3Transition pagerTransition = new() { Duration = TimeSpan.FromMilliseconds(PageSlideMilliseconds) };
     private readonly TextBox search = AppCenterSearch.Create();
     private readonly TextBlock empty = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock status = new() { HorizontalAlignment = HorizontalAlignment.Center, TextWrapping = TextWrapping.Wrap };
@@ -69,11 +91,13 @@ internal sealed class AppCenterWindow : Window
     private readonly TaskbarIconHoverLayer gridHover;
     private AIEnter.DesktopGlassBackdrop? backdrop;
     private AppCenterEntry[] installed = [], alphabetical = [], visible = [];
+    private Dictionary<string, int> initials = new(StringComparer.OrdinalIgnoreCase);
     private AppCenterPanelStyle style;
     private TaskbarAppFeedbackStyle feedback;
     private CancellationTokenSource? pinnedArtwork;
     private string? draggedKey;
     private int page, columns = 1, rows = 1, wheel;
+    private int selectedInitial = AllInitials;
     private bool loading = true, readingCatalog, renderQueued, closed, glassUnavailable, expanded, animating;
     private float opacity = 1, transitionFrom;
     private double transitionDuration;
@@ -84,7 +108,7 @@ internal sealed class AppCenterWindow : Window
     private double TileHeight => IconSize + (style.Spacious ? 52 : 36);
     private int PageSize => Math.Max(1, columns * rows);
     private int PageCount => Math.Max(1, (visible.Length + PageSize - 1) / PageSize);
-    private bool CanReorder => style.ManualOrder && string.IsNullOrWhiteSpace(search.Text);
+    private bool CanReorder => style.ManualOrder && selectedInitial == AllInitials && string.IsNullOrWhiteSpace(search.Text);
 
     internal event Action<bool>? ExpandedChanged;
 
@@ -126,6 +150,8 @@ internal sealed class AppCenterWindow : Window
         AIEnter.Native.DwmSetWindowAttribute(handle, 33, ref squareCorners, sizeof(int));
 
         var content = new Grid { Padding = new Thickness(38, 24, 38, 12), RenderTransform = entrance };
+        content.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        content.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         content.RowDefinitions.Add(new() { Height = GridLength.Auto });
         content.RowDefinitions.Add(new() { Height = GridLength.Auto });
         content.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
@@ -134,6 +160,7 @@ internal sealed class AppCenterWindow : Window
         search.Margin = new Thickness(0, 0, 0, 24);
         AutomationProperties.SetName(search, "搜索应用");
         search.TextChanged += (_, _) => { page = wheel = 0; RenderApps(); };
+        Grid.SetColumnSpan(search, 2);
         content.Children.Add(search);
 
         var frequent = new Grid { ColumnSpacing = 12 };
@@ -156,15 +183,27 @@ internal sealed class AppCenterWindow : Window
         fixedSection.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 0, 0, 8), Opacity = .24,
             Background = new SolidColorBrush(Microsoft.UI.Colors.Gray) });
         Grid.SetRow(fixedSection, 1);
+        Grid.SetColumnSpan(fixedSection, 2);
         content.Children.Add(fixedSection);
         pageArea.Children.Add(gridHover.Surface);
         pageArea.Children.Add(empty);
+        pageArea.Margin = new Thickness(0, 0, 6, 0);
         Grid.SetRow(pageArea, 2);
         content.Children.Add(pageArea);
+        BuildInitialsIndex();
+        Grid.SetRow(initialsScroller, 1);
+        Grid.SetRowSpan(initialsScroller, 2);
+        Grid.SetColumn(initialsScroller, 1);
+        content.Children.Add(initialsScroller);
         Grid.SetRow(status, 3);
+        Grid.SetColumnSpan(status, 2);
         content.Children.Add(status);
-        Grid.SetRow(pager, 4);
-        content.Children.Add(pager);
+        var pagination = new Grid { HorizontalAlignment = HorizontalAlignment.Center };
+        pagination.Children.Add(pager);
+        pagination.Children.Add(currentDot);
+        Grid.SetRow(pagination, 4);
+        Grid.SetColumnSpan(pagination, 2);
+        content.Children.Add(pagination);
         root.Children.Add(content);
         Content = root;
         var backgroundMenu = new MenuFlyout();
@@ -278,7 +317,8 @@ internal sealed class AppCenterWindow : Window
             }, fixedTile: true, pending));
         }
         LoadArtwork(pending, ref pinnedArtwork);
-        alphabetical = apps.OrderBy(entry => NameGroup(entry.Name))
+        initials = apps.ToDictionary(entry => entry.Key, entry => NameGroup(entry.Name), StringComparer.OrdinalIgnoreCase);
+        alphabetical = apps.OrderBy(entry => initials[entry.Key])
             .ThenBy(entry => entry.Name, NameOrder).ThenBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase).ToArray();
         QueueRender();
     }
@@ -297,7 +337,71 @@ internal sealed class AppCenterWindow : Window
     {
         string label = NameGroups.Lookup(name);
         char letter = char.ToUpperInvariant(label.Length == 0 ? name[0] : label[0]);
-        return letter is >= 'A' and <= 'Z' ? letter - 'A' : 26;
+        return letter is >= 'A' and <= 'Z' ? letter - 'A' : OtherInitial;
+    }
+
+    private void BuildInitialsIndex()
+    {
+        var list = new StackPanel();
+        AutomationProperties.SetName(initialsScroller, "按应用首字母筛选");
+        AddInitial(AllInitials, "全部", "显示全部应用");
+        for (int index = 0; index < OtherInitial; index++)
+        {
+            string letter = ((char)('A' + index)).ToString();
+            AddInitial(index, letter, $"筛选首字母 {letter}");
+        }
+        AddInitial(OtherInitial, "#", "筛选其他首字母");
+        initialsScroller.Content = list;
+        UpdateInitialsIndex([]);
+
+        void AddInitial(int index, string label, string name)
+        {
+            var button = new Button
+            {
+                Content = label, Width = 36, Height = 22, MinWidth = 0, MinHeight = 0,
+                Padding = new Thickness(0), BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(11), FontSize = index == AllInitials ? 11 : 12,
+                HorizontalContentAlignment = HorizontalAlignment.Center
+            };
+            AutomationProperties.SetName(button, name);
+            button.Click += (_, _) =>
+            {
+                if (index == selectedInitial || draggedKey is not null) return;
+                selectedInitial = index;
+                page = wheel = 0;
+                RenderApps();
+            };
+            initialButtons[index] = button;
+            list.Children.Add(button);
+        }
+    }
+
+    private void UpdateInitialsIndex(IEnumerable<AppCenterEntry> matches)
+    {
+        var available = new bool[AllInitials + 1];
+        available[AllInitials] = true;
+        foreach (var entry in matches) available[initials[entry.Key]] = true;
+        for (int index = 0; index < initialButtons.Length; index++)
+        {
+            var button = initialButtons[index];
+            bool selected = index == selectedInitial;
+            button.IsEnabled = available[index] || selected;
+            button.Foreground = selected ? accent : foreground;
+            button.Background = selected ? selectedInitialFill : transparent;
+            button.Resources["ButtonForegroundPointerOver"] = button.Foreground;
+            button.Resources["ButtonForegroundPressed"] = button.Foreground;
+            if (selected)
+            {
+                button.Resources["ButtonBackgroundPointerOver"] = selectedInitialFill;
+                button.Resources["ButtonBackgroundPressed"] = selectedInitialFill;
+            }
+            else
+            {
+                button.Resources.Remove("ButtonBackgroundPointerOver");
+                button.Resources.Remove("ButtonBackgroundPressed");
+            }
+            AutomationProperties.SetItemStatus(button, selected ? "当前筛选" : "");
+        }
     }
 
     private void OnPinsChanged() => root.DispatcherQueue.TryEnqueue(UpdateCatalog);
@@ -372,7 +476,10 @@ internal sealed class AppCenterWindow : Window
             SetAnimationFrame(0);
             // Prepare the home page while hidden. Leave an already complete first page intact.
             requestedPage = null;
+            bool wasFiltered = selectedInitial != AllInitials;
+            selectedInitial = AllInitials;
             if (search.Text.Length > 0) search.Text = "";
+            else if (wasFiltered) { page = 0; RenderApps(); }
             else if (page != 0) ShowPage(0);
             wheel = 0;
             return;
@@ -411,6 +518,10 @@ internal sealed class AppCenterWindow : Window
         AppCenterSearch.ApplyTheme(search, palette.Theme == ElementTheme.Dark, accessibility.HighContrast);
         ApplyHoverStyle(palette.Theme);
         foreground.Color = palette.Text;
+        accent.Color = accessibility.HighContrast ? system.UIElementColor(UIElementType.Highlight)
+            : palette.Theme == ElementTheme.Dark ? Color.FromArgb(255, 61, 158, 255) : Color.FromArgb(255, 0, 103, 192);
+        currentDot.Background = accent;
+        selectedInitialFill.Color = Color.FromArgb(35, accent.Color.R, accent.Color.G, accent.Color.B);
         status.Foreground = empty.Foreground = foreground;
         root.Background = new SolidColorBrush(glassUnavailable ? palette.Solid : palette.Tint);
         if (!glassUnavailable && (palette.Tint.A < 255 || CanAnimate))
@@ -486,10 +597,13 @@ internal sealed class AppCenterWindow : Window
         requestedPage = null;
         ClearPages();
         string query = search.Text.Trim();
-        fixedSection.Visibility = query.Length == 0 && fixedApps.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        fixedSection.Visibility = query.Length == 0 && selectedInitial == AllInitials && fixedApps.Children.Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
         var sorted = style.ManualOrder ? order.Arrange(alphabetical) : alphabetical;
-        visible = query.Length == 0 ? sorted : sorted.Where(entry =>
+        var matches = query.Length == 0 ? sorted : sorted.Where(entry =>
             CultureInfo.CurrentCulture.CompareInfo.IndexOf(entry.Name, query, CompareOptions.IgnoreCase | CompareOptions.IgnoreWidth) >= 0).ToArray();
+        visible = selectedInitial == AllInitials ? matches : matches.Where(entry => initials[entry.Key] == selectedInitial).ToArray();
+        UpdateInitialsIndex(matches);
         page = Math.Clamp(page, 0, PageCount - 1);
         empty.Visibility = visible.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         empty.Text = loading ? "正在读取应用…" : query.Length > 0 ? "没找到应用" : "没有可显示的应用";
@@ -788,16 +902,20 @@ internal sealed class AppCenterWindow : Window
     private void BuildPager()
     {
         pager.Children.Clear();
+        currentDot.Visibility = PageCount > 1 ? Visibility.Visible : Visibility.Collapsed;
         if (PageCount == 1) return;
         for (int index = 0; index < PageCount; index++)
         {
             int target = index;
-            var dot = new Button { Content = new TextBlock { Text = index == page ? "━" : "•" },
-                Padding = new Thickness(3, 0, 3, 0), Width = 22, MinWidth = 0, Height = 28, MinHeight = 0,
+            var marker = new Border { Width = PagerDotSize, Height = PagerDotSize,
+                CornerRadius = new CornerRadius(PagerDotSize / 2), Background = foreground, Opacity = .48 };
+            var dot = new Button { Content = marker,
+                Padding = new Thickness(0), Width = PagerButtonWidth, MinWidth = 0, Height = 28, MinHeight = 0,
                 BorderThickness = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                Opacity = index == page ? 1 : .58 };
+                HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+            dot.Resources["ButtonBackgroundPointerOver"] = dot.Background;
+            dot.Resources["ButtonBackgroundPressed"] = dot.Background;
             AutomationProperties.SetName(dot, $"第 {index + 1} 页，共 {PageCount} 页");
-            if (index == page) AutomationProperties.SetItemStatus(dot, "当前页");
             dot.Click += (_, _) => ShowPage(target);
             if (CanReorder)
             {
@@ -819,6 +937,7 @@ internal sealed class AppCenterWindow : Window
             }
             pager.Children.Add(dot);
         }
+        UpdatePager(animate: false);
     }
 
     private void ShowPage(int target)
@@ -840,14 +959,19 @@ internal sealed class AppCenterWindow : Window
         page = target;
         PresentPage(view, direction);
         TrimPages();
+        UpdatePager(animate: expanded && system.AnimationsEnabled && !accessibility.HighContrast);
+        QueuePagePreparation();
+    }
+
+    private void UpdatePager(bool animate)
+    {
         for (int index = 0; index < pager.Children.Count; index++)
         {
             var dot = (Button)pager.Children[index];
-            ((TextBlock)dot.Content).Text = index == page ? "━" : "•";
-            dot.Opacity = index == page ? 1 : .58;
             AutomationProperties.SetItemStatus(dot, index == page ? "当前页" : "");
         }
-        QueuePagePreparation();
+        currentDot.TranslationTransition = animate ? pagerTransition : null;
+        currentDot.Translation = new Vector3((float)(page * PagerButtonWidth), 0, 0);
     }
 
     private void TrimPages()
@@ -862,6 +986,14 @@ internal sealed class AppCenterWindow : Window
     private void OnWheel(object sender, PointerRoutedEventArgs args)
     {
         if (!expanded || PageCount < 2 || draggedKey is not null) return;
+        if (initialsScroller.ScrollableHeight > 0)
+        {
+            for (var source = args.OriginalSource as DependencyObject; source is not null && !ReferenceEquals(source, root);
+                source = VisualTreeHelper.GetParent(source))
+            {
+                if (ReferenceEquals(source, initialsScroller)) return;
+            }
+        }
         int delta = args.GetCurrentPoint(root).Properties.MouseWheelDelta;
         if (delta == 0) return;
         args.Handled = true;
