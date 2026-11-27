@@ -19,6 +19,7 @@ internal sealed partial class QuickControlPanel : IDisposable
 
     private const double WirelessBodySize = 14, WirelessHeadingSize = 16, WirelessRowHeight = 29;
     private const string SunGlyph = "\uE706";
+    private const string OpenPowerSettingsLabel = "打开电源和电池设置";
     private readonly nint owner;
     private readonly TaskbarPanelFlyout panel;
     private readonly UISettings system = new();
@@ -34,10 +35,9 @@ internal sealed partial class QuickControlPanel : IDisposable
     private readonly SolidColorBrush ink = new(), subtle = new(), idle = new(), tile = new(), edge = new();
     private readonly SolidColorBrush wifiFill = new(), bluetoothFill = new(), volumeFill = new();
     private readonly SolidColorBrush wifiGlyph = new(), bluetoothGlyph = new(), volumeGlyph = new();
-    private readonly Border batteryIndicator = new() { Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center,
-        Padding = new Thickness(8, 4, 8, 4), CornerRadius = new CornerRadius(12) };
+    private readonly Button batteryButton;
     private readonly Border batteryFill = new() { HorizontalAlignment = HorizontalAlignment.Left, CornerRadius = new CornerRadius(1) };
-    private readonly TextBlock batteryText;
+    private readonly TextBlock batteryText, powerSettingsNotice;
     private readonly Button wifiCapsule, bluetoothCapsule, volumeButton, outputButton, appearanceButton, detailClose;
     private readonly Button detailedAppearance;
     private readonly Func<QuickControlAppearance, bool> saveAppearance;
@@ -56,7 +56,7 @@ internal sealed partial class QuickControlPanel : IDisposable
     private LumaBar.BarAppearance? taskbar;
     private Storyboard? detailAnimation, sunAnimation;
     private Area? selected, detailArea;
-    private bool disposed, applyingAudio, light;
+    private bool disposed, applyingAudio, light, openingPowerSettings;
     private SystemVolume.State? audioState;
     private Action? afterClose;
 
@@ -74,7 +74,6 @@ internal sealed partial class QuickControlPanel : IDisposable
         var headerActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5,
             HorizontalAlignment = HorizontalAlignment.Right };
         batteryText = Text("", 12, ink, strong: true);
-        batteryIndicator.Background = tile;
         batteryFill.Background = ink;
         var batteryGlyph = new Grid { Width = 20, Height = 11, VerticalAlignment = VerticalAlignment.Center,
             IsHitTestVisible = false };
@@ -86,8 +85,17 @@ internal sealed partial class QuickControlPanel : IDisposable
         var batteryContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         batteryContent.Children.Add(batteryGlyph);
         batteryContent.Children.Add(batteryText);
-        batteryIndicator.Child = batteryContent;
-        headerActions.Children.Add(batteryIndicator);
+        batteryButton = FlatButton(batteryContent, OpenPowerSettingsLabel);
+        batteryButton.Visibility = Visibility.Collapsed;
+        batteryButton.VerticalAlignment = VerticalAlignment.Center;
+        batteryButton.Padding = new Thickness(8, 4, 8, 4);
+        batteryButton.CornerRadius = new CornerRadius(12);
+        batteryButton.Background = tile;
+        batteryButton.Resources["ButtonBackgroundPointerOver"] = idle;
+        batteryButton.Resources["ButtonBackgroundPressed"] = edge;
+        ToolTipService.SetToolTip(batteryButton, OpenPowerSettingsLabel);
+        batteryButton.Click += async (_, _) => await OpenPowerSettingsAsync();
+        headerActions.Children.Add(batteryButton);
         appearanceButton = FlatButton(Glyph("\uE713", ink, 16), "快捷控制外观");
         appearanceButton.Width = appearanceButton.Height = 30;
         appearanceButton.HorizontalAlignment = HorizontalAlignment.Right;
@@ -177,8 +185,16 @@ internal sealed partial class QuickControlPanel : IDisposable
         detail.Child = details;
         detail.RenderTransform = detailMotion;
         shade.PointerPressed += (_, args) => { args.Handled = true; CloseDetails(); };
+        powerSettingsNotice = Text("无法打开电源和电池设置", 11, ink);
+        powerSettingsNotice.VerticalAlignment = VerticalAlignment.Bottom;
+        powerSettingsNotice.HorizontalAlignment = HorizontalAlignment.Right;
+        powerSettingsNotice.Margin = new Thickness(13, 0, 13, 2);
+        powerSettingsNotice.Visibility = Visibility.Collapsed;
+        powerSettingsNotice.IsHitTestVisible = false;
+        AutomationProperties.SetLiveSetting(powerSettingsNotice, AutomationLiveSetting.Polite);
         scene.Children.Add(backplate);
         scene.Children.Add(main);
+        scene.Children.Add(powerSettingsNotice);
         scene.Children.Add(shade);
         scene.Children.Add(detail);
         scene.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, args) =>
@@ -194,6 +210,7 @@ internal sealed partial class QuickControlPanel : IDisposable
         panel.Opened += () => { FocusSelected(); Pulse(); };
         panel.Closed += () =>
         {
+            powerSettingsNotice.Visibility = Visibility.Collapsed;
             selected = null;
             ResetDetails();
             var action = afterClose;
@@ -276,7 +293,7 @@ internal sealed partial class QuickControlPanel : IDisposable
     {
         main.IsHitTestVisible = enabled;
         foreach (var row in main.Children.Skip(1)) row.Opacity = enabled ? 1 : 0;
-        foreach (var control in new Control[] { wifiCapsule, bluetoothCapsule, volumeButton, volumeSlider, brightnessSlider, outputButton, appearanceButton })
+        foreach (var control in new Control[] { batteryButton, appearanceButton, wifiCapsule, bluetoothCapsule, volumeButton, volumeSlider, brightnessSlider, outputButton })
             control.IsTabStop = enabled;
     }
 
@@ -415,10 +432,27 @@ internal sealed partial class QuickControlPanel : IDisposable
 
     internal void UpdateBattery(SystemTrayStatus.Battery battery, string? description)
     {
-        batteryIndicator.Visibility = battery.Percent.HasValue ? Visibility.Visible : Visibility.Collapsed;
+        batteryButton.Visibility = battery.Percent.HasValue ? Visibility.Visible : Visibility.Collapsed;
         if (battery.Percent is not int percent) return;
         batteryFill.Width = 11 * percent / 100d;
         batteryText.Text = description;
+        AutomationProperties.SetName(batteryButton, $"{description} · {OpenPowerSettingsLabel}");
+    }
+
+    private async Task OpenPowerSettingsAsync()
+    {
+        if (disposed || openingPowerSettings || panel.IsClosing) return;
+        openingPowerSettings = true;
+        powerSettingsNotice.Visibility = Visibility.Collapsed;
+        int revision = detailRevision;
+        bool launched = false;
+        try { launched = await Launcher.LaunchUriAsync(new Uri("ms-settings:powersleep")); }
+        catch (Exception error) when (QuickControlRadios.IsUnavailable(error)) { }
+        finally { openingPowerSettings = false; }
+
+        if (disposed || !panel.IsOpen || panel.IsClosing || detailRevision != revision) return;
+        if (launched) Hide();
+        else powerSettingsNotice.Visibility = Visibility.Visible;
     }
 
     internal void SetAppearance(QuickControlAppearance appearance)
