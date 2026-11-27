@@ -81,7 +81,8 @@ internal sealed partial class StationWindow
 
     void WatchHaloFlyout(nint window) => WatchOutsideClicks(window, () =>
     {
-        if (IsOpen && !FlyoutTopmost && !ModalActive && !DragActive) flyoutLayer?.Raise();
+        // A topmost popup can accept pointer selection while another window still owns the keyboard.
+        if (IsOpen && !ModalActive && !DragActive) flyoutLayer?.Raise();
     });
 
     void WatchFlyoutForeground(nint popup)
