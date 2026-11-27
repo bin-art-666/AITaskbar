@@ -385,6 +385,7 @@ internal sealed partial class TaskbarSystemTray : StackPanel, IDisposable
             batteryBorder.Update(battery.Percent, battery.Charging, motion);
             batteryDescription = battery.Percent is int percent
                 ? $"电量 {percent}%{(battery.Charging ? " · 充电中" : battery.PluggedIn ? " · 已接通电源" : "")}" : null;
+            quickControls.UpdateBattery(battery, batteryDescription);
             if (!volumeHovered) ToolTipService.SetToolTip(capsule, batteryDescription);
         }
         if (!wifiRefreshing && (wifiReadAt == 0 || Environment.TickCount64 - wifiReadAt >= 1500))

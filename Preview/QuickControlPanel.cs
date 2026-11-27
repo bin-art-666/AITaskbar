@@ -34,6 +34,10 @@ internal sealed partial class QuickControlPanel : IDisposable
     private readonly SolidColorBrush ink = new(), subtle = new(), idle = new(), tile = new(), edge = new();
     private readonly SolidColorBrush wifiFill = new(), bluetoothFill = new(), volumeFill = new();
     private readonly SolidColorBrush wifiGlyph = new(), bluetoothGlyph = new(), volumeGlyph = new();
+    private readonly Border batteryIndicator = new() { Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center,
+        Padding = new Thickness(8, 4, 8, 4), CornerRadius = new CornerRadius(12) };
+    private readonly Border batteryFill = new() { HorizontalAlignment = HorizontalAlignment.Left, CornerRadius = new CornerRadius(1) };
+    private readonly TextBlock batteryText;
     private readonly Button wifiCapsule, bluetoothCapsule, volumeButton, outputButton, appearanceButton, detailClose;
     private readonly Button detailedAppearance;
     private readonly Func<QuickControlAppearance, bool> saveAppearance;
@@ -67,12 +71,30 @@ internal sealed partial class QuickControlPanel : IDisposable
         style = appearance;
         var titleRow = new Grid();
         titleRow.Children.Add(Text("快捷控制", 16, ink, strong: true));
+        var headerActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5,
+            HorizontalAlignment = HorizontalAlignment.Right };
+        batteryText = Text("", 12, ink, strong: true);
+        batteryIndicator.Background = tile;
+        batteryFill.Background = ink;
+        var batteryGlyph = new Grid { Width = 20, Height = 11, VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false };
+        batteryGlyph.Children.Add(new Border { BorderBrush = ink, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 0, 3, 0), Padding = new Thickness(2),
+            Child = batteryFill });
+        batteryGlyph.Children.Add(new Border { Width = 2, Height = 5, CornerRadius = new CornerRadius(1), Background = ink,
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center });
+        var batteryContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        batteryContent.Children.Add(batteryGlyph);
+        batteryContent.Children.Add(batteryText);
+        batteryIndicator.Child = batteryContent;
+        headerActions.Children.Add(batteryIndicator);
         appearanceButton = FlatButton(Glyph("\uE713", ink, 16), "快捷控制外观");
         appearanceButton.Width = appearanceButton.Height = 30;
         appearanceButton.HorizontalAlignment = HorizontalAlignment.Right;
         ToolTipService.SetToolTip(appearanceButton, "快捷控制外观");
         appearanceButton.Click += (_, _) => OpenDetails(Area.Appearance);
-        titleRow.Children.Add(appearanceButton);
+        headerActions.Children.Add(appearanceButton);
+        titleRow.Children.Add(headerActions);
         main.Children.Add(titleRow);
         var shortcuts = new Grid { ColumnSpacing = 8 };
         shortcuts.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -389,6 +411,14 @@ internal sealed partial class QuickControlPanel : IDisposable
         volumeSlider.Value = level;
         applyingAudio = false;
         ApplyAccents();
+    }
+
+    internal void UpdateBattery(SystemTrayStatus.Battery battery, string? description)
+    {
+        batteryIndicator.Visibility = battery.Percent.HasValue ? Visibility.Visible : Visibility.Collapsed;
+        if (battery.Percent is not int percent) return;
+        batteryFill.Width = 11 * percent / 100d;
+        batteryText.Text = description;
     }
 
     internal void SetAppearance(QuickControlAppearance appearance)
