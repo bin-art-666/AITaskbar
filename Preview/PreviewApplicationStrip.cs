@@ -785,7 +785,12 @@ internal sealed partial class PreviewApplicationStrip
             return;
         }
         windowAction?.Cancel();
-        if (!RunningWindows.IsCurrent(window)) { report("暂时无法切换到该窗口。"); return; }
+        if (!RunningWindows.IsCurrent(window))
+        {
+            WindowOperationLog.Record(window, "switch", "window-not-current");
+            report("暂时无法切换到该窗口。");
+            return;
+        }
         bool minimized = RunningWindows.IsMinimized(window);
         nint current = pressedForeground ?? (AIEnter.Native.PanelHasFocus(owner) ? foreground : RunningWindows.RawForeground());
         bool minimize = toggle && !minimized && RunningWindows.MatchesForeground(window, current);
@@ -810,7 +815,11 @@ internal sealed partial class PreviewApplicationStrip
         {
             if (await windowMotion.RestoreAsync(window, icon, style, duration, token))
                 ActivateIndicators(window);
-            else report("暂时无法切换到该窗口。");
+            else
+            {
+                WindowOperationLog.Record(window, "restore", "failed", $"animation={style}");
+                report("暂时无法切换到该窗口。");
+            }
         });
     }
 
@@ -838,7 +847,10 @@ internal sealed partial class PreviewApplicationStrip
         _ = RunWindowAction(async token =>
         {
             if (!await windowMotion.RunRectangularAsync(window, icon, opening, duration, token))
+            {
+                WindowOperationLog.Record(window, "window-animation", "failed", $"initialAction={(opening ? "restore" : "minimize")}");
                 report("暂时无法切换到该窗口。");
+            }
             else if (RunningWindows.IsMinimized(window))
                 CompleteMinimize(window, success: true);
             else
@@ -1228,6 +1240,7 @@ internal sealed partial class PreviewApplicationStrip
 
     private void CompleteMinimize(RunningWindow window, bool success)
     {
+        WindowOperationLog.Record(window, "minimize", success ? "accepted" : "failed");
         if (!success) { report("暂时无法最小化该窗口。"); return; }
         if (foreground == window.Handle) foreground = 0;
         UpdateIndicators();

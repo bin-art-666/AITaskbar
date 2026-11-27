@@ -102,6 +102,7 @@ internal sealed class WindowMotion(FrameworkElement owner, nint taskbarHandle)
         catch (Exception error) when (Recoverable(error))
         {
             Debug.WriteLine(error);
+            WindowOperationLog.Record(window, "window-animation", "fallback", $"exception={error.GetType().Name} hresult=0x{error.HResult:X8}");
             return await FinishRectangularNativelyAsync(window, request.Opening, token);
         }
     }
@@ -212,6 +213,7 @@ internal sealed class WindowMotion(FrameworkElement owner, nint taskbarHandle)
         catch (Exception error) when (Recoverable(error))
         {
             Debug.WriteLine(error);
+            WindowOperationLog.Record(window, "restore", "animation-fallback", $"exception={error.GetType().Name} hresult=0x{error.HResult:X8}");
             return RunningWindows.Activate(window);
         }
     }
@@ -280,13 +282,20 @@ internal sealed class WindowMotion(FrameworkElement owner, nint taskbarHandle)
 
     private static async Task<bool> WaitForWindowStateAsync(RunningWindow window, bool minimized, CancellationToken token)
     {
+        string operation = minimized ? "minimize" : "restore";
         for (int frame = 0; frame < 10; frame++)
         {
-            if (!RunningWindows.OwnsHandle(window)) return false;
+            if (!RunningWindows.OwnsHandle(window))
+            {
+                WindowOperationLog.Record(window, operation, "window-no-longer-owned");
+                return false;
+            }
             if (RunningWindows.IsCurrent(window) && RunningWindows.IsMinimized(window) == minimized) return true;
             await Task.Delay(16, token);
         }
-        return RunningWindows.IsCurrent(window) && RunningWindows.IsMinimized(window) == minimized;
+        bool reached = RunningWindows.IsCurrent(window) && RunningWindows.IsMinimized(window) == minimized;
+        if (!reached) WindowOperationLog.Record(window, operation, "state-change-timeout");
+        return reached;
     }
 
     private static async Task PresentWindowAsync(CancellationToken token)

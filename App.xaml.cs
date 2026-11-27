@@ -124,6 +124,7 @@ public partial class App : Application
             return;
         }
 
+        WindowOperationLog.Start(root);
         var ai = arguments.Contains("--ai");
         var halo = arguments.Contains("--halo");
         EnsureBrowserRecentHosts();

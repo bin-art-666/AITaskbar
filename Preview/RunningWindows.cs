@@ -62,14 +62,25 @@ internal static class RunningWindows
 
     public static bool Activate(RunningWindow window)
     {
-        if (!IsCurrent(window)) return false;
-        if (IsIconic(window.Handle)) ShowWindowAsync(window.Handle, 9); // SW_RESTORE
+        if (!IsCurrent(window))
+        {
+            WindowOperationLog.Record(window, "activate", "window-not-current");
+            return false;
+        }
+        if (IsMinimized(window) && !ShowWindowAsync(window.Handle, 9)) // SW_RESTORE
+            WindowOperationLog.Record(window, "activate", "restore-request-failed");
         var popup = GetLastActivePopup(window.Handle);
-        return SetForegroundWindow(popup != 0 && IsWindowVisible(popup) ? popup : window.Handle);
+        var target = popup != 0 && IsWindowVisible(popup) ? popup : window.Handle;
+        bool activated = SetForegroundWindow(target);
+        WindowOperationLog.Record(window, "activate", activated ? "accepted" : "foreground-request-failed",
+            $"target=0x{target:X} foreground=0x{RawForeground():X}");
+        return activated;
     }
 
     public static bool IsCurrent(RunningWindow window) =>
-        OwnsHandle(window) && IsWindowVisible(window.Handle);
+        OwnsHandle(window) && IsVisible(window);
+
+    internal static bool IsVisible(RunningWindow window) => IsWindowVisible(window.Handle);
 
     internal static bool OwnsHandle(RunningWindow window) =>
         ProcessIdForWindow(window.Handle) is var processId && processId != 0 && processId == window.ProcessId;
@@ -92,8 +103,20 @@ internal static class RunningWindows
     internal static bool RequestRestore(RunningWindow window, bool activate = true) =>
         IsCurrent(window) && (!IsMinimized(window) || ShowWindowAsync(window.Handle, activate ? 9 : 4)); // SW_RESTORE / SW_SHOWNOACTIVATE
 
-    internal static bool RequestClose(RunningWindow window) =>
-        !OwnsHandle(window) || PostMessage(window.Handle, 0x0010, 0, 0); // WM_CLOSE
+    internal static bool RequestClose(RunningWindow window)
+    {
+        if (!OwnsHandle(window))
+        {
+            WindowOperationLog.Record(window, "close", "window-not-current");
+            return true;
+        }
+
+        bool sent = PostMessage(window.Handle, 0x0010, 0, 0); // WM_CLOSE
+        int error = sent ? 0 : Marshal.GetLastPInvokeError();
+        WindowOperationLog.Record(window, "close", sent ? "message-queued" : "message-failed",
+            sent ? null : $"win32Error={error}");
+        return sent;
+    }
 
     internal static string? EndTaskUnavailable(RunningWindow window)
     {
@@ -195,7 +218,8 @@ internal static class RunningWindows
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(nint hwnd, StringBuilder text, int count);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint id);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint hwnd, uint attribute, out int result, int size);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool PostMessage(nint hwnd, uint message, nint wParam, nint lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool PostMessage(nint hwnd, uint message, nint wParam, nint lParam);
     [DllImport("kernel32.dll")] private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, uint processId);
     [DllImport("kernel32.dll")] private static extern bool IsProcessCritical(SafeProcessHandle process, out bool critical);
     [DllImport("kernel32.dll")] private static extern bool TerminateProcess(SafeProcessHandle process, uint exitCode);
